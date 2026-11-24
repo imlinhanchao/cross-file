@@ -137,6 +137,7 @@
 - 传输完成，路径标签「中继」；**Chrome 侧 SHA-256 与 Safari 页面上报的 SHA-256 完全一致**（`e291f56a…`，104857600 bytes），吞吐约 74 Mbps
 - 证据：宿主 `HOST DONE/HASH MATCHES EXPECTED: true`；Safari 通过 dev-only `?report=` 把自身计算结果回传（`[cf-report] tag=guest-done sha=e291f56a… path=relay`）
 - iOS 27.2 模拟器 Safari 同样通过：宿主与 iOS 端 SHA-256 均为 `a5dd4376…`，100 MB、路径 relay
+- **直连路径（非中继）**：Safari 桌面 100 MB 与 **500 MB** 均通过，路径标签 `direct`，双方 SHA-256 一致；500 MB 实测吞吐 ≈19.2 MB/s（≈153 Mbps），Safari 内存中完成并计算哈希未崩溃（保存点击仍未验）
 
 **为什么之前 Playwright WebKit 一直失败（已排除）**
 - Playwright 的 WebKit 二进制**不会向局域网发 UDP**：用 `stun:192.168.50.200:9999` 指向我们自己的 UDP 监听器，监听器一包都没收到；同一台机器的 Node 进程发 STUN 却能收到 coturn 响应。

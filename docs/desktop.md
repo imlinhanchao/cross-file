@@ -290,7 +290,17 @@ xvfb-run -a pnpm --filter @crossfile/desktop dev:attach   # 5 秒后 Ctrl-C
 
 ---
 
-## 5. 自动化验收钩子（debug-only）
+## 5. Linux 限制：发行版 WebKitGTK 不含 WebRTC（重要）
+
+Ubuntu 24.04 的 `webkit2gtk-4.1` 构建默认关闭 WebRTC，所以 **Linux 桌面壳里
+`RTCPeerConnection` 是 undefined**（页面能加载、IPC/写盘可用，但无法建立 P2P 连接）。
+已在 webview 内取证（debug 诊断通道报 `ReferenceError: Can't find variable: RTCPeerConnection`）。
+
+- Web 端已加诚实预检：检测不到 WebRTC 时显示「当前环境不支持 WebRTC」，不建房、不握手；
+- Linux 用户请用 Chrome/Edge/Safari 打开自托管单源地址（`http://<host>:8788`），或使用 Windows/macOS 桌面壳；
+- 细节与后续可选项见 `docs/adr/0008-linux-webkitgtk-without-webrtc.md`。
+
+## 6. 自动化验收钩子（debug-only）
 
 `src/main.rs` 里有一个用 `#[cfg(debug_assertions)]` 包起来的导航钩子：设置环境变量
 `CROSSFILE_DEV_JOIN=<房间链接>` 后，应用启动约 2.5 s 会 `eval` 跳转到该链接，配合 dev server 的
@@ -304,7 +314,7 @@ CROSSFILE_DEV_JOIN='https://room.net.time-pack.com/r/<id>?autoaccept=1#<key>' \
 
 agent 沙箱内窗口无法创建（MESA/ZINK + Wayland socket 受限），这条路径需要在真实桌面会话里跑。
 
-## 6. Web 侧集成（Lead 已接线，2026-11-24）
+## 7. Web 侧集成（Lead 已接线，2026-11-24）
 
 - 能力包：`apps/web/src/lib/native.ts` 在 React 挂载前检查 `__TAURI_INTERNALS__` 并设 `window.__CROSSFILE_NATIVE__ = true`，`detectCaps()` 因此上报 `nativeShell: true` / `saveStrategies: ["native","blob"]`。
 - 保存：`createNativeSink()` 把每片明文按 offset 调 `save_write`，`save_close` 返回路径；接收完成页展示「已保存到 …」，不再生成内存 Blob。

@@ -120,6 +120,22 @@ export class GuestController {
         : { proof: computeJoinProof(this.roomKey, this.roomIdBytes, this.nonce) }),
     } as ClientMessage);
     store.patch({ phase: "waiting", roomId: this.roomId, link: this.link });
+    if (this.reportUrl) {
+      // DEV-ONLY cross-machine diagnostics: the receiving page reports its own state
+      // so a headless/GUI sender can see what the remote webview is doing.
+      setInterval(() => {
+        const state = useApp.getState();
+        const rtc = (globalThis as { __crossfileRtc?: Record<string, { state(): unknown }> }).__crossfileRtc?.guest;
+        this.report("guest-diag", {
+          phase: state.phase,
+          error: state.error,
+          files: state.files.length,
+          hasKey: state.hasKey ?? false,
+          lastError: (globalThis as { __crossfileLastError?: string }).__crossfileLastError ?? null,
+          rtc: rtc ? rtc.state() : null,
+        });
+      }, 3000);
+    }
   }
 
   /** Guest side of the 4-emoji check; unlocks the roomKey hand-over. */

@@ -449,6 +449,10 @@ SIMCTL_CHILD_CROSSFILE_DEV_AUTOACCEPT=1 \
 xcrun simctl get_app_container booted <bundle-id> data
 ```
 
+注意：native 写入的 IPC 载荷是 **base64 字符串**（`save_write(bytesB64)`），不是数字数组；
+调试壳的 `CROSSFILE_DEV_JOIN` 会在应用自身 origin 内打开房间（`?devroom=&devkey=`），因为 iOS 上
+Tauri ACL 不允许远程 https 页面调用自定义命令。
+
 已实测（mac-mini + iPhone 17 模拟器 + Linux 主机）：强制两端 `?relay=1` 时，iOS 壳经 TURN 收下 100 MB，
 落盘 sha256 与发送方一致；500 MB 在约 95% 时进程被系统终止（待查内存）。模拟器 ↔ Linux 的直连 ICE 不通，
 验收脚本请带 `relay=1`。

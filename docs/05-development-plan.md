@@ -252,6 +252,18 @@ shim，因为 Xcode 的 "Build Rust Code" phase 会执行 `node tauri ...`；仓
 **100 MB 接收成功**：文件落在模拟器 App 沙盒 `Library/Application Support/com.crossfile.mobile/downloads/`，
 sha256 `0e9ae831…` 与发送方完全一致。**500 MB 跑到 498/524 MB 时 App 进程被系统终止**（无 crash report，
 疑似 WKWebView/IPC 内存 jetsam；100 MB 正常），下一步用 Instruments 看内存曲线，或分块落盘后及时释放。
+针对 500 MB 的三个修复（本轮）：
+1. **IPC 载荷**：native sink 原来 `Array.from(bytes)` 把每 256 KB 分片变成 26 万个数组成的 JSON 数组；改为
+   **base64 字符串**（Rust 用 `base64` crate 解码），序列化体积与 GC 压力大幅下降；
+2. **接收端背压**：枚举已有 `pause`/`resume` 协议消息——接收端未处理帧超过 24 MB 时发 `pause`、降到 4 MB 发
+   `resume`，发送端 `sendFile` 通过 `waitIfPaused` 真正停/续；
+3. **本地源加入**：远程 https 页面在 iOS 上被 Tauri ACL 拒绝自定义命令（`save_open not allowed`），改为
+   调试壳把房间链接解析后**在应用自身 origin 内**打开（房间号/key 走 dev-only query `devroom`/`devkey`），
+   这样 native IPC 可用；生产构建需 shell 的 debug 标志才会认这两个参数。
+结果：两轮 500 MB 中继测试仍以 **App 进程在中后段被系统终止**告终（无 500 MB 落盘；100 MB 仍稳定通过）。
+下一步：把 `report=` 透传进本地页拿到 webview 内的 phase/lastError 与内存曲线，或改成分块写盘后强制
+释放/使用可增长缓冲，定位是 WebKit 内存上限还是 IPC/GC。
+
 结论：iOS 壳「构建 + 安装 + 加入房间 + 中继传输 100 MB 落盘」已验证，**500 MB 稳定性待解决**；
 Android 壳仍受本机无 KVM、AVD 只读锁、arm64 APK 限制。
 

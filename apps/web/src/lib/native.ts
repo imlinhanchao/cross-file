@@ -105,6 +105,16 @@ async function listen(
   }
 }
 
+/** Base64 keeps the IPC payload one compact string instead of a 256k-number array. */
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const step = 0x8000;
+  for (let index = 0; index < bytes.length; index += step) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + step));
+  }
+  return btoa(binary);
+}
+
 export interface SaveSink {
   open(name: string): Promise<void>;
   write(offset: number, bytes: Uint8Array): Promise<void>;
@@ -124,7 +134,11 @@ export function createNativeSink(): SaveSink {
     async write(offset: number, bytes: Uint8Array) {
       if (handle === null || closed) throw new Error("native sink not open");
       // JSON IPC does not carry Uint8Array; the shell expects Vec<u8>.
-      await invoke("save_write", { handle, offset, bytes: Array.from(bytes) });
+      await invoke("save_write", {
+        handle,
+        offset,
+        bytesB64: bytesToBase64(bytes),
+      });
     },
     async close() {
       if (handle === null || closed) throw new Error("native sink not open");

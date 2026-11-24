@@ -190,8 +190,12 @@ async fn save_write(
     state: State<'_, AppState>,
     handle: u64,
     offset: u64,
-    bytes: Vec<u8>,
+    bytes_b64: String,
 ) -> Result<(), String> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let bytes = STANDARD
+        .decode(bytes_b64.as_bytes())
+        .map_err(|error| format!("无效的写入数据：{error}"))?;
     let mut saves = lock_saves(&state)?;
     let entry = saves
         .get_mut(&handle)
@@ -392,12 +396,22 @@ fn dev_join_script() -> Option<String> {
         .ok()
         .filter(|value| !value.trim().is_empty())?;
     let target = serde_json::to_string(&link).ok()?;
+    // Navigate inside the app origin (not to the remote https page): a remote page is
+    // denied the shell's own IPC by Tauri's ACL, while the local page can save. The
+    // room key travels as a dev-only query parameter instead of the fragment.
     Some(format!(
         r#"(function () {{
   var target = {target};
-  if (location.href !== target) {{
-    setTimeout(function () {{ location.href = target; }}, 1200);
-  }}
+  try {{
+    var u = new URL(target);
+    var key = u.hash ? u.hash.slice(1) : '';
+    var room = u.pathname.split('/').filter(Boolean).pop() || '';
+    var next = '/?devroom=' + encodeURIComponent(room) + '&devkey=' + encodeURIComponent(key) +
+      '&autoaccept=1&debug=1&relay=' + (/[?&]relay=1/.test(u.search) ? '1' : '0');
+    if (!/[?&]devkey=/.test(location.search)) {{
+      setTimeout(function () {{ location.href = next; }}, 1200);
+    }}
+  }} catch (e) {{}}
 }})();"#
     ))
 }

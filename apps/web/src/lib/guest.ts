@@ -60,6 +60,10 @@ export class GuestController {
   private manifest?: Manifest;
   private receivers = new Map<number, FileReceiver>();
   private readonly nativeSinks = new Map<number, SaveSink>();
+  /** Outstanding frame bytes; the receiver pauses the sender when this grows too large. */
+  private pendingFrameBytes = 0;
+  private receiverPaused = false;
+  private devJoined = false;
   private readonly native = isNativeShell();
   private cleanupNative?: () => void;
   /** DEV-ONLY diagnostics for cross-machine acceptance tests (stripped from production builds). */
@@ -96,12 +100,41 @@ export class GuestController {
         shell?.debugAutoAccept === true &&
         new URLSearchParams(location.search).get("autoaccept") === "1";
     }
+    // Debug shells may pass the room key as a query parameter (no fragment) so the
+    // receiving page can live on the shell's own origin and keep native IPC access.
+    const devKey = new URLSearchParams(location.search).get("devkey");
+    if (!this.joinCode && devKey && this.native) {
+      const shell = await readShellConfig();
+      const match =
+        /^\/r\/([a-z2-7]+)\/?$/.exec(location.pathname) ??
+        (/^\/?$/.test(location.pathname) ? [location.pathname, ""] : null);
+      const devRoom = new URLSearchParams(location.search).get("devroom");
+      if (shell?.debugAutoAccept === true && match) {
+        try {
+          this.roomId = match[1] || devRoom || "";
+          const roomKey = base64urlToBytes(devKey);
+          if (roomKey.length !== 32) throw new Error("bad key");
+          this.roomKey = roomKey;
+          this.roomIdBytes = base32Decode(this.roomId);
+          this.devJoined = true;
+          store.patch({ hasKey: true, roomId: this.roomId });
+          this.autoAccept =
+            new URLSearchParams(location.search).get("autoaccept") === "1";
+        } catch {
+          store.patch({
+            phase: "error",
+            error: "链接不完整：缺少房间密钥（# 后的部分）",
+          });
+          return;
+        }
+      }
+    }
     if (this.joinCode) {
       // 6-digit-code path: no roomKey yet, it arrives after the SAS check.
       this.codeMode = true;
       this.roomId = this.joinCode;
       store.patch({ codeMode: true, hasKey: false });
-    } else {
+    } else if (!this.devJoined) {
       const parsed = parseLocation();
       if (!parsed) {
         store.patch({
@@ -597,8 +630,36 @@ export class GuestController {
     if (typeof data === "string" || !this.manifest) return;
     (globalThis as { __cfFrames?: number }).__cfFrames =
       ((globalThis as { __cfFrames?: number }).__cfFrames ?? 0) + 1;
+    const frameBytes = data.byteLength;
+    this.pendingFrameBytes += frameBytes;
+    try {
+      await this.receiveFrame(data);
+    } finally {
+      this.pendingFrameBytes -= frameBytes;
+      this.updateReceiverFlow();
+    }
+  }
+
+  /** docs/02 §6.4 pause/resume: keep WebKit's queue small on memory-constrained shells. */
+  private updateReceiverFlow(): void {
+    const ctrl = this.handles?.ctrl;
+    if (!ctrl || ctrl.readyState !== "open") return;
+    const HIGH = 24 * 1024 * 1024;
+    const LOW = 4 * 1024 * 1024;
+    if (!this.receiverPaused && this.pendingFrameBytes > HIGH) {
+      this.receiverPaused = true;
+      ctrl.send(JSON.stringify({ v: 1, type: "pause" }));
+    } else if (this.receiverPaused && this.pendingFrameBytes < LOW) {
+      this.receiverPaused = false;
+      ctrl.send(JSON.stringify({ v: 1, type: "resume" }));
+    }
+  }
+
+  private async receiveFrame(data: ArrayBuffer): Promise<void> {
     const frame = decodeChunkFrame(new Uint8Array(data));
-    const entry = this.manifest.files.find((file) => file.id === frame.fileId);
+    const manifest = this.manifest;
+    if (!manifest) return;
+    const entry = manifest.files.find((file) => file.id === frame.fileId);
     if (!entry) return;
     let file = this.receivers.get(frame.fileId);
     if (!file) {

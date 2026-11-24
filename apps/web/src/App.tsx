@@ -11,6 +11,10 @@ function hasWebRTC(): boolean {
 
 export function App() {
   if (!hasWebRTC()) return <UnsupportedPage />;
+  // Debug shells open the guest page on their own origin with the room key in a
+  // query parameter (native IPC is only allowed there); the controller validates
+  // the debug shell flag before honouring it.
+  if (new URLSearchParams(location.search).has("devkey")) return <GuestPage />;
   if (location.pathname.startsWith("/r/")) return <GuestPage />;
   if (location.pathname.startsWith("/j/")) {
     const code = location.pathname.split("/")[2] ?? "";

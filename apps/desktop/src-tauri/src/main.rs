@@ -175,8 +175,12 @@ async fn save_write(
     state: State<'_, AppState>,
     handle: u64,
     offset: u64,
-    bytes: Vec<u8>,
+    bytes_b64: String,
 ) -> Result<(), String> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let bytes = STANDARD
+        .decode(bytes_b64.as_bytes())
+        .map_err(|error| format!("invalid write payload: {error}"))?;
     let mut saves = lock_saves(&state)?;
     let entry = saves
         .get_mut(&handle)

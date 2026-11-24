@@ -85,7 +85,14 @@ const browser = await chromium.launch({
 });
 
 for (let round = 1; round <= 20; round++) {
-  const context = await browser.newContext({ ignoreHTTPSErrors: true });
+  // Chrome only offers WebRTC host candidates from *all* interfaces (instead of
+  // just the default route, 198.18.0.1 from the Clash TUN here) when camera/mic
+  // permission is granted; without it the guest can never see 192.168.50.200.
+  // Nothing in this harness calls getUserMedia, so no capture happens.
+  const context = await browser.newContext({
+    ignoreHTTPSErrors: true,
+    permissions: ["camera"],
+  });
   const host = await context.newPage();
   host.on("pageerror", (error) =>
     console.log("[host] PAGEERROR", String(error).slice(0, 200)),

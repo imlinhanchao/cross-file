@@ -79,15 +79,16 @@ describe("native save sink", () => {
     expect(invoke).toHaveBeenNthCalledWith(1, "save_open", {
       name: "demo.bin",
     });
+    // The IPC payload is a compact base64 string, not a 256k-number JSON array.
     expect(invoke).toHaveBeenNthCalledWith(2, "save_write", {
       handle: 7,
       offset: 0,
-      bytes: [104, 105],
+      bytesB64: "aGk=",
     });
     expect(invoke).toHaveBeenNthCalledWith(3, "save_write", {
       handle: 7,
       offset: 1024,
-      bytes: [104, 105],
+      bytesB64: "aGk=",
     });
     expect(invoke).toHaveBeenNthCalledWith(4, "save_close", { handle: 7 });
   });

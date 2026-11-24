@@ -11,6 +11,7 @@ publish = false
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+base64 = "0.22"
 serde = { version = "1", features = ["derive"] }
 # The shell only needs the core runtime; native save/menu/close logic is hand-written.
 tauri = { version = "2", features = [] }

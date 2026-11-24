@@ -65,6 +65,9 @@ interface GuestPeer {
   sasHostConfirmed: boolean;
   sasTimer: TimeoutGuard | null;
   keySent: boolean;
+  /** Receiver-requested flow control (ctrl pause/resume). */
+  flowPaused?: boolean;
+  flowResume?: () => void;
 }
 
 export class HostController {
@@ -539,6 +542,14 @@ export class HostController {
         if (this.fileList.length > 0) void this.sendManifest(guestId, guest);
         this.startTransferOnce(guestId, guest);
         break;
+      case "pause":
+        guest.flowPaused = true;
+        break;
+      case "resume":
+        guest.flowPaused = false;
+        guest.flowResume?.();
+        guest.flowResume = undefined;
+        break;
       case "error":
         // A receiver-side refusal (TOO_LARGE / CAPABILITY_RISK_DECLINED) ends the transfer.
         this.abortTransfer(errorText(message.code, message.msg));
@@ -670,6 +681,18 @@ export class HostController {
       channel: guest.handles.data,
       onlyChunks,
       computeHash: false,
+      waitIfPaused: () =>
+        new Promise<void>((resolve) => {
+          if (!guest.flowPaused) return resolve();
+          guest.flowResume = resolve;
+        }).then(async () => {
+          // Resume only after the receiver drained; handles repeated pause cycles.
+          while (guest.flowPaused) {
+            await new Promise<void>((resolve) => {
+              guest.flowResume = resolve;
+            });
+          }
+        }),
       onProgress: (sentBytes) => {
         const startedAt = useApp.getState().transfer?.startedAt ?? Date.now();
         const elapsed = (Date.now() - startedAt) / 1000;

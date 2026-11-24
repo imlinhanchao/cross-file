@@ -16,7 +16,7 @@
 | # | 场景 | 状态 | 证据 |
 |---|---|---|---|
 | AC1 | Chrome↔Chrome 同网 500 MB ≥60 Mbps，显示「局域网直连」 | ✅ 本机 + 跨机 Chromium | 本机：500 MB 28 s ≈150 Mbps，路径「局域网直连」；**跨机 Chrome→Edge(Chromium, mac-mini) 500 MB 63 s ≈66.6 Mbps，路径「直连」，双方 SHA-256 `2d58573f…` 一致**。注：跨机跑出的是 srflx 直连（路径「直连」），未观察到 host↔host 的「局域网直连」标签（Chromium mDNS 候选跨解析限制），属 D2 阶梯内的第二档 |
-| AC2 | 仅 TURN 500 MB，显示「中继」 | ✅ 本机 | coturn + `?relay=1`：10 MB / 100 MB / **500 MB** 均 PASS，路径「中继」，哈希一致；`E2E_RELAY=1 … pnpm exec playwright test tests/e2e/ac2-relay.spec.ts` |
+| AC2 | 仅 TURN 500 MB，显示「中继」 | ✅ 本机（含限速 10 Mbps） | coturn + `?relay=1`：10/100/500 MB 均 PASS，路径「中继」，哈希一致；**限速验证**：coturn `--max-bps=1250000`（≈10 Mbps），500 MB 用时 **451.8 s（7.5 min < 10 min）**，有效速率 ≈9.3 Mbps，双方 SHA-256 `85d76e70…` 一致。`E2E_RELAY=1 … pnpm exec playwright test tests/e2e/ac2-relay.spec.ts` |
 | AC3 | 传输中断 60 s 内重连续传，只重传缺失分片，哈希一致 | ✅ | `tests/e2e/ac3-resume.spec.ts`：20 MB，50% 强断 → 重连 → 只补 295 片 → 哈希一致 |
 | AC4 | Chrome→iPhone Safari 100 MB；500 MB 分级提示 | 🟡 传输侧通过（桌面 100/500 MB + iOS 模拟器 100 MB）/ 保存与 iOS 落盘待人工 | 桌面 Safari 100 MB（中继）与 500 MB（直连）、iOS 27.2 模拟器 Safari 100 MB（中继）均双方哈希一致；接收端超软上限风险对话框由 `capability-warn.spec.ts` 覆盖；Safari「保存」点击需用户手势，未自动化 |
 | AC5 | 6 位码加入 + 4 emoji SAS，不一致中止 | ✅ | `tests/e2e/code-sas.spec.ts`：6 位码加入 → 双方 SAS 一致 → ctrl 通道下发 roomKey → 2 MB 哈希一致 |
@@ -49,6 +49,12 @@ docker compose -f infra/docker-compose.yml up -d --build
 bash tests/audit/zero-storage.sh
 SKIP_BUILD=1 bash tests/audit/zero-storage.sh --container
 E2E_RELAY=1 TURN_SECRET=… TURN_URIS='turn:<host>:3478?transport=udp' pnpm exec playwright test tests/e2e/ac2-relay.spec.ts
+
+# AC2 限速验证（≈10 Mbps 下 500 MB < 10 分钟）
+docker run -d --name cf-coturn-10mbps -p 3478:3478 -p 3478:3478/udp -p 49160-49200:49160-49200/udp \
+  coturn/coturn:4.19.2-alpine --listening-port=3478 --static-auth-secret=$TURN_SECRET --realm=crossfile \
+  --external-ip=<public-ip> --min-port=49160 --max-port=49200 --max-bps=1250000 --log-file=stdout
+DEBUG_RELAY=1 DEBUG_MAX_SECONDS=900 node scripts/debug-transfer.mjs 500
 TURN_SECRET=… AC4_QUERY='debug=1&relay=1&autoaccept=1&report=https%3A%2F%2Froom.net.time-pack.com%2F__report' \
   node scripts/ac4-host-loop.mjs 100      # 跨机：在另一台设备用 Safari 打开发布的链接
 ```

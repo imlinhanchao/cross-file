@@ -6,9 +6,11 @@
   "main": "main.cjs",
   "scripts": {
     "start": "electron .",
-    "start:no-sandbox": "electron . --no-sandbox"
+    "start:no-sandbox": "electron . --no-sandbox",
+    "package:linux": "electron-builder --linux AppImage --config electron-builder.yml"
   },
   "devDependencies": {
     "electron": "^45.4.1"
-  }
+  },
+  "build": {}
 }

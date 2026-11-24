@@ -186,7 +186,7 @@ ADR 0009：`apps/desktop-electron/` 用 Electron（Chromium）替代 WebKitGTK �
 - 100 MB：host `HASH MATCHES EXPECTED: true`，落盘文件 sha256 一致；
 - **500 MB：路径「局域网直连（lan）」，host `sha256=ccd606e7…`，落盘 524 288 000 B、sha256 完全一致**；
 - 复现：`CROSSFILE_URL=<link> HOME=<writable dir> electron apps/desktop-electron --no-sandbox`。
-剩余：Windows/macOS 的 Tauri 壳真机验证；Linux Electron 打包产物（AppImage）与签名。
+剩余：Windows/macOS 的 Tauri 壳真机验证；Linux Electron 签名与品牌图标（AppImage 已能产出，见 docs/desktop.md §5.1）。
 
 ### macOS Tauri 壳进展（2026-11-24）
 - 在 mac-mini 上从 LAN 拉取仓库：`pnpm install --frozen-lockfile` ✅（修掉 Electron 壳缺 importer 的锁文件缺陷后）、`pnpm --filter @crossfile/web build` ✅、`cargo build --no-default-features` ✅、`tauri dev` 窗口启动 ✅；

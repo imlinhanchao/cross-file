@@ -30,6 +30,7 @@ pnpm --filter @crossfile/desktop dev              # 开发模式（自带 Web de
 
 # Linux 桌面壳（Tauri 的 WebKitGTK 无 WebRTC，改用 Electron；见 docs/desktop.md §5.1）
 CROSSFILE_URL='http://127.0.0.1:8788' ./node_modules/.bin/electron apps/desktop-electron
+pnpm --filter @crossfile/desktop-electron package:linux   # 出 AppImage（需 electron-builder 镜像环境）
 
 # 手机壳（Android；需 JDK+SDK+NDK，见 docs/mobile.md）
 source scripts/dev-env.sh

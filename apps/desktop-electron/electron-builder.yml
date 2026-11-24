@@ -1,0 +1,22 @@
+# Linux packaging for the Electron shell (ADR 0009). Build with:
+#   ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ \
+#   pnpm --filter @crossfile/desktop-electron package:linux
+appId: com.crossfile.desktop.electron
+productName: CrossFile
+copyright: MIT
+directories:
+  output: dist-electron
+  buildResources: build
+files:
+  - main.cjs
+  - preload.cjs
+  - package.json
+asar: true
+executableName: crossfile-desktop
+linux:
+  target:
+    - AppImage
+  category: Utility
+  synopsis: 跨设备临时大文件传输（端到端加密，服务器零存储）
+  description: CrossFile Linux 桌面壳；文件经点对点加密传输，服务器不保存任何内容。
+  artifactName: ${productName}-${version}-${arch}.${ext}

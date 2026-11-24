@@ -13,3 +13,4 @@ design
 # long-form docs are prose, formatted by hand
 docs
 README.md
+**/dist-electron

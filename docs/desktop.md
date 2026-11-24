@@ -316,6 +316,20 @@ CROSSFILE_URL='http://127.0.0.1:8788' ./node_modules/.bin/electron apps/desktop-
 
 实测：100 MB 与 **500 MB** 均通过，落盘文件 sha256 与发送方一致（AC9 Linux 侧）。
 
+打包 Linux 安装包（AppImage）：
+
+```bash
+cd apps/desktop-electron
+ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ \
+ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ \
+pnpm --filter @crossfile/desktop-electron exec electron-builder --linux AppImage --config electron-builder.yml
+# 产物：apps/desktop-electron/dist-electron/CrossFile-0.1.0-x86_64.AppImage（约 120 MB）
+```
+
+已验证：构建成功、`--appimage-extract` 可解出 `app.asar` 与 `crossfile-desktop` 可执行文件。
+注意：AppImage 运行需要 FUSE（或 `--appimage-extract-and-run`）；当前未设置自定义图标（Electron 默认图标），
+需要品牌图标时放 `build/icon.png`（512×512）再打包。
+
 ## 6. 自动化验收钩子（debug-only）
 
 `src/main.rs` 里有一个用 `#[cfg(debug_assertions)]` 包起来的导航钩子：设置环境变量

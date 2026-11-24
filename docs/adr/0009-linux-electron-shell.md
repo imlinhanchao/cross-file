@@ -20,6 +20,8 @@ AC9 要求桌面壳内跑通 500 MB，需要在 Linux 上有一个带 WebRTC 的
 - **500 MB**：路径「局域网直连（lan）」，host `sha256=ccd606e7…`，落盘文件 524 288 000 B、
   sha256 完全相同。
 - 复现：`CROSSFILE_URL=<房间链接> HOME=<可写目录> electron apps/desktop-electron --no-sandbox`。
+- 打包：`electron-builder --linux AppImage` 产出 `CrossFile-0.1.0-x86_64.AppImage`（约 120 MB），
+  `--appimage-extract` 验证包含 `app.asar` 与启动器；运行需 FUSE，图标待补（默认 Electron 图标）。
 
 ## 后果
 - Linux 桌面从「不可用」变为「可用」，代价是多一套壳依赖（Electron ≈230 MB 解压体积）；

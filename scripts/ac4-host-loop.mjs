@@ -56,7 +56,7 @@ for (let round = 1; round <= 20; round++) {
       timeout: 60_000,
     });
     const link = await host.evaluate(() => window.__crossfile.snapshot().link);
-    // ?debug=1 before the fragment exposes window.__crossfileRtc on both ends.
+    // Query string carries diagnostics; report URLs must be URL-encoded inside it.
     publish(link.replace("#", `?${QUERY}#`));
     console.log(`round ${round}: ROOM LINK ${link}`);
 

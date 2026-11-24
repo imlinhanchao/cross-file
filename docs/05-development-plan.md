@@ -130,24 +130,20 @@
 - 分享接收：intent-filter + `ShareIntake` 骨架已进 APK，JS 桥未接
 - 模拟器：本机无 `/dev/kvm`，install/启动/500 MB 未执行
 
-## 7.0.4 AC4 跨机 Safari/WebKit 进展（未结案，已隔离到 WebKit 的 TURN 行为）
+## 7.0.4 AC4 Safari 实测（结论：真实 Safari 可用；Playwright WebKit 是假阴性）
 
-跨机链路已通：mac-mini（WebKit 27.2 / Playwright）经 `https://room.net.time-pack.com` 打开接收页，信令 join/approve 正常。
-WebRTC 侧的实测事实（三步隔离）：
+**最终验证（2026-11-24，真 Safari 27.0.1 on macOS 27.0.1，mac-mini）**
+- 房间链接在 Safari 中打开 → 信令 join → 房主批准 → 100 MB 传输（双方 `?relay=1`，本机 coturn `turn:192.168.50.200:3478`）
+- 传输完成，路径标签「中继」；**Chrome 侧 SHA-256 与 Safari 页面上报的 SHA-256 完全一致**（`e291f56a…`，104857600 bytes），吞吐约 74 Mbps
+- 证据：宿主 `HOST DONE/HASH MATCHES EXPECTED: true`；Safari 通过 dev-only `?report=` 把自身计算结果回传（`[cf-report] tag=guest-done sha=e291f56a… path=relay`）
 
-1. **直连模式**：WebKit 收集到 host（mDNS `.local`）与 srflx（公网 113.80.210.208 / IPv6），但 ICE `checking → failed`（~30 s）、`dtlsState=new`、无选中候选对；Chrome 端也未收到 remote candidate。符合附录 A §3 的「Safari 数据通道不成立」现象。
-2. **强制中继（`?relay=1` + 本机 coturn `turn:192.168.50.200:3478`）**：Chrome 端能拿到 relay 候选；**WebKit 端 `iceGatheringState` 一直停在 gathering（>12 s），只有 host 候选，没有任何 relay 候选，也没有 `icecandidateerror`**。
-3. **隔离实验（不经过应用，直接用 `RTCPeerConnection` 探测）**：
-   - mac-mini 上 Node UDP 发 STUN Binding 到 `192.168.50.200:3478` → **收到 0x0101 响应**，说明机器到 coturn 的 UDP 路径正常；
-   - Playwright WebKit 探测：`stun:stun.cloudflare.com` → 正常拿到 srflx；`turn:192.168.50.200:3478?transport=udp`（以及 `transport=tcp`、`relay` 策略）→ **12 s 内没有任何 relay 候选**，gathering 不完成。
-   - coturn 详细日志中未出现来自 mac-mini 的 Allocate 会话（verbose 模式）。
-   - 真实 Safari 自动化：`osascript` 读标签页标题触发 macOS TCC「自动化」权限提示，远程调用挂起（需要人工授权），因此**真 Safari 未验**。
+**为什么之前 Playwright WebKit 一直失败（已排除）**
+- Playwright 的 WebKit 二进制**不会向局域网发 UDP**：用 `stun:192.168.50.200:9999` 指向我们自己的 UDP 监听器，监听器一包都没收到；同一台机器的 Node 进程发 STUN 却能收到 coturn 响应。
+- 因此「直连 ICE failed」与「TURN 零 relay 候选」都是测试载具（Playwright WebKit 的 macOS 沙箱/本地网络权限）造成的，不是 WebKit/CrossFile 的问题。
+- 真实 Safari 经同一 TURN 能拿到 `relay/udp@192.168.50.200` 并完成上述 100 MB 传输。
 
-**结论**：问题不在 CrossFile 信令/密钥/应用逻辑，也不在本机 coturn 的可达性；隔离在「该 WebKit（Playwright WebKit 二进制 / macOS 沙箱）的 TURN 分配」这一层。下一步（需要你/人工）：
-- 在 mac-mini 上手动打开 `http://192.168.50.200:8099/probe.html`（页面会把结果写进标签页标题）或用真 Safari 手测一次 100 MB 接收；或
-- 给 mac-mini 的终端/DSH 授予「自动化」权限后，我可以用 Safari + AppleScript 自动读结果；或
-- 在 mac-mini 本机跑一个 TURN（Docker Desktop 或 brew coturn），排除「跨机 LAN 出站被 WebKit 沙箱限制」。
-在上述任一验证出结果前，AC4 保持未通过、能力矩阵维持保守值（iOS 100 MB / Safari 250 MB）。
+**剩余**：Safari 内的「保存」点击与磁盘落盘（需用户手势，未自动化）、iOS 模拟器/真机、500 MB 分级提示的端到端、直连（非中继）路径的 Safari 表现。
+**测试辅助**：`?autoaccept=1` 与 `?report=<url>` 仅在 `import.meta.env.DEV`（dev server）下生效，生产构建会被剥离；dev server 的 `/__report` 端点只在 `vite serve` 时注册。
 
 ## 7.1 开发链路（已实测）
 

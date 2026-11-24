@@ -50,6 +50,12 @@ export class GuestController {
   private readonly nativeSinks = new Map<number, SaveSink>();
   private readonly native = isNativeShell();
   private cleanupNative?: () => void;
+  /** DEV-ONLY diagnostics for cross-machine acceptance tests (stripped from production builds). */
+  private readonly autoAccept =
+    import.meta.env.DEV && new URLSearchParams(location.search).get("autoaccept") === "1";
+  private readonly reportUrl = import.meta.env.DEV
+    ? new URLSearchParams(location.search).get("report")
+    : null;
   private roomId = "";
   private roomKey: Uint8Array = new Uint8Array(0);
   private roomIdBytes: Uint8Array = new Uint8Array(0);
@@ -141,6 +147,12 @@ export class GuestController {
     void this.abortSinks();
     this.peer?.close();
     this.socket.close();
+  }
+
+  private report(tag: string, data: Record<string, unknown>): void {
+    if (!this.reportUrl) return;
+    const url = `${this.reportUrl}?tag=${encodeURIComponent(tag)}&data=${encodeURIComponent(JSON.stringify(data))}`;
+    void fetch(url, { mode: "no-cors" }).catch(() => undefined);
   }
 
   private async abortSinks(): Promise<void> {
@@ -268,6 +280,7 @@ export class GuestController {
           phase: "joined",
           files: message.files.map((file) => ({ id: file.id, name: file.name, size: file.size, mime: file.mime })),
         });
+        if (this.autoAccept) setTimeout(() => this.accept(), 300);
         break;
       }
       case "room-key": {
@@ -315,6 +328,11 @@ export class GuestController {
       }
       void setTransferActive(false);
       exposeTestState({ sha256: result.sha256, expected: message.sha256, size: result.size, complete: result.complete });
+      this.report("guest-fail", {
+        sha: result.sha256,
+        expected: message.sha256,
+        complete: result.complete,
+      });
       store.patch({
         phase: "error",
         error: `${copy.verifyFailed} (${result.complete ? "hash" : "incomplete"} ${result.sha256.slice(0, 12)} ≠ ${message.sha256.slice(0, 12)})`,
@@ -339,6 +357,7 @@ export class GuestController {
       });
       store.setTransfer({ sentBytes: totalBytes, totalBytes, speedBps: 0 });
       exposeTestState({ sha256: result.sha256, expected: message.sha256, size: byteLength, complete: true });
+    this.report("guest-done", { sha: result.sha256, bytes: byteLength, path: useApp.getState().transfer?.path });
       return;
     }
 
@@ -352,6 +371,7 @@ export class GuestController {
     });
     store.setTransfer({ sentBytes: totalBytes, totalBytes, speedBps: 0 });
     exposeTestState({ sha256: result.sha256, expected: message.sha256, size: bytes.length, complete: true });
+    this.report("guest-done", { sha: result.sha256, bytes: bytes.length, path: useApp.getState().transfer?.path });
   }
 
   private async onData(data: ArrayBuffer | string): Promise<void> {

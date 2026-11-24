@@ -14,4 +14,5 @@
 - 2026-11-24：mac-mini 可访问 `https://room.net.time-pack.com`（跨机 200），Playwright WebKit 客户端实测发起。
 - 2026-11-24：跨机 WebKit 27.2 实测——信令 join/approve 正常，但 ICE 直连 `checking → failed`（~30 s，`dtlsState=new`，无选中候选对）；WebKit 收集到 host/srflx，host（Chrome）端未收到 remote candidate。
 - 2026-11-24：强制 TURN（coturn `turn:192.168.50.200:3478`，Chrome 端 relay 候选正常）时 WebKit 端 `iceGatheringState=complete` 但**零 local candidate**；TURN TCP 可达、UDP 未确认。待排除 WebKit 的 TURN/UDP 与 STUN 配置后结论。
-- 暂不改变能力矩阵；若 WebKit 只在可靠 TURN 下可用，则在文档中明确 Safari/iOS 依赖 TURN。
+- 2026-11-24（隔离实验）：mac-mini 上 Node UDP STUN 到 coturn 正常；同一台机器的 Playwright WebKit 对 `stun:` 能拿到 srflx，但对 `turn:`（udp/tcp、relay 策略）12 s 内零 relay 候选、gathering 不完成、无 `icecandidateerror`；coturn verbose 日志无来自该机的 Allocate。真 Safari 因 macOS TCC 自动化权限未验。
+- 暂不改变能力矩阵；AC4 未通过。下一步需真 Safari 手测、授予自动化权限，或在 mac-mini 本机起 TURN 排除出站限制。

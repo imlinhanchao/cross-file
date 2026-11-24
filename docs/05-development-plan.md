@@ -130,13 +130,24 @@
 - 分享接收：intent-filter + `ShareIntake` 骨架已进 APK，JS 桥未接
 - 模拟器：本机无 `/dev/kvm`，install/启动/500 MB 未执行
 
-## 7.0.4 AC4 跨机 Safari/WebKit 进展（未完成，重要发现）
+## 7.0.4 AC4 跨机 Safari/WebKit 进展（未结案，已隔离到 WebKit 的 TURN 行为）
 
-跨机链路已通：mac-mini（WebKit 27.2）经 `https://room.net.time-pack.com` 打开接收页、信令 join/approve 正常（有 `hostCaps`）。
-但 **WebRTC 连接不成立**：
-- 直连模式（默认）：guest 收集到 host/srflx（含公网 IPv4 113.80.210.208），但 ICE `checking → failed`（~30 s），`dtlsState=new`，无选中候选对；host 端也未看到 remote candidate。
-- 强制中继（`?relay=1` + 本机 coturn `turn:192.168.50.200:3478`）：Chrome 端成功收集 relay 候选（192.168.50.200），WebKit 端 `iceGatheringState=complete` 却**没有任何 local candidate**；TURN TCP 3478 从 mac-mini 可达，UDP 未确认。疑似 WebKit 的 TURN/UDP 路径或 STUN 配置问题，下一步：去掉 STUN 只留 TURN、加 `?transport=tcp`、看 coturn 分配日志。
-- 结论未定；若最终确认 Safari 系无法直连，则 iOS/Safari 必须依赖可用的 TURN（与 D2 一致），能力矩阵与文档需按此收紧。
+跨机链路已通：mac-mini（WebKit 27.2 / Playwright）经 `https://room.net.time-pack.com` 打开接收页，信令 join/approve 正常。
+WebRTC 侧的实测事实（三步隔离）：
+
+1. **直连模式**：WebKit 收集到 host（mDNS `.local`）与 srflx（公网 113.80.210.208 / IPv6），但 ICE `checking → failed`（~30 s）、`dtlsState=new`、无选中候选对；Chrome 端也未收到 remote candidate。符合附录 A §3 的「Safari 数据通道不成立」现象。
+2. **强制中继（`?relay=1` + 本机 coturn `turn:192.168.50.200:3478`）**：Chrome 端能拿到 relay 候选；**WebKit 端 `iceGatheringState` 一直停在 gathering（>12 s），只有 host 候选，没有任何 relay 候选，也没有 `icecandidateerror`**。
+3. **隔离实验（不经过应用，直接用 `RTCPeerConnection` 探测）**：
+   - mac-mini 上 Node UDP 发 STUN Binding 到 `192.168.50.200:3478` → **收到 0x0101 响应**，说明机器到 coturn 的 UDP 路径正常；
+   - Playwright WebKit 探测：`stun:stun.cloudflare.com` → 正常拿到 srflx；`turn:192.168.50.200:3478?transport=udp`（以及 `transport=tcp`、`relay` 策略）→ **12 s 内没有任何 relay 候选**，gathering 不完成。
+   - coturn 详细日志中未出现来自 mac-mini 的 Allocate 会话（verbose 模式）。
+   - 真实 Safari 自动化：`osascript` 读标签页标题触发 macOS TCC「自动化」权限提示，远程调用挂起（需要人工授权），因此**真 Safari 未验**。
+
+**结论**：问题不在 CrossFile 信令/密钥/应用逻辑，也不在本机 coturn 的可达性；隔离在「该 WebKit（Playwright WebKit 二进制 / macOS 沙箱）的 TURN 分配」这一层。下一步（需要你/人工）：
+- 在 mac-mini 上手动打开 `http://192.168.50.200:8099/probe.html`（页面会把结果写进标签页标题）或用真 Safari 手测一次 100 MB 接收；或
+- 给 mac-mini 的终端/DSH 授予「自动化」权限后，我可以用 Safari + AppleScript 自动读结果；或
+- 在 mac-mini 本机跑一个 TURN（Docker Desktop 或 brew coturn），排除「跨机 LAN 出站被 WebKit 沙箱限制」。
+在上述任一验证出结果前，AC4 保持未通过、能力矩阵维持保守值（iOS 100 MB / Safari 250 MB）。
 
 ## 7.1 开发链路（已实测）
 

@@ -9,6 +9,7 @@ matches="$(
   grep -rnE "#[0-9a-fA-F]{6}\b|rgba?\(|hsla?\(|oklch\(" \
     apps packages --include='*.css' --include='*.tsx' --include='*.ts' 2>/dev/null \
     | grep -v 'tokens.css' \
+    | grep -v '/dist/' | grep -v '/build/' | grep -v '/target/' | grep -v '/node_modules/' \
     | grep -v '\.test\.' \
     || true
 )"

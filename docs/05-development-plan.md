@@ -215,6 +215,22 @@ docs/02 §4.5 的 60 秒未确认超时落地：guest 收到 4 emoji 后计时�
 超时即 `error` 状态、关闭连接（host 同时移除 guest），文案给下一步；e2e `sas-timeout.spec.ts`
 用 `?sasTimeoutMs=800` 在 6 秒内验证「双方都中止且都有可行动提示」。新增 `timeout.test.ts` 2 个单测。
 
+## 7.0.12 macOS Tauri 壳打通 500 MB（根因与修复）
+
+上一轮停在「页面/React/WSS 都正常，但接收 Controller 不发起加入」。后来用 shell 内探针读取 `window.__crossfile.snapshot()`
+拿到真正原因：`phase=error, error="Error: signaling connection failed"` —— 原生壳里 `signalingUrl()` 优先返回
+**`ws://127.0.0.1:8788/v1/ws` 默认值**，而不是页面同源地址；macOS dev 壳上没有本地信令服务，于是连不上。
+
+修复（也是产品缺口）：
+- 桌面壳新增 `get_shell_config` 命令，返回 `signaling_url`（`CROSSFILE_SIGNALING_URL` 可覆盖，默认 `ws://127.0.0.1:8788/v1/ws`）；
+- Web 侧新增 `resolveSignalingUrl()`：原生壳且没有注入/存储地址时向壳要配置，再建连；兼容 Rust 的 snake_case 字段；
+- 单测覆盖 shell 配置归一化与解析顺序。
+
+实测（macOS，Tauri 2 + WKWebView，LK 用 `CROSSFILE_SIGNALING_URL=wss://room.net.time-pack.com/v1/ws`）：
+- 100 MB：host `HASH MATCHES EXPECTED: true`，`~/Downloads/ac4-100mb.bin` sha256 一致；
+- **500 MB：路径「直连」，host `sha256=a2cff034…`，落盘 524 288 000 B、sha256 完全一致**。
+因此 AC9 桌面侧在 Linux（Electron）与 macOS（Tauri）双双达成；剩 Windows 壳与手机壳。
+
 ## 7.1 开发链路（已实测）
 
 ```

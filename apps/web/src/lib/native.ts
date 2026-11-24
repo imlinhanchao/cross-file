@@ -33,6 +33,38 @@ export function isNativeShell(): boolean {
   return typeof window !== "undefined" && window.__CROSSFILE_NATIVE__ === true;
 }
 
+export interface ShellConfig {
+  platform?: string;
+  shell?: string;
+  signalingUrl?: string;
+  saveStrategy?: string;
+}
+
+/**
+ * Ask the shell for its configuration (desktop/mobile provide `get_shell_config`).
+ * Used at connect time so the packaged app can point at a self-hosted instance
+ * without any build-time JS edits.
+ */
+export async function readShellConfig(): Promise<ShellConfig | null> {
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (!invoke) return null;
+  try {
+    // Rust commands serialize snake_case; accept both so desktop and mobile match.
+    const raw = await invoke<
+      ShellConfig & { signaling_url?: string; save_strategy?: string }
+    >("get_shell_config");
+    if (!raw) return null;
+    return {
+      platform: raw.platform,
+      shell: raw.shell,
+      saveStrategy: raw.saveStrategy ?? raw.save_strategy,
+      signalingUrl: raw.signalingUrl ?? raw.signaling_url,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** Called once before React mounts (main.tsx). */
 export function markNativeShell(): void {
   if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {

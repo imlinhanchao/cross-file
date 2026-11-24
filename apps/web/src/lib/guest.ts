@@ -33,7 +33,7 @@ import {
 } from "./native.js";
 import { probeCaps } from "./caps.js";
 import { sasTimeoutMs, startTimeout, type TimeoutGuard } from "./timeout.js";
-import { SignalingSocket, withTimeout } from "./signal.js";
+import { resolveSignalingUrl, SignalingSocket, withTimeout } from "./signal.js";
 import { useApp } from "../store.js";
 
 interface FileReceiver {
@@ -125,7 +125,7 @@ export class GuestController {
       if (phase === "done" || phase === "error" || phase === "idle") return;
       useApp.getState().patch({ phase: "error", error: copy.connectionLost });
     });
-    await this.socket.connect();
+    await this.socket.connect(await resolveSignalingUrl());
     this.socket.send({ v: 1, type: "hello", clientCaps: this.caps });
     this.socket.send({
       v: 1,

@@ -29,7 +29,12 @@ import { copy, errorText, formatBytes } from "@crossfile/ui";
 import { installNativeShellHooks, setTransferActive } from "./native.js";
 import { probeCaps } from "./caps.js";
 import { sasTimeoutMs, startTimeout, type TimeoutGuard } from "./timeout.js";
-import { SignalingSocket, deferred, withTimeout } from "./signal.js";
+import {
+  resolveSignalingUrl,
+  SignalingSocket,
+  deferred,
+  withTimeout,
+} from "./signal.js";
 import { useApp } from "../store.js";
 
 interface PreparedFile {
@@ -102,7 +107,7 @@ export class HostController {
       if (phase === "idle" || phase === "error") return;
       useApp.getState().patch({ phase: "error", error: copy.connectionLost });
     });
-    await this.socket.connect();
+    await this.socket.connect(await resolveSignalingUrl());
     this.cleanupNative = installNativeShellHooks({
       isTransferActive: () =>
         ["transferring", "paused"].includes(useApp.getState().phase),

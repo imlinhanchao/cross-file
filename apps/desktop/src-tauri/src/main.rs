@@ -26,6 +26,34 @@ const DEFAULT_HOMEPAGE_URL: &str = "https://room.net.time-pack.com/";
 /// The privacy statement is a route in the web app (`apps/web/src/pages/PrivacyPage.tsx`).
 const DEFAULT_PRIVACY_URL: &str = "https://room.net.time-pack.com/privacy";
 
+/// Default signaling endpoint for a packaged desktop build; overridable at runtime
+/// with `CROSSFILE_SIGNALING_URL` (self-hosted instance, docs/02 §7).
+const DEFAULT_SIGNALING_URL: &str = "ws://127.0.0.1:8788/v1/ws";
+
+#[derive(serde::Serialize)]
+struct ShellConfig {
+    shell: &'static str,
+    platform: &'static str,
+    signaling_url: String,
+    save_strategy: &'static str,
+    version: &'static str,
+}
+
+/// The web app calls this at connect time so a packaged shell can point at a
+/// self-hosted signaling server without rebuilding the frontend.
+#[tauri::command]
+fn get_shell_config() -> ShellConfig {
+    let signaling_url = std::env::var("CROSSFILE_SIGNALING_URL")
+        .unwrap_or_else(|_| DEFAULT_SIGNALING_URL.to_string());
+    ShellConfig {
+        shell: "desktop",
+        platform: std::env::consts::OS,
+        signaling_url,
+        save_strategy: "native",
+        version: env!("CARGO_PKG_VERSION"),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -97,7 +125,9 @@ fn unique_path(dir: &Path, file_name: &str) -> PathBuf {
     dir.join(format!("{stem}-{}", std::process::id()))
 }
 
-fn lock_saves(state: &AppState) -> Result<std::sync::MutexGuard<'_, HashMap<u64, SaveHandle>>, String> {
+fn lock_saves(
+    state: &AppState,
+) -> Result<std::sync::MutexGuard<'_, HashMap<u64, SaveHandle>>, String> {
     state
         .saves
         .lock()
@@ -181,7 +211,10 @@ async fn save_abort(state: State<'_, AppState>, handle: u64) -> Result<(), Strin
     match fs::remove_file(&path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(io_err(&format!("无法删除未完成文件 {}", path.display()), error)),
+        Err(error) => Err(io_err(
+            &format!("无法删除未完成文件 {}", path.display()),
+            error,
+        )),
     }
 }
 
@@ -220,7 +253,10 @@ fn on_window_event(window: &Window, event: &WindowEvent) {
 }
 
 fn request_quit(app: &tauri::AppHandle) {
-    let active = app.state::<AppState>().transfer_active.load(Ordering::SeqCst);
+    let active = app
+        .state::<AppState>()
+        .transfer_active
+        .load(Ordering::SeqCst);
     if active {
         if let Some(window) = app.get_webview_window("main") {
             let _ = window.emit("close-requested", ());
@@ -252,7 +288,12 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         app,
         "房间",
         true,
-        &[&new_room, &end_room, &PredefinedMenuItem::separator(app)?, &quit],
+        &[
+            &new_room,
+            &end_room,
+            &PredefinedMenuItem::separator(app)?,
+            &quit,
+        ],
     )?;
 
     let undo = PredefinedMenuItem::undo(app, Some("撤销"))?;
@@ -309,10 +350,7 @@ fn on_menu_event(app: &tauri::AppHandle, event: MenuEvent) {
                 let _ = window.emit("menu-action", id.to_string());
             }
         }
-        "privacy" => open_external(
-            app,
-            &help_url("CROSSFILE_PRIVACY_URL", DEFAULT_PRIVACY_URL),
-        ),
+        "privacy" => open_external(app, &help_url("CROSSFILE_PRIVACY_URL", DEFAULT_PRIVACY_URL)),
         "homepage" => open_external(
             app,
             &help_url("CROSSFILE_HOMEPAGE_URL", DEFAULT_HOMEPAGE_URL),
@@ -361,12 +399,13 @@ fn main() {
             } else {
                 // After load: prove JS/network work, expose mount state, and test WSS separately.
                 let _ = webview.eval(
-                    "setTimeout(function(){var s={title:document.title,root:(document.getElementById('root')||{}).innerHTML?document.getElementById('root').innerHTML.length:0,hook:typeof window.__crossfile,errors:(window.__cfErrors||[]).slice(-4)};fetch('https://room.net.time-pack.com/__report?tag=shell-probe&data='+encodeURIComponent(JSON.stringify(s))).catch(function(){});try{var ws=new WebSocket('wss://room.net.time-pack.com/v1/ws');ws.onopen=function(){fetch('https://room.net.time-pack.com/__report?tag=shell-ws&data=open').catch(function(){})};ws.onerror=function(){fetch('https://room.net.time-pack.com/__report?tag=shell-ws&data=error').catch(function(){})}}catch(e){fetch('https://room.net.time-pack.com/__report?tag=shell-ws&data=throw').catch(function(){})}},2500);",
+                    "setTimeout(function(){var st=null;try{st=window.__crossfile&&window.__crossfile.snapshot?window.__crossfile.snapshot():null}catch(e){}var s={title:document.title,href:location.href,root:(document.getElementById('root')||{}).innerHTML?document.getElementById('root').innerHTML.length:0,hook:typeof window.__crossfile,phase:st&&st.phase,error:st&&st.error,hasKey:st&&st.hasKey,errors:(window.__cfErrors||[]).slice(-4)};fetch('https://room.net.time-pack.com/__report?tag=shell-probe&data='+encodeURIComponent(JSON.stringify(s))).catch(function(){})},3000);",
                 );
             }
         })
         .on_window_event(on_window_event)
         .invoke_handler(tauri::generate_handler![
+            get_shell_config,
             set_transfer_active,
             confirm_close,
             save_open,
@@ -402,10 +441,8 @@ mod tests {
 
     #[test]
     fn duplicate_names_do_not_overwrite() {
-        let dir = std::env::temp_dir().join(format!(
-            "crossfile-desktop-test-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("crossfile-desktop-test-{}", std::process::id()));
         fs::create_dir_all(&dir).expect("temp dir");
         let first = unique_path(&dir, "a.bin");
         assert_eq!(first, dir.join("a.bin"));

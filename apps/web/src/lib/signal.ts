@@ -3,7 +3,7 @@ import type {
   ServerMessage,
   SignalPayload,
 } from "@crossfile/core";
-import { isNativeShell } from "./native.js";
+import { isNativeShell, readShellConfig } from "./native.js";
 
 /** Desktop shell default: the dev/self-host instance runs on this machine. */
 export const NATIVE_DEFAULT_SIGNALING_URL = "ws://127.0.0.1:8788/v1/ws";
@@ -28,6 +28,18 @@ export function signalingUrl(): string {
   if (isNativeShell()) return NATIVE_DEFAULT_SIGNALING_URL;
   const scheme = location.protocol === "https:" ? "wss" : "ws";
   return `${scheme}://${location.host}/v1/ws`;
+}
+
+/**
+ * Async variant of {@link signalingUrl}: when a native shell has no injected or
+ * stored URL, ask it for its configured signaling endpoint (self-hosted instances).
+ */
+export async function resolveSignalingUrl(): Promise<string> {
+  const immediate = signalingUrl();
+  if (immediate !== NATIVE_DEFAULT_SIGNALING_URL || !isNativeShell())
+    return immediate;
+  const config = await readShellConfig();
+  return config?.signalingUrl || immediate;
 }
 
 type MessageHandler = (message: ServerMessage) => void;

@@ -251,15 +251,10 @@ xvfb-run -a pnpm --filter @crossfile/desktop dev:attach   # 5 秒后 Ctrl-C
 
 ## 8. 已知限制 / 待接线
 
-1. **生产模式信令地址（必须由 Lead 改 JS）**：`apps/web/src/lib/signal.ts` 用同源
-   `${location.host}/v1/ws`。dev 下窗口是 `localhost:5173`，Vite 代理可用；但 `tauri build` 后
-   `location` 是 Tauri 的自定义 origin，同源推导会失败。需要在 Web 侧加壳内覆盖，例如：
-   ```ts
-   const nativeSignal = (window as any).__CROSSFILE_SIGNALING_URL__; // 壳注入
-   const url = nativeSignal ?? `${scheme}://${location.host}/v1/ws`;
-   ```
-   注入方式可选：Tauri 初始化脚本、`?signal=wss://…` 查询参数、或壳新增命令返回配置。
-   本壳目前**没有**内置该注入，等 Lead 定接口后可在 Rust 侧加一行 init script。
+1. **信令地址（已接线）**：壳提供 `get_shell_config` 命令，返回 `signaling_url`
+   （`CROSSFILE_SIGNALING_URL` 覆盖，默认 `ws://127.0.0.1:8788/v1/ws`）；Web 侧
+   `resolveSignalingUrl()` 在原生壳无注入/存储配置时向壳索取后再建连。
+   实测 macOS 100 MB / 500 MB 均通过（落盘 sha256 与发送方一致）。
 2. **`__CROSSFILE_NATIVE__` 需 JS 侧设置**（§4.3）；不设置则能力包仍按浏览器算，不会走 `native` 保存策略，500MB 限制也会按浏览器阈值判定。
 3. **无代码签名 / 公证**；Linux 上双击 AppImage 可能需要 `chmod +x` 并信任。
 4. **无自动更新**（未接 `tauri-plugin-updater`）。

@@ -36,7 +36,7 @@
 | U5 | 6 位码 + SAS；结束房间即销毁 | ✅ AC5 + AC7 |
 | U6 | 零存储审计 | ✅ AC8 |
 | U7 | 门禁全绿 | ✅ typecheck / 95 单测 / 对比度 25/25 / 零硬编码色值 / 7 个 e2e（AC2 按 `E2E_RELAY=1` 单独跑） |
-| U8 | 文档齐 | 🟡 README/自托管/隐私页/LICENSE/ADR/desktop/mobile 已齐；公网官方实例（域名+TLS+TURN 配额）待部署 |
+| U8 | 文档齐 | ✅ README/自托管/隐私页/LICENSE/ADR/desktop/mobile/验收记录/**官方实例部署清单**齐备；公网实例本身待按清单执行（需要你的域名与公网 IP） |
 
 ## 复现命令
 

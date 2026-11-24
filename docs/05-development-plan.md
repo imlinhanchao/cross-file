@@ -141,6 +141,15 @@ https://room.net.time-pack.com  --TLS-->  nginx (既有反代)  -->  Vite :5173
 
 > 单文件 64 KiB 分片、HWM 8 MiB；加密在浏览器主线程，后续可评估 Worker 化。
 
+## 7.3 剩余工作（按优先级）
+
+1. **AC9 补完**：桌面壳 GUI 内真实跑一次 500 MB（需有显示环境/人工，或接 tauri-driver WebDriver 自动化）；手机壳（Android AVD / iOS 模拟器）。
+2. **AC4**：Safari 接收端——macOS Safari 27（mac-mini）跑 100 MB；iOS 模拟器 Safari；自研 SW 流式下载并把 Safari/iOS 软上限从 250/100 MB 放宽到 500 MB。
+3. **M4**：官方实例部署（域名/TLS/限流/TURN 配额、`TURN_EXTERNAL_IP` 必填公网 IP）、Caddy 反代实装、隐私页已就位。
+4. **M3 收尾**：对话框组件（批准/结束/风险确认统一）、无障碍 axe 扫描与键盘走查、错误/空态文案全覆盖。
+5. **真实网络验收**：跨机同 LAN ≥60 Mbps、跨网打洞、仅中继 10 Mbps 下 500 MB <10 分钟；弱网 netem 用例。
+6. 手机壳原生保存（Android MediaStore / iOS Files）与分享面板接入。
+
 ## 8. 待办（需外部输入）
 
 - [ ] 确认 `https://room.net.time-pack.com` 的反代已指向 5173 且透传 WebSocket Upgrade（G0 阻塞项）

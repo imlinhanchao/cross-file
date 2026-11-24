@@ -402,6 +402,8 @@ offset  size  field
 
 ### 10.5 与上文的其他差异
 
+- §5 的 `storageQuotaMB` 由接收/发送端在 `hello/create/join` 前用 `navigator.storage.estimate()` 探测后填入；
+  `judgeFile` 在平台阈值之外还会用配额判断（超配额的 80% 警告、超配额拒绝），避免承诺存不下的文件；
 - §2.3「H 校验 proof」已落地：proof 无效时 host 直接 `deny(PROOF_INVALID)`；
 - 能力阈值按 `docs/01` §6 表执行（iOS 先于 Safari 判断），规则在 `packages/core/src/capability.ts` 有单测；
 - SAS 的 60 s 未确认超时由 UI 层计时器承担（v1 尚未实现计时，关闭页面即中止）。

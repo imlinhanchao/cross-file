@@ -50,6 +50,14 @@ test("a11y: host room and guest confirmation have no serious axe violations", as
     })
     .toBe("waiting");
   await expectNoSeriousViolations(host, "host-room");
+  // The design system ships a dark theme; hold it to the same bar.
+  await host.evaluate(() => {
+    document.documentElement.dataset.theme = "dark";
+  });
+  await expectNoSeriousViolations(host, "host-room-dark");
+  await host.evaluate(() => {
+    document.documentElement.dataset.theme = "light";
+  });
 
   const link = await host.evaluate(() => window.__crossfile.snapshot().link);
   await guest.goto(link);

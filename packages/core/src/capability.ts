@@ -202,12 +202,21 @@ export interface LimitVerdict {
 export function judgeFile(sizeBytes: number, caps: Caps): LimitVerdict {
   const rule = limitsFor(caps);
   const sizeMB = sizeBytes / MB;
-  const level: LimitLevel =
+  let level: LimitLevel =
     sizeMB > rule.hardLimitMB
       ? "reject"
       : sizeMB > rule.softLimitMB
         ? "warn"
         : "ok";
+
+  // D16 also reports the receiver's storage quota: never promise to store more than
+  // the origin can hold, even when the platform row would allow it.
+  if (caps.storageQuotaMB && caps.storageQuotaMB > 0) {
+    if (sizeMB > caps.storageQuotaMB) level = "reject";
+    else if (sizeMB > caps.storageQuotaMB * 0.8 && level === "ok")
+      level = "warn";
+  }
+
   return {
     level,
     softLimitMB: rule.softLimitMB,

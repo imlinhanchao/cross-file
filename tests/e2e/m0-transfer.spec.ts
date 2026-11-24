@@ -20,7 +20,12 @@ interface Snapshot {
   phase: string;
   link?: string;
   code?: string;
-  guests: Array<{ id: string; status: string; path?: string }>;
+  guests: Array<{
+    id: string;
+    status: string;
+    path?: string;
+    caps?: { storageQuotaMB?: number; secureContext?: boolean };
+  }>;
   files: Array<{ id: number; name: string; size: number }>;
   transfer?: { sentBytes: number; totalBytes: number; path?: string };
   result?: { ok: boolean; sha256?: string; bytes?: number };

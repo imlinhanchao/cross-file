@@ -4,10 +4,10 @@ import {
   createFileSalt,
   createHostPeer,
   createRoomIdentity,
+  detectCaps,
   decodeBitmap,
   deriveFileKey,
   deriveSessionKey,
-  detectCaps,
   effectiveChunkSize,
   iceServersFromTurn,
   importFileKey,
@@ -27,6 +27,7 @@ import {
 } from "@crossfile/core";
 import { copy, errorText, formatBytes } from "@crossfile/ui";
 import { installNativeShellHooks, setTransferActive } from "./native.js";
+import { probeCaps } from "./caps.js";
 import { SignalingSocket, deferred, withTimeout } from "./signal.js";
 import { useApp } from "../store.js";
 
@@ -65,7 +66,7 @@ export class HostController {
     this.identity.roomKey,
     this.identity.roomIdBytes,
   );
-  private readonly caps: Caps = detectCaps();
+  private caps: Caps = detectCaps();
   private readonly relayOnly =
     new URLSearchParams(location.search).get("relay") === "1";
   private socket = new SignalingSocket();
@@ -90,6 +91,7 @@ export class HostController {
 
   async start(): Promise<void> {
     useApp.getState().reset({ role: "host", phase: "provisioning" });
+    this.caps = await probeCaps();
     this.socket.onMessage((message) => void this.onMessage(message));
     this.socket.onClose(() => {
       const phase = useApp.getState().phase;
@@ -523,9 +525,11 @@ export class HostController {
         this.startTransferOnce(guestId, guest);
         break;
       case "error":
-        useApp
-          .getState()
-          .patch({ error: errorText(message.code, message.msg) });
+        // A receiver-side refusal (TOO_LARGE / CAPABILITY_RISK_DECLINED) ends the transfer.
+        useApp.getState().patch({
+          phase: "error",
+          error: errorText(message.code, message.msg),
+        });
         break;
       default:
         break;

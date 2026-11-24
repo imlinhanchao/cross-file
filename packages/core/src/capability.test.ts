@@ -182,6 +182,26 @@ describe("judgeFile", () => {
     expect(judgeFile(500 * MB, iphone).level).toBe("warn");
   });
 
+  it("treats an insufficient storage quota as a warning and an impossible one as reject", () => {
+    const chrome = detectCaps({
+      userAgent: UA.chromeDesktop,
+      hasFsPicker: true,
+      secureContext: true,
+      hasServiceWorker: true,
+    });
+    // Platform row allows 500 MB, but the origin only has ~300 MB left.
+    expect(judgeFile(400 * MB, { ...chrome, storageQuotaMB: 300 }).level).toBe(
+      "reject",
+    );
+    // Just over 80% of the quota is a warning, not a hard reject.
+    expect(judgeFile(250 * MB, { ...chrome, storageQuotaMB: 300 }).level).toBe(
+      "warn",
+    );
+    expect(judgeFile(200 * MB, { ...chrome, storageQuotaMB: 300 }).level).toBe(
+      "ok",
+    );
+  });
+
   it("records fs capability and save strategy ordering", () => {
     const chrome = detectCaps({
       userAgent: UA.chromeDesktop,

@@ -199,6 +199,16 @@ ADR 0009：`apps/desktop-electron/` 用 Electron（Chromium）替代 WebKitGTK �
   （`tauri build` + 内嵌 dist）再验。
 - 结论：macOS Tauri 壳「构建 + 窗口 + 页面 + 网络」已证明，**传输链路仍未打通**；Linux 已由 Electron 达成 AC9。
 
+## 7.0.10 D16 配额探测与暗色无障碍（已完成）
+
+- 能力包新增配额探测：Web 在 `hello/create/join` 前用 `navigator.storage.estimate()` 把
+  `storageQuotaMB` 填进 caps；`judgeFile` 在平台阈值之外再做配额判断（超配额 80% 警告、超配额拒绝），
+  接收端拒绝时用**真正生效的边界值**（配额或硬上限）提示「约 N MB」。
+- 接收端拒绝时发送 ctrl `error(TOO_LARGE)`，发送端随即将阶段切到 `error` 并给出可行动文案（此前只显示错误条但仍显示"已加入"）。
+- 新增 e2e：`quota-reject.spec.ts` 把 guest 的 `navigator.storage` 伪装成 5 MB 配额，发 20 MB →
+  接收端在写入任何字节前拒绝（提示约 5 MB），发送端同步进入 error；`m0` 断言 caps 里带真实 quota。
+- 无障碍：axe 扫描新增**暗色主题**一轮（host 房间 light + dark 均 0 serious/critical）。
+
 ## 7.1 开发链路（已实测）
 
 ```

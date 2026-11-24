@@ -5,10 +5,10 @@ import {
   computeJoinProof,
   createGuestNonce,
   createGuestPeer,
+  detectCaps,
   decodeChunkFrame,
   deriveFileKey,
   deriveSessionKey,
-  detectCaps,
   iceServersFromTurn,
   importFileKey,
   judgeFile,
@@ -31,6 +31,7 @@ import {
   setTransferActive,
   type SaveSink,
 } from "./native.js";
+import { probeCaps } from "./caps.js";
 import { SignalingSocket, withTimeout } from "./signal.js";
 import { useApp } from "../store.js";
 
@@ -41,7 +42,7 @@ interface FileReceiver {
 }
 
 export class GuestController {
-  private readonly caps: Caps = detectCaps();
+  private caps: Caps = detectCaps();
   private readonly relayOnly =
     new URLSearchParams(location.search).get("relay") === "1";
   private readonly nonce = createGuestNonce();
@@ -83,6 +84,7 @@ export class GuestController {
   async start(): Promise<void> {
     const store = useApp.getState();
     store.reset({ role: "guest", phase: "provisioning" });
+    this.caps = await probeCaps();
     if (this.joinCode) {
       // 6-digit-code path: no roomKey yet, it arrives after the SAS check.
       this.codeMode = true;
@@ -373,9 +375,16 @@ export class GuestController {
               msg: `receiver hard limit ${verdict.hardLimitMB} MB`,
             }),
           );
+          // Report whichever bound actually bit: the platform row or the origin quota.
+          const quotaMB = this.caps.storageQuotaMB;
+          const totalMB = totalBytes / (1024 * 1024);
+          const bindingMB =
+            quotaMB && quotaMB > 0 && totalMB > quotaMB
+              ? quotaMB
+              : verdict.hardLimitMB;
           store.patch({
             phase: "error",
-            error: `超过这台设备能接收的上限（约 ${verdict.hardLimitMB} MB）。请让对方改用电脑接收，或安装 App。`,
+            error: `超过这台设备能接收的上限（约 ${bindingMB} MB）。请让对方改用电脑接收，或安装 App。`,
           });
           break;
         }

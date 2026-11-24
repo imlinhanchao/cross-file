@@ -1,14 +1,15 @@
 /**
  * Dev entry point: `pnpm --filter @crossfile/signaling dev` (tsx watch).
  *
- * Environment: PORT (default 8787), TURN_URIS (comma separated), TURN_SECRET.
+ * Environment: PORT (default 8788 — 8787 is commonly taken on dev machines),
+ * TURN_URIS (comma separated), TURN_SECRET.
  * Per docs/02 §7 the process prints exactly one startup line and no request logs.
  */
 import { createSignalingServer, type TurnOptions } from "./index.js";
 import { logError } from "./log.js";
 
-const parsedPort = Number.parseInt(process.env.PORT ?? "8787", 10);
-const port = Number.isFinite(parsedPort) ? parsedPort : 8787;
+const parsedPort = Number.parseInt(process.env.PORT ?? "8788", 10);
+const port = Number.isFinite(parsedPort) ? parsedPort : 8788;
 const uris = (process.env.TURN_URIS ?? "")
   .split(",")
   .map((uri) => uri.trim())

@@ -7,7 +7,7 @@
 
 ```bash
 pnpm install
-pnpm dev:signal            # 信令：ws://127.0.0.1:8787/v1/ws（零存储、无数据库）
+pnpm dev:signal            # 信令：ws://127.0.0.1:8788/v1/ws（零存储、无数据库）
 pnpm dev:web               # Web：http://127.0.0.1:5173
 pnpm gate                  # typecheck + 单测 + 对比度 24/24 + 零硬编码色值
 pnpm e2e                   # Playwright 双浏览器真实传输（默认 10 MB）

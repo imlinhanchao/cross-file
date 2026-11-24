@@ -16,7 +16,7 @@ export interface TurnOptions {
 }
 
 export interface SignalingServerOptions {
-  /** TCP port; `0` binds an ephemeral port. Default 8787. */
+  /** TCP port; `0` binds an ephemeral port. Default 8788. */
   port?: number;
   /** Interface to bind. Default 127.0.0.1. */
   host?: string;

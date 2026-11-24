@@ -1,7 +1,7 @@
 import { defineConfig, searchForWorkspaceRoot } from "vite";
 import react from "@vitejs/plugin-react";
 
-const SIGNALING_TARGET = process.env.CROSSFILE_SIGNALING_URL ?? "ws://127.0.0.1:8787";
+const SIGNALING_TARGET = process.env.CROSSFILE_SIGNALING_URL ?? "ws://127.0.0.1:8788";
 
 export default defineConfig({
   plugins: [react()],

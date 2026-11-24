@@ -15,8 +15,8 @@ const expected = createHash("sha256").update(bytes).digest("hex");
 console.log("expected sha256:", expected, "size:", bytes.length);
 
 const browser = await chromium.launch({ channel: "chrome" });
-const hostContext = await browser.newContext();
-const guestContext = await browser.newContext();
+const hostContext = await browser.newContext({ ignoreHTTPSErrors: process.env.DEBUG_IGNORE_TLS === "1" });
+const guestContext = await browser.newContext({ ignoreHTTPSErrors: process.env.DEBUG_IGNORE_TLS === "1" });
 const host = await hostContext.newPage();
 const guest = await guestContext.newPage();
 

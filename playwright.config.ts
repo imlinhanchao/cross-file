@@ -19,6 +19,8 @@ export default defineConfig({
   reporter: process.env.CI ? [["github"], ["list"]] : [["list"]],
   use: {
     baseURL: APP_ORIGIN,
+    // Only needed when running against the dev reverse proxy origin.
+    ignoreHTTPSErrors: process.env.E2E_IGNORE_TLS === "1",
     trace: "retain-on-failure",
     video: "off",
   },

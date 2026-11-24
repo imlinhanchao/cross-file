@@ -64,13 +64,13 @@ export class GuestController {
   private pendingFrameBytes = 0;
   private receiverPaused = false;
   private devJoined = false;
-  private readonly native = isNativeShell();
+  private native = isNativeShell();
   private cleanupNative?: () => void;
   /** DEV-ONLY diagnostics for cross-machine acceptance tests (stripped from production builds). */
   private autoAccept =
     import.meta.env.DEV &&
     new URLSearchParams(location.search).get("autoaccept") === "1";
-  private readonly reportUrl = import.meta.env.DEV
+  private reportUrl: string | null = import.meta.env.DEV
     ? new URLSearchParams(location.search).get("report")
     : null;
   private roomId = "";
@@ -92,10 +92,28 @@ export class GuestController {
     const store = useApp.getState();
     store.reset({ role: "guest", phase: "provisioning" });
     this.caps = await probeCaps();
+    // The init script may land after the first paint: ask the shell directly so the
+    // native save sink is used even when the JS global was set late.
+    if (!this.native) {
+      const shell = await readShellConfig();
+      if (shell?.platform || shell?.shell) {
+        this.native = true;
+        this.caps = {
+          ...this.caps,
+          nativeShell: true,
+          saveStrategies: ["native", "blob"],
+        };
+      }
+    }
     // Debug shells advertise the flag via get_shell_config; release builds never set it,
     // so a crafted link cannot bypass the receiver's consent in production.
     if (!this.autoAccept && this.native) {
       const shell = await readShellConfig();
+      // Debug shells may also enable the diagnostics channel on a bundled page.
+      if (shell?.debugAutoAccept) {
+        this.reportUrl =
+          this.reportUrl ?? new URLSearchParams(location.search).get("report");
+      }
       this.autoAccept =
         shell?.debugAutoAccept === true &&
         new URLSearchParams(location.search).get("autoaccept") === "1";
@@ -146,8 +164,12 @@ export class GuestController {
       this.roomId = parsed.roomId;
       this.roomKey = parsed.roomKey;
       this.roomIdBytes = base32Decode(parsed.roomId);
-      this.sessionKey = deriveSessionKey(this.roomKey, this.roomIdBytes);
       store.patch({ hasKey: true });
+    }
+
+    // QR and dev-key paths carry the room key up front; derive the session key once.
+    if (this.sessionKey.length === 0 && this.roomKey.length === 32) {
+      this.sessionKey = deriveSessionKey(this.roomKey, this.roomIdBytes);
     }
 
     this.cleanupNative = installNativeShellHooks({
@@ -197,6 +219,13 @@ export class GuestController {
           roomId: state.roomId,
           error: state.error,
           files: state.files.length,
+          sent: state.transfer?.sentBytes ?? 0,
+          total: state.transfer?.totalBytes ?? 0,
+          pendingMB: Math.round(this.pendingFrameBytes / (1024 * 1024)),
+          paused: this.receiverPaused,
+          frames: (globalThis as { __cfFrames?: number }).__cfFrames ?? 0,
+          dataState: this.handles?.data.readyState ?? null,
+          ctrlState: this.handles?.ctrl.readyState ?? null,
           hasKey: state.hasKey ?? false,
           lastError:
             (globalThis as { __crossfileLastError?: string })

@@ -406,8 +406,10 @@ fn dev_join_script() -> Option<String> {
     var u = new URL(target);
     var key = u.hash ? u.hash.slice(1) : '';
     var room = u.pathname.split('/').filter(Boolean).pop() || '';
+    var report = u.searchParams.get('report') || '';
     var next = '/?devroom=' + encodeURIComponent(room) + '&devkey=' + encodeURIComponent(key) +
-      '&autoaccept=1&debug=1&relay=' + (/[?&]relay=1/.test(u.search) ? '1' : '0');
+      '&autoaccept=1&debug=1&relay=' + (/[?&]relay=1/.test(u.search) ? '1' : '0') +
+      (report ? '&report=' + encodeURIComponent(report) : '');
     if (!/[?&]devkey=/.test(location.search)) {{
       setTimeout(function () {{ location.href = next; }}, 1200);
     }}

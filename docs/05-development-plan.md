@@ -264,7 +264,12 @@ sha256 `0e9ae831…` 与发送方完全一致。**500 MB 跑到 498/524 MB 时 A
 下一步：把 `report=` 透传进本地页拿到 webview 内的 phase/lastError 与内存曲线，或改成分块写盘后强制
 释放/使用可增长缓冲，定位是 WebKit 内存上限还是 IPC/GC。
 
-结论：iOS 壳「构建 + 安装 + 加入房间 + 中继传输 100 MB 落盘」已验证，**500 MB 稳定性待解决**；
+**500 MB 最终通过**：根因是「本地源调试加入」路径漏了派生 `sessionKey`（只设了 roomKey/roomIdBytes），
+导致所有分片解密失败、静默丢弃（帧计数 8000 但进度 0、无落盘、无错误）。补上统一的
+`deriveSessionKey` 后，500 MB 中继测试：**host `HASH MATCHES EXPECTED: true`（sha256 `f5b7ea08…`）、
+iOS 落盘 524 288 000 B 且 sha256 完全一致、guest 阶段 done**。中间还修掉：base64 IPC 载荷、
+接收端 pause/resume 背压、native 壳探测晚于首屏时改用 `get_shell_config` 兜底、诊断上报。
+结论：iOS 手机壳（模拟器）**500 MB 全链路通过**；
 Android 壳仍受本机无 KVM、AVD 只读锁、arm64 APK 限制。
 
 ## 7.1 开发链路（已实测）

@@ -11,4 +11,7 @@
 - 结论落定后把本 ADR 改为「已采纳」并写清证据。
 
 ## 进展
-- 2026-11-24：mac-mini 可访问 `https://room.net.time-pack.com`（跨机 200），Playwright WebKit 客户端实测脚本已发起。
+- 2026-11-24：mac-mini 可访问 `https://room.net.time-pack.com`（跨机 200），Playwright WebKit 客户端实测发起。
+- 2026-11-24：跨机 WebKit 27.2 实测——信令 join/approve 正常，但 ICE 直连 `checking → failed`（~30 s，`dtlsState=new`，无选中候选对）；WebKit 收集到 host/srflx，host（Chrome）端未收到 remote candidate。
+- 2026-11-24：强制 TURN（coturn `turn:192.168.50.200:3478`，Chrome 端 relay 候选正常）时 WebKit 端 `iceGatheringState=complete` 但**零 local candidate**；TURN TCP 可达、UDP 未确认。待排除 WebKit 的 TURN/UDP 与 STUN 配置后结论。
+- 暂不改变能力矩阵；若 WebKit 只在可靠 TURN 下可用，则在文档中明确 Safari/iOS 依赖 TURN。

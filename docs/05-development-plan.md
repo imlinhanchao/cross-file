@@ -121,6 +121,23 @@
 - 队列：`transferChain` 串行执行，`开始发送` 按加入顺序排队；guest 先接受也只会排进链，不会并发。Playwright 用例断言「guest1 done 时 guest2 仍未 done」，随后两人 SHA-256 均与源文件一致。
 - UI：文件行右侧是「文件 × 人」胶囊（`chip-toggle`，选中打勾），底栏显示「发给 N 个接收方 · 共 X MB · 逐个发送」。
 
+## 7.0.3 手机壳（Tauri 2 Android）实测
+
+- `cargo check --target aarch64-linux-android` ✅、`cargo build --lib` ✅ 产出 `.so`、`cargo test` 3/3 ✅
+- `tauri android init` ✅；`tauri android build --debug` ❌ 沙箱禁 inotify（非工程问题）；等价 Gradle 流程 ✅ `BUILD SUCCESSFUL`，`app-arm64-debug.apk` 116 MB（`com.crossfile.mobile`、minSdk 24、targetSdk 37，含 `libcrossfile_mobile_lib.so`、`KeepAliveService(dataSync)`、`ACTION_SEND`）
+- 保存：与桌面同签名的 `save_*` 命令，目标 `app_data_dir()/downloads`；MediaStore 导出 TODO
+- 保活：`navigator.wakeLock` + Android dataSync 前台服务（进 APK，运行时未验）
+- 分享接收：intent-filter + `ShareIntake` 骨架已进 APK，JS 桥未接
+- 模拟器：本机无 `/dev/kvm`，install/启动/500 MB 未执行
+
+## 7.0.4 AC4 跨机 Safari/WebKit 进展（未完成，重要发现）
+
+跨机链路已通：mac-mini（WebKit 27.2）经 `https://room.net.time-pack.com` 打开接收页、信令 join/approve 正常（有 `hostCaps`）。
+但 **WebRTC 连接不成立**：
+- 直连模式（默认）：guest 收集到 host/srflx（含公网 IPv4 113.80.210.208），但 ICE `checking → failed`（~30 s），`dtlsState=new`，无选中候选对；host 端也未看到 remote candidate。
+- 强制中继（`?relay=1` + 本机 coturn `turn:192.168.50.200:3478`）：Chrome 端成功收集 relay 候选（192.168.50.200），WebKit 端 `iceGatheringState=complete` 却**没有任何 local candidate**；TURN TCP 3478 从 mac-mini 可达，UDP 未确认。疑似 WebKit 的 TURN/UDP 路径或 STUN 配置问题，下一步：去掉 STUN 只留 TURN、加 `?transport=tcp`、看 coturn 分配日志。
+- 结论未定；若最终确认 Safari 系无法直连，则 iOS/Safari 必须依赖可用的 TURN（与 D2 一致），能力矩阵与文档需按此收紧。
+
 ## 7.1 开发链路（已实测）
 
 ```

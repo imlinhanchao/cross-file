@@ -1,0 +1,19 @@
+{
+  "name": "@crossfile/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "CrossFile mobile shell (Tauri 2, Android/iOS)",
+  "scripts": {
+    "dev": "tauri dev",
+    "android:init": "tauri android init",
+    "android:dev": "tauri android dev",
+    "android:build": "tauri android build",
+    "android:build:debug": "tauri android build --debug",
+    "ios:init": "tauri ios init",
+    "ios:dev": "tauri ios dev",
+    "ios:build": "tauri ios build",
+    "check": "cargo check --manifest-path src-tauri/Cargo.toml",
+    "tauri": "tauri"
+  }
+}

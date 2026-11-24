@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "default",
+  "description": "Main window: core IPC for native save/close/keep-awake commands.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

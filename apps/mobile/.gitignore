@@ -1,0 +1,14 @@
+# Android / Tauri generated artifacts (see docs/mobile.md §0).
+# The Android Studio project itself (gen/android) is checked in; these parts are
+# regenerated on every `tauri android build` and must not be committed.
+src-tauri/gen/android/app/build/
+src-tauri/gen/android/build/
+src-tauri/gen/android/.gradle/
+src-tauri/gen/android/local.properties
+src-tauri/gen/android/.tauri/
+src-tauri/gen/android/tauri.settings.gradle
+src-tauri/gen/android/app/tauri.build.gradle.kts
+src-tauri/gen/android/app/tauri.properties
+src-tauri/gen/android/app/src/main/jniLibs/
+src-tauri/gen/android/app/src/main/java/com/crossfile/mobile/generated/
+src-tauri/target/

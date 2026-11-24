@@ -27,8 +27,23 @@ if [ -d "$HOME/Android/Sdk" ]; then
 fi
 
 # --- JDK ---------------------------------------------------------------------
-if [ -z "${JAVA_HOME:-}" ] && [ -d /usr/lib/jvm/java-21-openjdk-amd64 ]; then
-  export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+# Gradle needs a real JDK (javac), not a JRE-only install. Prefer, in order:
+# /home/hancel/jdk-21, any /usr/lib/jvm JDK with bin/javac, then the plain JRE.
+if [ -z "${JAVA_HOME:-}" ]; then
+  for candidate in /home/hancel/jdk-21 /usr/lib/jvm/java-21-openjdk-amd64 /usr/lib/jvm/java-17-openjdk-amd64; do
+    if [ -x "$candidate/bin/javac" ]; then
+      export JAVA_HOME="$candidate"
+      break
+    fi
+  done
+  if [ -z "${JAVA_HOME:-}" ]; then
+    for candidate in /usr/lib/jvm/*; do
+      if [ -x "$candidate/bin/javac" ]; then
+        export JAVA_HOME="$candidate"
+        break
+      fi
+    done
+  fi
 fi
 
 # --- Cargo / crates.io resilience (see docs/adr/0007) ------------------------

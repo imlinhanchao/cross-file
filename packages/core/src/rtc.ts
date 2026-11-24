@@ -63,11 +63,61 @@ function openChannel(channel: RTCDataChannel): Promise<void> {
   });
 }
 
+interface RtcDiagnostics {
+  state(): Record<string, unknown>;
+  stats(): Promise<Record<string, unknown>>;
+}
+
+function exposeDiagnostics(pc: RTCPeerConnection, role: "host" | "guest"): void {
+  if (typeof location === "undefined" || !location.search.includes("debug")) return;
+  const target = globalThis as unknown as { __crossfileRtc?: Record<string, RtcDiagnostics> };
+  target.__crossfileRtc = target.__crossfileRtc ?? {};
+  target.__crossfileRtc[role] = {
+    state: () => ({
+      connectionState: pc.connectionState,
+      iceConnectionState: pc.iceConnectionState,
+      signalingState: pc.signalingState,
+      iceGatheringState: pc.iceGatheringState,
+      localSdp: pc.localDescription?.sdp?.slice(0, 40) ?? null,
+      remoteSdp: pc.remoteDescription?.sdp?.slice(0, 40) ?? null,
+    }),
+    stats: async () => {
+      const report = await pc.getStats();
+      const out: Record<string, unknown> = {};
+      report.forEach((entry) => {
+        const type = entry.type;
+        if (type === "candidate-pair" && (entry.selected || entry.nominated)) {
+          out.pair = {
+            state: entry.state,
+            localCandidateId: entry.localCandidateId,
+            remoteCandidateId: entry.remoteCandidateId,
+            bytesSent: entry.bytesSent,
+            bytesReceived: entry.bytesReceived,
+          };
+        }
+        if (type === "local-candidate" || type === "remote-candidate") {
+          const list = (out[type] as Array<Record<string, unknown>>) ?? [];
+          list.push({ id: entry.id, candidateType: entry.candidateType, address: entry.address ?? entry.ip, port: entry.port, protocol: entry.protocol });
+          out[type] = list;
+        }
+        if (type === "data-channel") {
+          out.dataChannel = { state: entry.state, messagesSent: entry.messagesSent, messagesReceived: entry.messagesReceived };
+        }
+        if (type === "transport") {
+          out.transport = { dtlsState: entry.dtlsState, selectedCandidatePairId: entry.selectedCandidatePairId };
+        }
+      });
+      return out;
+    },
+  };
+}
+
 export function createHostPeer(options: PeerOptions): Peer {
   const pc = new RTCPeerConnection({
     iceServers: options.iceServers ?? [],
     ...(options.relayOnly ? { iceTransportPolicy: "relay" as RTCIceTransportPolicy } : {}),
   });
+  exposeDiagnostics(pc, "host");
   const ctrl = pc.createDataChannel("ctrl", { ordered: true });
   const data = pc.createDataChannel("data", { ordered: true });
 
@@ -115,6 +165,7 @@ export function createGuestPeer(options: PeerOptions): Peer {
     iceServers: options.iceServers ?? [],
     ...(options.relayOnly ? { iceTransportPolicy: "relay" as RTCIceTransportPolicy } : {}),
   });
+  exposeDiagnostics(pc, "guest");
   let ctrl: RTCDataChannel | null = null;
   let data: RTCDataChannel | null = null;
   const pendingCandidates: RTCIceCandidateInitLike[] = [];

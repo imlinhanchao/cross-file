@@ -1,0 +1,3 @@
+kotlin version: 2.3.21
+error message: java.nio.file.FileSystemException: /home/hancel/.local/share/kotlin/daemon/kotlin-daemon-client-tsmarker2274063679738240667.tmp: 只读文件系统
+

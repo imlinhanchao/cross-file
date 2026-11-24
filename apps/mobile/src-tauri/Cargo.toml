@@ -1,0 +1,30 @@
+[package]
+name = "crossfile-mobile"
+version = "0.1.0"
+description = "CrossFile mobile shell (Tauri 2, Android/iOS)"
+authors = ["CrossFile"]
+edition = "2021"
+license = "MIT"
+publish = false
+
+# Tauri 2 mobile entry points are exported from the library; `src/main.rs` is the
+# desktop-only shim so the same crate still compiles on a desktop host.
+[lib]
+name = "crossfile_mobile_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Same core runtime as the desktop shell; native save/keep-awake logic is hand-written.
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

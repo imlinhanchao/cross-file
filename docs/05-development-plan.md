@@ -8,13 +8,13 @@
 
 | # | 判据 | 状态 |
 |---|---|---|
-| U1 | `docker compose -f infra/docker-compose.yml up -d` + `pnpm dev` 可起，`https://room.net.time-pack.com` 可访问 | ☐ |
-| U2 | 双端 100 MB 传完且 SHA-256 一致（主判据） | ☐ |
-| U3 | 500 MB 走通，UI 显示真实路径标签 | ☐ |
+| U1 | `docker compose -f infra/docker-compose.yml up -d` + `pnpm dev` 可起，`https://room.net.time-pack.com` 可访问 | 进行中（infra-dev） |
+| U2 | 双端 100 MB 传完且 SHA-256 一致（主判据） | ✅ 本机双上下文 9.1 s，哈希一致 |
+| U3 | 500 MB 走通，UI 显示真实路径标签 | ⚠️ 本机 500 MB 28 s、路径「局域网直连」（尚需跨机/TURN 验证） |
 | U4 | 断流续传（50% 断开、60 s 内重连、只补缺片、哈希一致） | ☐ |
-| U5 | 6 位码 + 4 emoji SAS；结束房间即销毁 | ☐ |
-| U6 | 零存储审计（无 DB / 无写盘 / 无访问日志） | ☐ |
-| U7 | 门禁全绿（typecheck / 单测 core ≥80% / 对比度 24/24 / 零硬编码色值 / e2e） | ☐ |
+| U5 | 6 位码 + 4 emoji SAS；结束房间即销毁 | ☐（服务端短码已实现，客户端输码页与 SAS 未接） |
+| U6 | 零存储审计（无 DB / 无写盘 / 无访问日志） | 进行中（infra-dev：strace 审计脚本） |
+| U7 | 门禁全绿（typecheck / 单测 core ≥80% / 对比度 24/24 / 零硬编码色值 / e2e） | ⚠️ typecheck/82 单测/对比度/色值/e2e 全绿；覆盖率阈值待接线 |
 | U8 | 文档齐（README 可照做、自托管、隐私页、LICENSE） | ☐ |
 
 ## 2. 已采纳决策（不再逐项确认）
@@ -88,6 +88,18 @@
 | 2026-11-24 | 开发 origin 用既有反代域名替代 mkcert | 本机已有 HTTPS 入口 |
 | 2026-11-24 | Tauri CLI 用 npm 版 | `cargo install tauri-cli` 因 crates.io 超时失败 |
 | 2026-11-24 | 不引 Tailwind | 设计系统已是纯 CSS token 体系 |
+| 2026-11-24 | ctrl 消息统一 `{v:1,type}` 判别字段；`created` 增加 `code`；`join_ok.turn` 可缺省；`signal.to` 支持 `"host"` 哨兵 | docs/02 未定义这些字段/路由，按实现补齐，待回写 docs/02 |
+| 2026-11-24 | 500 MB 暂用 blob sink 跑通（本机 Chromium 可承受） | fs/sw sink 属 M2；本机 500 MB 峰值内存占用偏高，跨机/移动端必须换 sink |
+
+## 7.1 实测数据（本机 Chromium↔Chromium，loopback WebRTC，路径=局域网直连）
+
+| 文件 | 用时 | 平均吞吐 | 哈希 |
+|---|---|---|---|
+| 10 MB | 2.5 s | ~34 Mbps | 一致 |
+| 100 MB | 9.1 s | ~92 Mbps | 一致 |
+| 500 MB | 28.0 s | ~150 Mbps | 一致 |
+
+> 单文件 64 KiB 分片、HWM 8 MiB；加密在浏览器主线程，后续可评估 Worker 化。
 
 ## 8. 待办（需外部输入）
 

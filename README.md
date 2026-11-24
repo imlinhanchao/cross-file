@@ -3,7 +3,17 @@
 > 临时大文件、扫码即传、端到端加密、服务器不存一个字节。
 > 跨平台：Web（零安装接收）/ 桌面（Tauri）/ 手机（Tauri）/ 鸿蒙（浏览器）。
 
-**当前状态：设计阶段，未写代码。** 等你确认 `docs/01-design.md` §10 的六项后开工。
+**当前状态：M0 已跑通（2026-11-24）。** 两个浏览器经本机信令 + WebRTC 数据通道互传 10 MB / 100 MB / 500 MB，密文分片 AES-256-GCM、全文件 SHA-256 双向校验一致，界面显示真实路径标签（局域网直连 / 直连 / 中继）。设计与验收细节见 [docs/05-development-plan.md](docs/05-development-plan.md)。
+
+```bash
+pnpm install
+pnpm dev:signal            # 信令：ws://127.0.0.1:8787/v1/ws（零存储、无数据库）
+pnpm dev:web               # Web：http://127.0.0.1:5173
+pnpm gate                  # typecheck + 单测 + 对比度 24/24 + 零硬编码色值
+pnpm e2e                   # Playwright 双浏览器真实传输（默认 10 MB）
+E2E_FILE_MB=500 pnpm e2e   # 500 MB 用例
+```
+开发期 HTTPS 由既有反代提供：`https://room.net.time-pack.com` → `127.0.0.1:5173`（`allowedHosts` 已开，`/v1/ws` 走 Vite 代理）。
 
 ## 文档
 
@@ -23,9 +33,9 @@
 做：同步、点对点、零服务器存储、500MB 级、一次性传输。
 不做：云盘、账号、文件夹同步、无外网局域网、纯邻近传输、跨会话续传。
 
-## 快速验证（设计阶段）
+## 快速验证
 
-无。M0 交付后：
+见上方命令。M0 交付后：
 
 ```bash
 docker compose -f infra/docker-compose.yml up

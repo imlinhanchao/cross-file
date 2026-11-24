@@ -1,8 +1,20 @@
 import { expect, test, type Page } from "@playwright/test";
 import { createHash, randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 const SIZE_MB = Number(process.env.E2E_FILE_MB ?? 10);
 const SIZE = SIZE_MB * 1024 * 1024;
+
+/** Playwright caps setInputFiles buffers at 50 MB, so big fixtures go via disk. */
+function fixturePath(bytes: Buffer): { path: string; name: string } {
+  const dir = resolve(".cache/fixtures");
+  mkdirSync(dir, { recursive: true });
+  const name = `e2e-${SIZE_MB}mb.bin`;
+  const path = resolve(dir, name);
+  if (!existsSync(path)) writeFileSync(path, bytes);
+  return { path, name };
+}
 
 interface Snapshot {
   phase: string;
@@ -74,11 +86,7 @@ test("M0: two browsers transfer a file end to end with matching SHA-256", async 
 
   // 4. Host picks the file; the manifest goes over the encrypted ctrl channel.
   mark("set files");
-  await host.getByTestId("file-input").setInputFiles({
-    name: `m0-${SIZE_MB}mb.bin`,
-    mimeType: "application/octet-stream",
-    buffer: bytes,
-  });
+  await host.getByTestId("file-input").setInputFiles(fixturePath(bytes).path);
   await expect.poll(async () => (await snapshot(guest)).files.length, { timeout: 30_000 }).toBe(1);
   const manifest = await snapshot(guest);
   expect(manifest.files[0]?.size).toBe(SIZE);

@@ -408,6 +408,8 @@ INFO Total lost packets 0 (0.000000%), total send dropped 2 (16.666667%)
 - SPA 路由（`/r/:id`、`/j/:code`、`/code`、`/privacy`）回退到 `index.html`；`/assets/*` 走 `immutable` 缓存；
 - 仍然**没有**访问日志、没有 cookie、没有写盘（`bash tests/audit/zero-storage.sh --container` 覆盖这一点）。
 
-本地已验证：`PORT=8791 STATIC_DIR=$PWD/apps/web/dist pnpm --filter @crossfile/signaling start` 后用 Playwright 两个浏览器上下文直接对 `http://127.0.0.1:8791` 完成 10 MB 传输（哈希一致），页面与 `/v1/ws` 同源。
+本地已验证两条路径：
+1. 直接用源码：`PORT=8791 STATIC_DIR=$PWD/apps/web/dist pnpm --filter @crossfile/signaling start`，Playwright 两上下文对 `http://127.0.0.1:8791` 传输 10 MB（哈希一致）；
+2. **生产镜像**：`docker build -f infra/signaling/Dockerfile -t crossfile/signaling:local .` → `docker compose -f infra/docker-compose.yml up -d signaling`，`http://127.0.0.1:18788/` 返回页面与安全头、`/r/<id>` SPA 回退 200、Playwright 传输通过；容器只读根文件系统下 `tests/audit/zero-storage.sh --container` 仍 PASS。
 
 反代只负责 TLS 终结与可选的限流（`infra/deploy/Caddyfile.example`），转发到容器 8788 即可。

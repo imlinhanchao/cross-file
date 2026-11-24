@@ -22,6 +22,8 @@ import { logError } from "../../packages/signaling/src/log.js";
 const parsedPort = Number.parseInt(process.env.PORT ?? "8787", 10);
 const port = Number.isFinite(parsedPort) ? parsedPort : 8787;
 const host = process.env.HOST?.trim() || "0.0.0.0";
+// Production single-origin: serve the built web app from the same process (docs/02 §7).
+const staticDir = process.env.STATIC_DIR?.trim();
 
 const uris = (process.env.TURN_URIS ?? "")
   .split(",")
@@ -31,7 +33,12 @@ const secret = process.env.TURN_SECRET;
 const turn: TurnOptions | undefined =
   uris.length > 0 && secret ? { uris, secret } : undefined;
 
-const server = createSignalingServer({ port, host, ...(turn ? { turn } : {}) });
+const server = createSignalingServer({
+  port,
+  host,
+  ...(turn ? { turn } : {}),
+  ...(staticDir ? { staticDir } : {}),
+});
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {

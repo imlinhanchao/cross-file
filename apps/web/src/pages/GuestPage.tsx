@@ -11,6 +11,16 @@ export function GuestPage({ code }: { code?: string }) {
   const controller = useRef<GuestController | null>(null);
   const started = useRef(false);
   const [riskDialog, setRiskDialog] = useState(false);
+  /** DEV-ONLY: ?autosave=1 clicks the save link after completion (AC4 disk check). */
+  const autoSaveRef = useRef(false);
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    if (new URLSearchParams(location.search).get("autosave") !== "1") return;
+    if (state.phase !== "done" || !state.result?.url || autoSaveRef.current) return;
+    autoSaveRef.current = true;
+    const anchor = document.querySelector<HTMLAnchorElement>('[data-testid="save"]');
+    anchor?.click();
+  }, [state.phase, state.result?.url]);
 
   useEffect(() => {
     if (started.current) return;

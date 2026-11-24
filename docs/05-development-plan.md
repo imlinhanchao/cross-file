@@ -165,7 +165,7 @@
 
 ## 7.0.7 生产单源（已完成）
 
-`packages/signaling/src/static.ts`：配置 `STATIC_DIR` 时同一进程服务前端与 `/v1/ws`——SPA 回退、`assets/*` immutable 缓存、`Referrer-Policy: no-referrer`、严格 CSP、`Permissions-Policy`、无访问日志、无写盘。新增 7 个单测；本地用生产构建 `apps/web/dist` + Playwright 双上下文跑通 10 MB（哈希一致）。Dockerfile 构建阶段增加 `vite build` 并把 dist 放进运行时镜像（`STATIC_DIR=/app/public`）；`docs/self-host.md` 补生产单源说明；新增 `.github/workflows/ci.yml`（门禁/e2e/零存储审计三个 job）。
+`packages/signaling/src/static.ts`：配置 `STATIC_DIR` 时同一进程服务前端与 `/v1/ws`——SPA 回退、`assets/*` immutable 缓存、`Referrer-Policy: no-referrer`、严格 CSP、`Permissions-Policy`、无访问日志、无写盘。新增 7 个单测；本地用生产构建 `apps/web/dist` + Playwright 双上下文跑通 10 MB（哈希一致）；**Docker 生产镜像实测**：镜像内 `/app/public` 含 index.html，容器 `http://127.0.0.1:18788` 页面/安全头/SPA/传输全部通过，零存储审计仍 PASS。Dockerfile 构建阶段增加 `vite build` 并把 dist 放进运行时镜像（`STATIC_DIR=/app/public`）；`docs/self-host.md` 补生产单源说明；新增 `.github/workflows/ci.yml`（门禁/e2e/零存储审计三个 job）。
 
 ## 7.1 开发链路（已实测）
 

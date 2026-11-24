@@ -43,7 +43,8 @@ COPY infra/signaling infra/signaling
 # the image does not run TypeScript directly).
 RUN node infra/signaling/build.mjs /app && node --check infra/signaling/build/server.cjs
 # Production single-origin: the build stage also produces the static web app.
-RUN pnpm --filter @crossfile/web build
+# The runtime image must contain the SPA entry; fail the build early if it is missing.
+RUN pnpm --filter @crossfile/web build && test -f apps/web/dist/index.html
 
 # --- runtime stage: one file, one process, zero writes ---------------------------------------
 FROM node:22-alpine AS runtime

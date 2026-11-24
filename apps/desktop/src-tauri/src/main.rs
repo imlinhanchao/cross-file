@@ -349,6 +349,10 @@ fn main() {
         .manage(AppState::default())
         .menu(build_menu)
         .on_menu_event(on_menu_event)
+        .on_page_load(|_webview, payload| {
+            // Debug aid for headless acceptance runs: prove what the webview actually loaded.
+            println!("[shell] page load start={} url={}", payload.event() == tauri::webview::PageLoadEvent::Started, payload.url());
+        })
         .on_window_event(on_window_event)
         .invoke_handler(tauri::generate_handler![
             set_transfer_active,

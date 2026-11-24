@@ -15,10 +15,10 @@
 
 | # | 场景 | 状态 | 证据 |
 |---|---|---|---|
-| AC1 | Chrome↔Chrome 同网 500 MB ≥60 Mbps，显示「局域网直连」 | 🟡 本机通过 / 跨机 Chrome↔Chromium 待验 | 本机：500 MB 28 s ≈150 Mbps，路径「局域网直连」；跨机 Chrome→**Safari** 500 MB 路径「直连」≈153 Mbps，双方 SHA-256 `0fce9039…` 一致 |
+| AC1 | Chrome↔Chrome 同网 500 MB ≥60 Mbps，显示「局域网直连」 | ✅ 本机 + 跨机 Chromium | 本机：500 MB 28 s ≈150 Mbps，路径「局域网直连」；**跨机 Chrome→Edge(Chromium, mac-mini) 500 MB 63 s ≈66.6 Mbps，路径「直连」，双方 SHA-256 `2d58573f…` 一致**。注：跨机跑出的是 srflx 直连（路径「直连」），未观察到 host↔host 的「局域网直连」标签（Chromium mDNS 候选跨解析限制），属 D2 阶梯内的第二档 |
 | AC2 | 仅 TURN 500 MB，显示「中继」 | ✅ 本机 | coturn + `?relay=1`：10 MB / 100 MB / **500 MB** 均 PASS，路径「中继」，哈希一致；`E2E_RELAY=1 … pnpm exec playwright test tests/e2e/ac2-relay.spec.ts` |
 | AC3 | 传输中断 60 s 内重连续传，只重传缺失分片，哈希一致 | ✅ | `tests/e2e/ac3-resume.spec.ts`：20 MB，50% 强断 → 重连 → 只补 295 片 → 哈希一致 |
-| AC4 | Chrome→iPhone Safari 100 MB；500 MB 分级提示 | 🟡 传输侧通过 / 保存与 iOS 待人工 | 桌面 Safari 100 MB（中继）与 500 MB（直连）、iOS 27.2 模拟器 Safari 100 MB（中继）均双方哈希一致；接收端超软上限风险对话框由 `capability-warn.spec.ts` 覆盖；Safari「保存」点击需用户手势，未自动化 |
+| AC4 | Chrome→iPhone Safari 100 MB；500 MB 分级提示 | 🟡 传输侧通过（桌面 100/500 MB + iOS 模拟器 100 MB）/ 保存与 iOS 落盘待人工 | 桌面 Safari 100 MB（中继）与 500 MB（直连）、iOS 27.2 模拟器 Safari 100 MB（中继）均双方哈希一致；接收端超软上限风险对话框由 `capability-warn.spec.ts` 覆盖；Safari「保存」点击需用户手势，未自动化 |
 | AC5 | 6 位码加入 + 4 emoji SAS，不一致中止 | ✅ | `tests/e2e/code-sas.spec.ts`：6 位码加入 → 双方 SAS 一致 → ctrl 通道下发 roomKey → 2 MB 哈希一致 |
 | AC6 | 2 接收方顺序、文件×人矩阵、不并发 | ✅ | `tests/e2e/ac6-multi.spec.ts`：矩阵默认全员、guest1 完成前 guest2 不开始、两人哈希一致 |
 | AC7 | 房间结束即销毁；强杀 ≤30 min 清理 | ✅ | `tests/e2e/ac7-room-close.spec.ts`：guest 立即收 room_closed、内存房间删除、迟到 join 被拒 |

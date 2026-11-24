@@ -7,6 +7,11 @@ import { useApp } from "../store.js";
 import { Icon } from "../ui/Icon.js";
 import { PathBadge, Progress, WarningCard } from "../ui/bits.js";
 
+function guestLabel(caps: { platform: string; screen: string; uaFamily: string }): string {
+  if (caps.screen === "phone") return caps.platform === "ios" ? "iPhone" : "手机";
+  return caps.uaFamily === "safari" ? "Safari" : caps.platform === "linux" ? "电脑" : "设备";
+}
+
 export function HostPage() {
   const state = useApp();
   const controller = useRef<HostController | null>(null);
@@ -36,6 +41,10 @@ export function HostPage() {
   const pending = guests.filter((guest) => guest.status === "pending");
   const joined = guests.filter((guest) => guest.status === "joined" || guest.status === "transferring" || guest.status === "done");
   const totalBytes = state.files.reduce((sum, file) => sum + file.size, 0);
+  const assignedBytes = state.files.reduce(
+    (sum, file) => sum + file.size * (state.assignments[file.id]?.length ?? 0),
+    0,
+  );
   const verdicts = joined.map((guest) => ({ guest, verdict: judgeFile(totalBytes, guest.caps) }));
   const rejected = verdicts.find((entry) => entry.verdict.level === "reject");
   const warned = verdicts.find((entry) => entry.verdict.level === "warn");
@@ -151,7 +160,28 @@ export function HostPage() {
                         <span className="file-meta">{formatBytes(file.size)}</span>
                       </span>
                       <span className="spacer" />
-                      <span className="small muted">{state.phase === "transferring" ? "传输中" : "待发送"}</span>
+                      <span className="row gap-1 wrap" aria-label="发送给">
+                        {joined.map((guest) => {
+                          const checked = (state.assignments[file.id] ?? []).includes(guest.id);
+                          return (
+                            <button
+                              key={guest.id}
+                              type="button"
+                              className="chip-toggle"
+                              data-checked={checked}
+                              data-testid={`assign-${file.id}-${guest.id}`}
+                              onClick={() => {
+                                useApp.getState().toggleAssignment(file.id, guest.id);
+                                controller.current?.refreshManifests();
+                              }}
+                            >
+                              {checked ? <Icon name="check" size="sm" /> : null}
+                              {guestLabel(guest.caps)}
+                            </button>
+                          );
+                        })}
+                        <span className="small muted">{assignedBytes > 0 ? "" : "未选择接收方"}</span>
+                      </span>
                     </li>
                   ))}
                 </ul>
@@ -368,7 +398,9 @@ export function HostPage() {
 
       <div className="sticky-bar">
         <span className="small secondary">
-          {joined.length > 0 ? `发给 ${joined.length} 个接收方 · 共 ${formatBytes(totalBytes)}` : copy.emptyReceivers}
+          {joined.length > 0
+            ? `发给 ${joined.length} 个接收方 · 共 ${formatBytes(assignedBytes || totalBytes)} · 逐个发送`
+            : copy.emptyReceivers}
         </span>
         <span className="spacer" />
         <button className="btn btn--secondary" type="button" onClick={() => fileInput.current?.click()}>

@@ -69,6 +69,9 @@ export class HostController {
   private heartbeat?: ReturnType<typeof setInterval>;
   private pathTimer?: ReturnType<typeof setTimeout>;
   private cleanupNative?: () => void;
+  /** Serialises guests: one transfer at a time (docs/01 D18). */
+  private transferChain: Promise<void> = Promise.resolve();
+  private sendArmed = false;
 
   get roomLink(): string {
     return buildRoomLink(location.origin, this.identity.roomId, this.identity.roomKey);
@@ -94,12 +97,34 @@ export class HostController {
 
   setFiles(files: File[]): void {
     this.fileList = files;
-    useApp.getState().patch({
+    const store = useApp.getState();
+    store.patch({
       files: files.map((file, index) => ({ id: index + 1, name: file.name, size: file.size, mime: file.type })),
     });
+    // New files default to "send to every joined guest"; the matrix can override.
+    const joined = this.joinedGuestIds();
+    const assignments: Record<number, string[]> = {};
+    for (let index = 0; index < files.length; index++) assignments[index + 1] = [...joined];
+    store.setAssignments(assignments);
+    this.refreshManifests();
+  }
+
+  /** File × guest matrix changed: re-issue manifests to guests that have not started. */
+  refreshManifests(): void {
     for (const [guestId, guest] of this.peers) {
-      if (guest.handles) void this.sendManifest(guestId, guest);
+      if (guest.handles && !guest.transferStarted) void this.sendManifest(guestId, guest);
     }
+  }
+
+  private joinedGuestIds(): string[] {
+    return [...this.peers.keys()];
+  }
+
+  private assignedFileIds(guestId: string): number[] {
+    const { assignments } = useApp.getState();
+    return this.fileList
+      .map((_file, index) => index + 1)
+      .filter((fileId) => (assignments[fileId] ?? []).includes(guestId));
   }
 
   approve(guestId: string): void {
@@ -112,14 +137,20 @@ export class HostController {
     useApp.getState().removeGuest(guestId);
   }
 
-  /** Explicit "start sending": make sure the manifest went out, then stream on accept. */
+  /**
+   * "开始发送": each guest gets its assigned files, one guest at a time
+   * (docs/01 D18: sequential queue, never parallel).
+   */
   async sendNow(): Promise<void> {
-    const guestId = [...this.peers.keys()][0];
-    if (!guestId) throw new Error(copy.emptyReceivers);
-    const guest = this.peers.get(guestId)!;
-    await withTimeout(guest.peer.whenOpen, 20_000, "peer not open");
-    if (!guest.prepared) await this.sendManifest(guestId, guest);
-    this.startTransferOnce(guestId, guest);
+    const guestIds = this.joinedGuestIds().filter((guestId) => this.assignedFileIds(guestId).length > 0);
+    if (guestIds.length === 0) throw new Error(copy.emptyReceivers);
+    this.sendArmed = true;
+    for (const guestId of guestIds) {
+      const guest = this.peers.get(guestId)!;
+      await withTimeout(guest.peer.whenOpen, 20_000, "peer not open");
+      if (!guest.prepared) await this.sendManifest(guestId, guest);
+      this.startTransferOnce(guestId, guest);
+    }
   }
 
   /** Test/dev hook for AC3: kill the data path mid-transfer; the controller reconnects. */
@@ -171,6 +202,12 @@ export class HostController {
       }
       case "join_ok": {
         store.upsertGuest({ id: message.guestId, caps: message.peerCaps, status: "joined" });
+        const assignments = { ...store.assignments };
+        for (const file of store.files) {
+          const current = assignments[file.id] ?? [];
+          assignments[file.id] = current.includes(message.guestId) ? current : [...current, message.guestId];
+        }
+        store.setAssignments(assignments);
         store.patch({ phase: "joined" });
         this.openPeer(message.guestId, message.turn, this.guestHasKey(message.guestId));
         break;
@@ -297,25 +334,30 @@ export class HostController {
     const maxMessageSize =
       (guest.handles.pc.sctp as { maxMessageSize?: number } | null)?.maxMessageSize ?? 262_144;
     const chunkSize = effectiveChunkSize(64 * 1024, maxMessageSize);
+    const assigned = new Set(this.assignedFileIds(guestId));
     const files: PreparedFile[] = await Promise.all(
-      this.fileList.map(async (file, index) => {
-        const salt = createFileSalt();
-        const chunkCount = Math.max(1, Math.ceil(file.size / chunkSize));
-        return {
-          file,
-          sha256: await wholeFileSha256(file, chunkSize),
-          entry: {
-            id: index + 1,
-            name: file.name,
-            size: file.size,
-            mime: file.type || "application/octet-stream",
-            chunk: chunkSize,
-            chunkCount,
-            salt: bytesToBase64(salt),
-          },
-        };
-      }),
+      this.fileList
+        .map((file, index) => ({ file, fileId: index + 1 }))
+        .filter((entry) => assigned.has(entry.fileId))
+        .map(async ({ file, fileId }) => {
+          const salt = createFileSalt();
+          const chunkCount = Math.max(1, Math.ceil(file.size / chunkSize));
+          return {
+            file,
+            sha256: await wholeFileSha256(file, chunkSize),
+            entry: {
+              id: fileId,
+              name: file.name,
+              size: file.size,
+              mime: file.type || "application/octet-stream",
+              chunk: chunkSize,
+              chunkCount,
+              salt: bytesToBase64(salt),
+            },
+          };
+        }),
     );
+    if (files.length === 0) return;
     const manifest: Manifest = {
       v: 1,
       type: "manifest",
@@ -341,6 +383,9 @@ export class HostController {
       case "accept":
         guest.accept?.resolve(message.fileIds);
         guest.acceptedIds = message.fileIds;
+        // A guest accepting the manifest is itself the go-ahead: queue the transfer even
+        // if the host did not press "开始发送" (the manifest was already an intent to send).
+        this.sendArmed = true;
         this.startTransferOnce(guestId, guest);
         break;
       case "ack":
@@ -408,15 +453,24 @@ export class HostController {
   private startTransferOnce(guestId: string, guest: GuestPeer): void {
     if (guest.transferStarted || !guest.accept) return;
     guest.transferStarted = true;
-    void guest.accept.promise
-      .then(() => this.runTransfer(guestId))
-      .catch((error: unknown) => useApp.getState().patch({ error: String(error) }));
+    const accept = guest.accept.promise;
+    this.transferChain = this.transferChain
+      .then(async () => {
+        guest.acceptedIds = await accept;
+        await this.runTransfer(guestId);
+      })
+      .catch((error: unknown) => {
+        console.debug("[cf-host] queued transfer failed", String(error));
+        useApp.getState().patch({ error: String(error) });
+      });
   }
 
   private async runTransfer(guestId: string): Promise<void> {
     const guest = this.peers.get(guestId);
     if (!guest?.prepared) return;
-    const accepted = guest.prepared.files.filter((file) => guest.acceptedIds?.includes(file.entry.id));
+    const accepted = guest.prepared.files.filter(
+      (file) => guest.acceptedIds?.includes(file.entry.id) && this.assignedFileIds(guestId).includes(file.entry.id),
+    );
     const store = useApp.getState();
     const totalBytes = accepted.reduce((sum, file) => sum + file.file.size, 0);
 

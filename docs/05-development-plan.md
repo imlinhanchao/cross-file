@@ -54,7 +54,7 @@
 | WS6 | `core/capability`：detectCaps、六级阈值、judgeFile | 1.0 | ☐ |
 | WS7 | `core/sink`：blob / fs / sw / native | 3.0 | ☐ |
 | WS8 | `packages/ui` + `apps/web`：设计系统迁移、页面、状态、无障碍 | 5.0 | ☐ |
-| WS9 | `apps/desktop`：Tauri 2 桌面壳 | 2.0 | ☐ |
+| WS9 | `apps/desktop`：Tauri 2 桌面壳 | 2.0 | ✅ 工程/原生写盘/关窗/菜单/deb，Web 侧已接线 |
 | WS10 | `apps/mobile`：Tauri 2 iOS/Android | 3.0 | ☐ |
 | WS11 | 鸿蒙 ArkWeb 冒烟 | 0.5 | ☐ |
 | WS12 | e2e/perf/审计 | 4.0 | ☐ |
@@ -114,6 +114,12 @@
 - Web 侧接线：`window.__CROSSFILE_NATIVE__` 标记能力包 → `native` sink 直写（`onChunk` 按 offset 调用 `save_write`，不再攒内存 Blob）；`close-requested` → 确认框 → `confirm_close`；菜单 `menu-action` 接「新建/结束房间」；传输期间 `set_transfer_active` 开关
 - 信令地址解析顺序：`window.__CROSSFILE_SIGNALING_URL__` → `localStorage["crossfile.signalingUrl"]` → 桌面默认 `ws://127.0.0.1:8788/v1/ws` → 同源；生产自托管改地址用设置页/该 key（M4 待办）
 - 未验证：GUI 内 500 MB 实跑（本机无 xvfb/截图能力，需人工或 tauri-driver）、AppImage 打包、macOS/Windows 构建
+
+## 7.0.2 AC6 多接收方（实测）
+
+- 矩阵：新文件默认勾选所有已加入接收方，`assignments[fileId] = guestId[]`；未勾选的文件不会出现在该接收方的 manifest 里。
+- 队列：`transferChain` 串行执行，`开始发送` 按加入顺序排队；guest 先接受也只会排进链，不会并发。Playwright 用例断言「guest1 done 时 guest2 仍未 done」，随后两人 SHA-256 均与源文件一致。
+- UI：文件行右侧是「文件 × 人」胶囊（`chip-toggle`，选中打勾），底栏显示「发给 N 个接收方 · 共 X MB · 逐个发送」。
 
 ## 7.1 开发链路（已实测）
 

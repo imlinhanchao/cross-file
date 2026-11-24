@@ -58,6 +58,8 @@ export interface RoomView {
   hostCaps?: Caps;
   guests: ReceiverView[];
   files: FileView[];
+  /** fileId -> guest ids that should receive it (docs/01 D18 file × person matrix) */
+  assignments: Record<number, string[]>;
   transfer?: TransferView;
   result?: ResultView;
   error?: string;
@@ -78,6 +80,8 @@ interface AppStore extends RoomView {
   patchGuest(id: string, patch: Partial<ReceiverView>): void;
   removeGuest(id: string): void;
   setTransfer(patch: Partial<TransferView>): void;
+  setAssignments(next: Record<number, string[]>): void;
+  toggleAssignment(fileId: number, guestId: string): void;
 }
 
 export const useApp = create<AppStore>((set) => ({
@@ -85,7 +89,19 @@ export const useApp = create<AppStore>((set) => ({
   phase: "idle",
   guests: [],
   files: [],
-  reset: (view) => set({ guests: [], files: [], error: undefined, notice: undefined, result: undefined, transfer: undefined, roomClosed: false, ...view }),
+  assignments: {},
+  reset: (view) =>
+    set({
+      guests: [],
+      files: [],
+      assignments: {},
+      error: undefined,
+      notice: undefined,
+      result: undefined,
+      transfer: undefined,
+      roomClosed: false,
+      ...view,
+    }),
   patch: (view) => set(view),
   upsertGuest: (guest) =>
     set((state) => {
@@ -96,6 +112,13 @@ export const useApp = create<AppStore>((set) => ({
   patchGuest: (id, patch) =>
     set((state) => ({ guests: state.guests.map((g) => (g.id === id ? { ...g, ...patch } : g)) })),
   removeGuest: (id) => set((state) => ({ guests: state.guests.filter((g) => g.id !== id) })),
+  setAssignments: (next) => set({ assignments: next }),
+  toggleAssignment: (fileId, guestId) =>
+    set((state) => {
+      const current = state.assignments[fileId] ?? [];
+      const next = current.includes(guestId) ? current.filter((id) => id !== guestId) : [...current, guestId];
+      return { assignments: { ...state.assignments, [fileId]: next } };
+    }),
   setTransfer: (patch) =>
     set((state) => ({
       transfer: {

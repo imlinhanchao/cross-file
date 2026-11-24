@@ -132,6 +132,14 @@ export class HostController {
     useApp.getState().patchGuest(guestId, { status: "joined" });
   }
 
+  /** Host removes an already-joined receiver (docs/02 §8: dropped immediately). */
+  remove(guestId: string): void {
+    this.socket.send({ v: 1, type: "remove", guestId });
+    this.peers.get(guestId)?.peer.close();
+    this.peers.delete(guestId);
+    useApp.getState().patchGuest(guestId, { status: "removed" });
+  }
+
   deny(guestId: string): void {
     this.socket.send({ v: 1, type: "deny", guestId, reason: "host declined" });
     useApp.getState().removeGuest(guestId);

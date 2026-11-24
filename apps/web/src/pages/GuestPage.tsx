@@ -1,14 +1,16 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { copy, formatBytes, mimeLabel } from "@crossfile/ui";
 import { GuestController } from "../lib/guest.js";
 import { useApp } from "../store.js";
 import { Icon } from "../ui/Icon.js";
+import { Dialog } from "../ui/Dialog.js";
 import { Progress, WarningCard } from "../ui/bits.js";
 
 export function GuestPage({ code }: { code?: string }) {
   const state = useApp();
   const controller = useRef<GuestController | null>(null);
   const started = useRef(false);
+  const [riskDialog, setRiskDialog] = useState(false);
 
   useEffect(() => {
     if (started.current) return;
@@ -131,7 +133,10 @@ export function GuestPage({ code }: { code?: string }) {
                     className="btn btn--primary btn--lg btn--block"
                     type="button"
                     data-testid="accept"
-                    onClick={() => controller.current?.accept()}
+                    onClick={() => {
+                      if (state.risk?.level === "warn") setRiskDialog(true);
+                      else controller.current?.accept();
+                    }}
                   >
                     <Icon name="arrow-right" size="sm" />
                     {state.risk?.level === "warn" ? "仍要接收" : copy.accept}
@@ -195,7 +200,29 @@ export function GuestPage({ code }: { code?: string }) {
             </div>
           ) : null}
 
-          {state.error ? <WarningCard title={copy.errorGeneric} body={state.error} /> : null}
+          {state.error ? (
+            <>
+              <WarningCard title={copy.errorGeneric} body={state.error} />
+              <a className="btn btn--secondary btn--block" href="/">
+                返回首页
+              </a>
+            </>
+          ) : null}
+
+          <Dialog
+            open={riskDialog}
+            title="仍要接收这个大文件？"
+            confirmLabel="仍要接收"
+            onConfirm={() => {
+              setRiskDialog(false);
+              controller.current?.accept();
+            }}
+            onCancel={() => setRiskDialog(false)}
+          >
+            {state.risk?.message ?? "这台设备保存大文件有风险，可能无法保存。"}
+            <br />
+            也可以让对方改用电脑接收，或安装 CrossFile App。
+          </Dialog>
         </div>
       </main>
     </div>

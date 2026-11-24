@@ -153,6 +153,15 @@
 - 自动化：`tests/e2e/capability-warn.spec.ts` 把 guest 伪装成 iPhone（UA + touch + 无 FSA），发送 150 MB → 断言 `risk.level=warn`、软上限 100 MB、按钮「仍要接收」，接收后哈希一致（21 s）。
 - Safari 桌面 100 MB 实测与 iOS 模拟器 100 MB 实测见 §7.0.4；「保存到磁盘」仍需人工点击（Safari 要求用户手势）。
 
+## 7.0.6 M3 产品化细节（已完成）
+
+- **对话框**：`ui/Dialog.tsx`（`role=dialog`/`aria-modal`、焦点陷阱、Esc 取消、关闭后焦点还原）。用于：结束房间确认（危险操作）、发送前能力风险确认、移除接收方、接收方「仍要接收」确认。
+- **键盘**：⌘/Ctrl+Enter 开始发送；Esc 打开结束房间确认（对话框内 Esc 只关闭对话框，`defaultPrevented` 防止重复处理）。
+- **移除接收方**：接收方行新增移除按钮（带 `aria-label`），确认后信令 `remove`、Peer 关闭、UI 标记已移除。
+- **无障碍**：新增 `tests/e2e/a11y.spec.ts`（@axe-core/playwright，WCAG 2.1/2.2 A/AA），宿主房间、接收确认页、结束房间对话框 **0 serious/critical**；期间修掉 QR `aria-label` 缺 role、文字三层灰阶对比度不足（`--text-secondary`→gray-700、`--text-muted`→gray-600）、路径「局域网」徽标对比度（mint-800）三处问题。
+- 对比度校验脚本扩到 25 组（文本一律 ≥4.5:1），`design/README` 与 `docs/04` §5/§6 同步。
+- 回归：7 个 e2e 通过（AC2 中继按 `E2E_RELAY=1` 单独通过）、95 单测、门禁全绿；`pnpm build` 产物中确认 dev-only 的 `autoaccept` 钩子已被剥离。
+
 ## 7.1 开发链路（已实测）
 
 ```

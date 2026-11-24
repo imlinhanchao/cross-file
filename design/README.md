@@ -18,7 +18,7 @@ design/
 └── tools/
     ├── build.mjs          # 内联图标与二维码，生成 screens/
     ├── shoot.sh           # headless Chrome 截图
-    ├── check-contrast.mjs # WCAG 对比度校验（24 组）
+    ├── check-contrast.mjs # WCAG 对比度校验（25 组）
     └── make-qr.js         # 重新生成示例二维码
 ```
 

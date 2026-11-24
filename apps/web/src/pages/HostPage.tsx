@@ -5,6 +5,7 @@ import { copy, formatBytes, pathLabel, splitCode } from "@crossfile/ui";
 import { HostController } from "../lib/host.js";
 import { useApp } from "../store.js";
 import { Icon } from "../ui/Icon.js";
+import { Dialog } from "../ui/Dialog.js";
 import { PathBadge, Progress, WarningCard } from "../ui/bits.js";
 
 function guestLabel(caps: { platform: string; screen: string; uaFamily: string }): string {
@@ -19,6 +20,8 @@ export function HostPage() {
   const [qrSvg, setQrSvg] = useState("");
   const [dragging, setDragging] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<"end-room" | "send-warn" | "remove-guest" | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<string | null>(null);
 
   useEffect(() => {
     const instance = new HostController();
@@ -59,6 +62,32 @@ export function HostPage() {
     controller.current?.setFiles(Array.from(files));
   };
 
+  const startSend = (): void => {
+    if (!canSend) return;
+    if (warned) {
+      setDialog("send-warn");
+      return;
+    }
+    void controller.current?.sendNow().catch((error: unknown) => useApp.getState().patch({ error: String(error) }));
+  };
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      // A dialog that already handled Escape (and closed itself) must win.
+      if (event.defaultPrevented) return;
+      if (dialog) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setDialog("end-room");
+      } else if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        event.preventDefault();
+        startSend();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [dialog, canSend, warned]);
+
   const copyLink = async (): Promise<void> => {
     if (!state.link) return;
     try {
@@ -87,7 +116,7 @@ export function HostPage() {
         <button className="icon-btn" type="button" aria-label={copy.copyLink} onClick={() => void copyLink()}>
           <Icon name="link" />
         </button>
-        <button className="btn btn--ghost" type="button" onClick={() => controller.current?.close()}>
+        <button className="btn btn--ghost" type="button" onClick={() => setDialog("end-room")}>
           {copy.endRoom}
         </button>
       </header>
@@ -277,7 +306,7 @@ export function HostPage() {
                 </span>
               </div>
 
-              <div className="qr-frame" aria-label={copy.qrAlt}>
+              <div className="qr-frame" role="img" aria-label={copy.qrAlt}>
                 {qrSvg ? <div dangerouslySetInnerHTML={{ __html: qrSvg }} /> : null}
               </div>
 
@@ -380,6 +409,20 @@ export function HostPage() {
                       ) : guest.path ? (
                         <PathBadge path={guest.path} />
                       ) : null}
+                      {guest.status === "joined" ? (
+                        <button
+                          className="icon-btn"
+                          type="button"
+                          aria-label={`移除 ${guestLabel(guest.caps)}`}
+                          data-testid={`remove-${guest.id}`}
+                          onClick={() => {
+                            setRemoveTarget(guest.id);
+                            setDialog("remove-guest");
+                          }}
+                        >
+                          <Icon name="x" size="sm" />
+                        </button>
+                      ) : null}
                       {guest.progress && guest.progress.totalBytes > 0 ? (
                         <Progress
                           compact
@@ -412,12 +455,58 @@ export function HostPage() {
           type="button"
           data-testid="start-send"
           disabled={!canSend}
-          onClick={() => void controller.current?.sendNow().catch((error: unknown) => useApp.getState().patch({ error: String(error) }))}
+          onClick={() => startSend()}
         >
           <Icon name="arrow-right" size="sm" />
           {state.phase === "transferring" ? copy.transferInProgress : copy.startSend}
         </button>
       </div>
+
+      <Dialog
+        open={dialog === "end-room"}
+        title="结束房间？"
+        confirmLabel="结束房间"
+        danger
+        onConfirm={() => {
+          setDialog(null);
+          controller.current?.close();
+        }}
+        onCancel={() => setDialog(null)}
+      >
+        正在传输的文件会中断，房间和密钥会立即销毁，服务器不会留下任何副本。
+      </Dialog>
+
+      <Dialog
+        open={dialog === "send-warn"}
+        title="对方设备可能保存失败"
+        confirmLabel="仍要发送"
+        onConfirm={() => {
+          setDialog(null);
+          void controller.current?.sendNow().catch((error: unknown) => useApp.getState().patch({ error: String(error) }));
+        }}
+        onCancel={() => setDialog(null)}
+      >
+        {formatBytes(totalBytes)} 超过对方设备稳定保存上限（约 {warned?.verdict.softLimitMB ?? 150} MB）。
+        可以继续发送，但对方可能在保存时失败；建议改用电脑接收或让对方安装 App。
+      </Dialog>
+
+      <Dialog
+        open={dialog === "remove-guest"}
+        title="移除接收方？"
+        confirmLabel="移除"
+        danger
+        onConfirm={() => {
+          if (removeTarget) controller.current?.remove(removeTarget);
+          setDialog(null);
+          setRemoveTarget(null);
+        }}
+        onCancel={() => {
+          setDialog(null);
+          setRemoveTarget(null);
+        }}
+      >
+        对方会立即断开，需要重新扫码或输入房间码才能再加入。
+      </Dialog>
 
       {toast ? (
         <div className="toast" role="status">

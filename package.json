@@ -25,6 +25,7 @@
     "build:desktop": "pnpm --filter @crossfile/desktop build"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
     "@noble/hashes": "^2.0.1",
     "@playwright/test": "^1.56.1",
     "@tauri-apps/cli": "^2.12.6",

@@ -80,6 +80,7 @@ test("AC7: ending the room tears it down and later joins are rejected", async ({
 
   // "结束房间" destroys the room and the key, and the guest is told immediately.
   await host.getByRole("button", { name: "结束房间" }).click();
+  await host.getByTestId("dialog-confirm").click(); // confirm the destructive action
   await expect.poll(async () => (await snapshot(guest)).phase, { timeout: 30_000 }).toBe("error");
   expect((await snapshot(guest)).error ?? "").toContain("房间已结束");
 

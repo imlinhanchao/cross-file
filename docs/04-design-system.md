@@ -93,8 +93,8 @@ CrossFile 是一个「工具」而不是「玩具」。用户在这一刻关心�
 | 抬升面 | `--bg-elevated` | 白 | gray-850 |
 | inset / 次级面 | `--bg-subtle` / `--bg-inset` | gray-50 / gray-100 | gray-850 / gray-950 |
 | 正文 | `--text-primary` | gray-800 | gray-0 |
-| 次要文字 | `--text-secondary` | gray-600 | gray-300 |
-| 弱化文字 | `--text-muted` | gray-500 | gray-400 |
+| 次要文字 | `--text-secondary` | gray-700 | gray-300 |
+| 弱化文字 | `--text-muted` | gray-600 | gray-400 |
 | 主按钮文字 | `--text-on-primary` | gray-950 | gray-950 |
 | 装饰线 / 边框 / 强边框 | `--border-hairline` / `--border` / `--border-strong` | gray-200 / gray-300 / gray-500 | 18% / 34% / gray-500 |
 | 主色 / hover / active | `--primary` / `-hover` / `-active` | mint-400 / 300 / 500 | mint-400 / 300 / 500 |
@@ -102,7 +102,7 @@ CrossFile 是一个「工具」而不是「玩具」。用户在这一刻关心�
 | 危险 | `--danger` / `--danger-soft` / `--danger-text` | red-600 / red-200 / red-600 | red-400 / 27% 0.05 / red-400 |
 | 警告 | `--warning` / `-soft` / `-border` / `-text` | amber-600 / 96.5% 0.045 85 / 85% 0.10 80 / amber-700 | amber-400 / 27% 0.05 75 / 42% 0.09 75 / amber-400 |
 | 信息 | `--info` / `-soft` / `-text` | blue-600 / blue-200 / blue-600 | blue-400 / 28% 0.05 255 / blue-300 |
-| 路径：局域网 / 直连 / 中继 | `--path-lan` / `--path-direct` / `--path-relay` | mint-700 / blue-600 / amber-700 | mint-400 / blue-300 / amber-400 |
+| 路径：局域网 / 直连 / 中继 | `--path-lan` / `--path-direct` / `--path-relay` | mint-800 / blue-600 / amber-700 | mint-400 / blue-300 / amber-400 |
 | 焦点环 | `--focus-ring` | blue-500 | mint-400 |
 | QR 前景/背景 | `--qr-fg` / `--qr-bg` | gray-950 / 白 | gray-950 / gray-0 |
 | 阴影 | `--shadow-1/2/3` | 冷墨低透明度 | 更深的黑 |
@@ -113,20 +113,22 @@ CrossFile 是一个「工具」而不是「玩具」。用户在这一刻关心�
 
 ## 6. 对比度验证
 
-`node design/tools/check-contrast.mjs` 对 24 组前景/背景组合做 WCAG 计算，全部通过（正文 ≥4.5:1，UI/边框 ≥3:1）：
+`node design/tools/check-contrast.mjs` 对 25 组前景/背景组合做 WCAG 计算，全部通过（文本 ≥4.5:1，UI/边框 ≥3:1）：
 
 | 场景 | 组合 | 比值 | 要求 |
 |---|---|---|---|
 | 浅色正文 / 页面 | gray-800 on gray-25 | 13.69 | 4.5 |
-| 浅色次要 / 卡片 | gray-600 on gray-0 | 6.39 | 4.5 |
-| 浅色弱化 / 卡片 | gray-500 on gray-0 | 3.86 | 3.0 |
+| 浅色次要 / 页面 | gray-700 on gray-25 | 9.39 | 4.5 |
+| 浅色次要 / 卡片 | gray-700 on gray-0 | 9.78 | 4.5 |
+| 浅色弱化 / 页面 | gray-600 on gray-25 | 6.13 | 4.5 |
+| 浅色弱化 / 卡片 | gray-600 on gray-0 | 6.39 | 4.5 |
 | 浅色主按钮文字 | gray-950 on mint-400 | 12.10 | 4.5 |
 | 浅色输入边框 | gray-500 on gray-25 | 3.70 | 3.0 |
 | 浅色焦点环 | blue-500 on gray-25 | 3.74 | 3.0 |
 | 浅色警告文字 | amber-700 on amber-soft | 5.02 | 4.5 |
 | 深色正文 / 页面 | gray-0 on gray-925 | 18.69 | 4.5 |
 | 深色次要 / 卡片 | gray-300 on gray-900 | 10.26 | 4.5 |
-| 深色弱化 / 卡片 | gray-400 on gray-900 | 7.22 | 3.0 |
+| 深色弱化 / 卡片 | gray-400 on gray-900 | 7.22 | 4.5 |
 | 深色主按钮文字 | gray-950 on mint-400 | 12.10 | 4.5 |
 | 深色输入边框 | gray-500 on gray-900 | 4.54 | 3.0 |
 | 深色警告文字 | amber-400 on gray-900 | 10.13 | 4.5 |

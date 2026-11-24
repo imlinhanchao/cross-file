@@ -69,6 +69,8 @@ test("capability gate: iPhone-class receiver warns above its 100 MB soft limit",
   await expect(guest.getByTestId("accept")).toHaveText(/仍要接收/);
 
   await guest.getByTestId("accept").click();
+  // Above the soft limit the receiver must confirm in a dialog before accepting.
+  await guest.getByTestId("dialog-confirm").click();
   await expect.poll(async () => (await snapshot(guest)).phase, { timeout: 240_000 }).toBe("done");
   await expect.poll(async () => (await snapshot(host)).phase, { timeout: 240_000 }).toBe("done");
 

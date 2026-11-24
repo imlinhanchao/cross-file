@@ -1,0 +1,15 @@
+# generated / vendored
+node_modules
+.cache
+coverage
+dist
+apps/web/dist
+playwright-report
+test-results
+pnpm-lock.yaml
+infra/signaling/build
+# design assets are hand-authored / generated as-is
+design
+# long-form docs are prose, formatted by hand
+docs
+README.md

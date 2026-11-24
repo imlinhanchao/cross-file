@@ -19,31 +19,57 @@ const expected = createHash("sha256").update(bytes).digest("hex");
 console.log("expected sha256:", expected, "size:", bytes.length);
 
 const browser = await chromium.launch({ channel: "chrome" });
-const hostContext = await browser.newContext({ ignoreHTTPSErrors: process.env.DEBUG_IGNORE_TLS === "1" });
-const guestContext = await browser.newContext({ ignoreHTTPSErrors: process.env.DEBUG_IGNORE_TLS === "1" });
+const hostContext = await browser.newContext({
+  ignoreHTTPSErrors: process.env.DEBUG_IGNORE_TLS === "1",
+});
+const guestContext = await browser.newContext({
+  ignoreHTTPSErrors: process.env.DEBUG_IGNORE_TLS === "1",
+});
 const host = await hostContext.newPage();
 const guest = await guestContext.newPage();
 
 const snap = (page) =>
   page.evaluate(() => {
     const state = window.__crossfile?.snapshot?.();
-    const extra = { sha256: window.__crossfile?.sha256, expected: window.__crossfile?.expected, complete: window.__crossfile?.complete };
+    const extra = {
+      sha256: window.__crossfile?.sha256,
+      expected: window.__crossfile?.expected,
+      complete: window.__crossfile?.complete,
+    };
     return {
       phase: state?.phase,
-      guests: state?.guests?.map((g) => ({ id: g.id, status: g.status, path: g.path })),
+      guests: state?.guests?.map((g) => ({
+        id: g.id,
+        status: g.status,
+        path: g.path,
+      })),
       files: state?.files?.length,
-      transfer: state?.transfer ? { sent: state.transfer.sentBytes, total: state.transfer.totalBytes, path: state.transfer.path } : undefined,
+      transfer: state?.transfer
+        ? {
+            sent: state.transfer.sentBytes,
+            total: state.transfer.totalBytes,
+            path: state.transfer.path,
+          }
+        : undefined,
       result: state?.result,
       error: state?.error,
       extra,
     };
   });
 
-for (const [name, page] of [["host", host], ["guest", guest]]) {
-  page.on("pageerror", (error) => console.log(`[${name}] PAGEERROR`, String(error).slice(0, 400)));
+for (const [name, page] of [
+  ["host", host],
+  ["guest", guest],
+]) {
+  page.on("pageerror", (error) =>
+    console.log(`[${name}] PAGEERROR`, String(error).slice(0, 400)),
+  );
   page.on("console", (message) => {
     const text = message.text();
-    if (text.includes("[cf-") || ["error", "warning"].includes(message.type())) {
+    if (
+      text.includes("[cf-") ||
+      ["error", "warning"].includes(message.type())
+    ) {
       console.log(`[${name}] console.${message.type()}`, text.slice(0, 300));
     }
   });
@@ -56,18 +82,30 @@ const dump = async (label) => {
 };
 
 await host.goto(BASE + "/" + (RELAY ? "?relay=1" : ""));
-await host.waitForFunction(() => window.__crossfile?.snapshot?.().phase === "waiting", null, { timeout: 30_000 });
+await host.waitForFunction(
+  () => window.__crossfile?.snapshot?.().phase === "waiting",
+  null,
+  { timeout: 30_000 },
+);
 const link = await host.evaluate(() => window.__crossfile.snapshot().link);
 const code = await host.evaluate(() => window.__crossfile.snapshot().code);
 console.log("room link:", link, "code:", code);
 await dump("host created");
 
 await guest.goto(RELAY ? link.replace("#", "?relay=1#") : link);
-await host.waitForFunction(() => (window.__crossfile?.snapshot?.().guests ?? []).length === 1, null, { timeout: 30_000 });
+await host.waitForFunction(
+  () => (window.__crossfile?.snapshot?.().guests ?? []).length === 1,
+  null,
+  { timeout: 30_000 },
+);
 await dump("guest joined (pending)");
 
 await host.getByTestId("approve").click();
-await host.waitForFunction(() => window.__crossfile?.snapshot?.().guests?.[0]?.status === "joined", null, { timeout: 30_000 });
+await host.waitForFunction(
+  () => window.__crossfile?.snapshot?.().guests?.[0]?.status === "joined",
+  null,
+  { timeout: 30_000 },
+);
 await dump("approved");
 
 if (SIZE_MB > 40) {
@@ -83,7 +121,11 @@ if (SIZE_MB > 40) {
     buffer: bytes,
   });
 }
-await guest.waitForFunction(() => (window.__crossfile?.snapshot?.().files ?? []).length === 1, null, { timeout: 30_000 });
+await guest.waitForFunction(
+  () => (window.__crossfile?.snapshot?.().files ?? []).length === 1,
+  null,
+  { timeout: 30_000 },
+);
 await dump("manifest arrived");
 
 await guest.getByTestId("accept").click();
@@ -107,7 +149,10 @@ for (;;) {
 }
 await dump("final");
 const guestHash = await guest.evaluate(() => window.__crossfile?.sha256);
-console.log("RESULT:", guestHash === expected ? "PASS" : `FAIL (guest ${guestHash})`);
+console.log(
+  "RESULT:",
+  guestHash === expected ? "PASS" : `FAIL (guest ${guestHash})`,
+);
 
 await browser.close();
 process.exit(guestHash === expected ? 0 : 1);

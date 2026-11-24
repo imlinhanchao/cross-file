@@ -13,7 +13,7 @@
 //
 // Note: apps/mobile/package.json sets "type": "module", so this file is ESM and
 // has to load the CommonJS CLI through createRequire.
-import { createRequire } from 'node:module'
+import { createRequire } from "node:module";
 
-const require = createRequire(import.meta.url)
-require('../../../node_modules/@tauri-apps/cli/tauri.js')
+const require = createRequire(import.meta.url);
+require("../../../node_modules/@tauri-apps/cli/tauri.js");

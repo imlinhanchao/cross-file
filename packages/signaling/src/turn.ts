@@ -12,10 +12,16 @@ import { createHmac } from "node:crypto";
 import { TURN_TTL_SEC, type TurnCredential } from "@crossfile/core/protocol";
 import type { TurnOptions } from "./index.js";
 
-export function issueTurnCredential(turn: TurnOptions, peerId: string, nowMs: number = Date.now()): TurnCredential {
+export function issueTurnCredential(
+  turn: TurnOptions,
+  peerId: string,
+  nowMs: number = Date.now(),
+): TurnCredential {
   const ttl = turn.ttl ?? TURN_TTL_SEC;
   const expiry = Math.floor(nowMs / 1_000) + ttl;
   const username = `${expiry}:${peerId}`;
-  const credential = createHmac("sha1", turn.secret).update(username).digest("base64");
+  const credential = createHmac("sha1", turn.secret)
+    .update(username)
+    .digest("base64");
   return { uris: [...turn.uris], username, credential, ttl };
 }

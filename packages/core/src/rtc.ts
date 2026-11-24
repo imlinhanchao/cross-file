@@ -2,7 +2,11 @@
  * WebRTC glue: peer connections, trickle ICE, channel lifecycle, ICE path label.
  * Browser-only (RTC* globals); not imported by node-side packages.
  */
-import type { RTCIceCandidateInitLike, SignalPayload, TurnCredential } from "./protocol.js";
+import type {
+  RTCIceCandidateInitLike,
+  SignalPayload,
+  TurnCredential,
+} from "./protocol.js";
 import { computeSas, parseDtlsFingerprint } from "./crypto.js";
 
 export type PathLabel = "lan" | "direct" | "relay";
@@ -29,10 +33,16 @@ export interface Peer {
   close(): void;
 }
 
-export function iceServersFromTurn(turn?: TurnCredential | null): RTCIceServer[] {
+export function iceServersFromTurn(
+  turn?: TurnCredential | null,
+): RTCIceServer[] {
   const servers: RTCIceServer[] = [{ urls: "stun:stun.cloudflare.com:3478" }];
   if (turn && turn.uris.length > 0) {
-    servers.push({ urls: turn.uris, username: turn.username, credential: turn.credential });
+    servers.push({
+      urls: turn.uris,
+      username: turn.username,
+      credential: turn.credential,
+    });
   }
   return servers;
 }
@@ -40,8 +50,10 @@ export function iceServersFromTurn(turn?: TurnCredential | null): RTCIceServer[]
 function candidateInit(candidate: RTCIceCandidate): RTCIceCandidateInitLike {
   const init: RTCIceCandidateInitLike = { candidate: candidate.candidate };
   if (candidate.sdpMid !== null) init.sdpMid = candidate.sdpMid;
-  if (candidate.sdpMLineIndex !== null) init.sdpMLineIndex = candidate.sdpMLineIndex;
-  if (candidate.usernameFragment !== null) init.usernameFragment = candidate.usernameFragment;
+  if (candidate.sdpMLineIndex !== null)
+    init.sdpMLineIndex = candidate.sdpMLineIndex;
+  if (candidate.usernameFragment !== null)
+    init.usernameFragment = candidate.usernameFragment;
   return init;
 }
 
@@ -68,9 +80,15 @@ interface RtcDiagnostics {
   stats(): Promise<Record<string, unknown>>;
 }
 
-function exposeDiagnostics(pc: RTCPeerConnection, role: "host" | "guest"): void {
-  if (typeof location === "undefined" || !location.search.includes("debug")) return;
-  const target = globalThis as unknown as { __crossfileRtc?: Record<string, RtcDiagnostics> };
+function exposeDiagnostics(
+  pc: RTCPeerConnection,
+  role: "host" | "guest",
+): void {
+  if (typeof location === "undefined" || !location.search.includes("debug"))
+    return;
+  const target = globalThis as unknown as {
+    __crossfileRtc?: Record<string, RtcDiagnostics>;
+  };
   target.__crossfileRtc = target.__crossfileRtc ?? {};
   target.__crossfileRtc[role] = {
     state: () => ({
@@ -97,14 +115,27 @@ function exposeDiagnostics(pc: RTCPeerConnection, role: "host" | "guest"): void 
         }
         if (type === "local-candidate" || type === "remote-candidate") {
           const list = (out[type] as Array<Record<string, unknown>>) ?? [];
-          list.push({ id: entry.id, candidateType: entry.candidateType, address: entry.address ?? entry.ip, port: entry.port, protocol: entry.protocol });
+          list.push({
+            id: entry.id,
+            candidateType: entry.candidateType,
+            address: entry.address ?? entry.ip,
+            port: entry.port,
+            protocol: entry.protocol,
+          });
           out[type] = list;
         }
         if (type === "data-channel") {
-          out.dataChannel = { state: entry.state, messagesSent: entry.messagesSent, messagesReceived: entry.messagesReceived };
+          out.dataChannel = {
+            state: entry.state,
+            messagesSent: entry.messagesSent,
+            messagesReceived: entry.messagesReceived,
+          };
         }
         if (type === "transport") {
-          out.transport = { dtlsState: entry.dtlsState, selectedCandidatePairId: entry.selectedCandidatePairId };
+          out.transport = {
+            dtlsState: entry.dtlsState,
+            selectedCandidatePairId: entry.selectedCandidatePairId,
+          };
         }
       });
       return out;
@@ -115,7 +146,9 @@ function exposeDiagnostics(pc: RTCPeerConnection, role: "host" | "guest"): void 
 export function createHostPeer(options: PeerOptions): Peer {
   const pc = new RTCPeerConnection({
     iceServers: options.iceServers ?? [],
-    ...(options.relayOnly ? { iceTransportPolicy: "relay" as RTCIceTransportPolicy } : {}),
+    ...(options.relayOnly
+      ? { iceTransportPolicy: "relay" as RTCIceTransportPolicy }
+      : {}),
   });
   exposeDiagnostics(pc, "host");
   const ctrl = pc.createDataChannel("ctrl", { ordered: true });
@@ -133,10 +166,15 @@ export function createHostPeer(options: PeerOptions): Peer {
   ready.catch((error) => options.onError?.(error));
 
   pc.onicecandidate = (event) => {
-    if (event.candidate) options.sendSignal({ k: "candidate", candidate: candidateInit(event.candidate) });
+    if (event.candidate)
+      options.sendSignal({
+        k: "candidate",
+        candidate: candidateInit(event.candidate),
+      });
   };
   pc.onconnectionstatechange = (): void => {
-    if (pc.connectionState === "failed") options.onError?.(new Error("peer connection failed"));
+    if (pc.connectionState === "failed")
+      options.onError?.(new Error("peer connection failed"));
   };
 
   const offer = (async (): Promise<void> => {
@@ -163,7 +201,9 @@ export function createHostPeer(options: PeerOptions): Peer {
 export function createGuestPeer(options: PeerOptions): Peer {
   const pc = new RTCPeerConnection({
     iceServers: options.iceServers ?? [],
-    ...(options.relayOnly ? { iceTransportPolicy: "relay" as RTCIceTransportPolicy } : {}),
+    ...(options.relayOnly
+      ? { iceTransportPolicy: "relay" as RTCIceTransportPolicy }
+      : {}),
   });
   exposeDiagnostics(pc, "guest");
   let ctrl: RTCDataChannel | null = null;
@@ -174,7 +214,15 @@ export function createGuestPeer(options: PeerOptions): Peer {
     const maybeResolve = (): void => {
       if (!ctrl || !data) return;
       Promise.all([openChannel(ctrl), openChannel(data)])
-        .then(() => resolve({ pc, ctrl: ctrl!, data: data!, path: () => detectPath(pc), close: () => pc.close() }))
+        .then(() =>
+          resolve({
+            pc,
+            ctrl: ctrl!,
+            data: data!,
+            path: () => detectPath(pc),
+            close: () => pc.close(),
+          }),
+        )
         .catch(reject);
     };
     pc.ondatachannel = (event) => {
@@ -183,13 +231,18 @@ export function createGuestPeer(options: PeerOptions): Peer {
       maybeResolve();
     };
     pc.onconnectionstatechange = (): void => {
-      if (pc.connectionState === "failed") reject(new Error("peer connection failed"));
+      if (pc.connectionState === "failed")
+        reject(new Error("peer connection failed"));
     };
   });
   ready.catch((error) => options.onError?.(error));
 
   pc.onicecandidate = (event) => {
-    if (event.candidate) options.sendSignal({ k: "candidate", candidate: candidateInit(event.candidate) });
+    if (event.candidate)
+      options.sendSignal({
+        k: "candidate",
+        candidate: candidateInit(event.candidate),
+      });
   };
 
   return {
@@ -197,7 +250,8 @@ export function createGuestPeer(options: PeerOptions): Peer {
     async handleSignal(payload) {
       if (payload.k === "offer") {
         await pc.setRemoteDescription({ type: "offer", sdp: payload.sdp });
-        for (const candidate of pendingCandidates.splice(0)) await addCandidate(pc, candidate);
+        for (const candidate of pendingCandidates.splice(0))
+          await addCandidate(pc, candidate);
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         if (!pc.localDescription) throw new Error("missing local description");
@@ -211,7 +265,10 @@ export function createGuestPeer(options: PeerOptions): Peer {
   };
 }
 
-async function addCandidate(pc: RTCPeerConnection, candidate: RTCIceCandidateInitLike): Promise<void> {
+async function addCandidate(
+  pc: RTCPeerConnection,
+  candidate: RTCIceCandidateInitLike,
+): Promise<void> {
   try {
     await pc.addIceCandidate(candidate as RTCIceCandidateInit);
   } catch {
@@ -231,10 +288,16 @@ export async function detectPath(pc: RTCPeerConnection): Promise<PathLabel> {
 
   report.forEach((entry) => {
     const type = entry["type"];
-    if (type === "transport" && typeof entry["selectedCandidatePairId"] === "string") {
+    if (
+      type === "transport" &&
+      typeof entry["selectedCandidatePairId"] === "string"
+    ) {
       selectedPairId = entry["selectedCandidatePairId"] as string;
     }
-    if (type === "candidate-pair" && (entry["selected"] === true || entry["nominated"] === true)) {
+    if (
+      type === "candidate-pair" &&
+      (entry["selected"] === true || entry["nominated"] === true)
+    ) {
       pair = pair ?? entry;
     }
   });
@@ -271,11 +334,17 @@ export function sasFromPeerConnection(pc: RTCPeerConnection): string[] | null {
 }
 
 /** HTML string for RTCIceCandidateInit transport; kept here so callers stay typed. */
-export function candidatePayload(candidate: RTCIceCandidateInit | null): SignalPayload | null {
+export function candidatePayload(
+  candidate: RTCIceCandidateInit | null,
+): SignalPayload | null {
   if (!candidate) return null;
-  const init: RTCIceCandidateInitLike = { candidate: candidate.candidate ?? "" };
+  const init: RTCIceCandidateInitLike = {
+    candidate: candidate.candidate ?? "",
+  };
   if (typeof candidate.sdpMid === "string") init.sdpMid = candidate.sdpMid;
-  if (typeof candidate.sdpMLineIndex === "number") init.sdpMLineIndex = candidate.sdpMLineIndex;
-  if (typeof candidate.usernameFragment === "string") init.usernameFragment = candidate.usernameFragment;
+  if (typeof candidate.sdpMLineIndex === "number")
+    init.sdpMLineIndex = candidate.sdpMLineIndex;
+  if (typeof candidate.usernameFragment === "string")
+    init.usernameFragment = candidate.usernameFragment;
   return { k: "candidate", candidate: init };
 }

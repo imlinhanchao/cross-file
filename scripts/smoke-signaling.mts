@@ -24,7 +24,11 @@ function client(port: number, label: string) {
   ws.on("message", (data) => {
     const message = JSON.parse(String(data));
     messages.push(message);
-    console.log(`[${label}] <-`, message.type, JSON.stringify(message).slice(0, 120));
+    console.log(
+      `[${label}] <-`,
+      message.type,
+      JSON.stringify(message).slice(0, 120),
+    );
   });
   return {
     ws,
@@ -43,7 +47,10 @@ function client(port: number, label: string) {
       for (;;) {
         const found = messages.find((m) => m.type === type);
         if (found) return found;
-        if (Date.now() - started > timeoutMs) throw new Error(`${label}: timeout waiting for ${type}. got: ${messages.map((m) => m.type).join(",")}`);
+        if (Date.now() - started > timeoutMs)
+          throw new Error(
+            `${label}: timeout waiting for ${type}. got: ${messages.map((m) => m.type).join(",")}`,
+          );
         await new Promise((r) => setTimeout(r, 20));
       }
     },
@@ -77,8 +84,16 @@ const joinRequest = await host.waitFor("join_request");
 console.log("OK join_request guestId", joinRequest.guestId);
 
 host.send({ v: 1, type: "approve", guestId: joinRequest.guestId });
-const [hostJoinOk, guestJoinOk] = await Promise.all([host.waitFor("join_ok"), guest.waitFor("join_ok")]);
-console.log("OK join_ok host peerCaps", hostJoinOk.peerCaps.uaFamily, "guest peerCaps", guestJoinOk.peerCaps.uaFamily);
+const [hostJoinOk, guestJoinOk] = await Promise.all([
+  host.waitFor("join_ok"),
+  guest.waitFor("join_ok"),
+]);
+console.log(
+  "OK join_ok host peerCaps",
+  hostJoinOk.peerCaps.uaFamily,
+  "guest peerCaps",
+  guestJoinOk.peerCaps.uaFamily,
+);
 
 host.send({
   v: 1,
@@ -89,7 +104,12 @@ host.send({
 const offer = await guest.waitFor("signal");
 console.log("OK host->guest signal", offer.payload.k, offer.from.length > 0);
 
-guest.send({ v: 1, type: "signal", to: "host", payload: { k: "answer", sdp: "v=0\r\n" } });
+guest.send({
+  v: 1,
+  type: "signal",
+  to: "host",
+  payload: { k: "answer", sdp: "v=0\r\n" },
+});
 const answer = await host.waitFor("signal");
 console.log("OK guest->host sentinel signal", answer.payload.k);
 

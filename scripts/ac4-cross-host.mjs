@@ -30,22 +30,35 @@ console.log(`file: ${fixture} (${SIZE} bytes)`);
 const browser = await chromium.launch({ channel: "chrome" });
 const context = await browser.newContext({ ignoreHTTPSErrors: true });
 const host = await context.newPage();
-host.on("pageerror", (error) => console.log("[host] PAGEERROR", String(error).slice(0, 300)));
+host.on("pageerror", (error) =>
+  console.log("[host] PAGEERROR", String(error).slice(0, 300)),
+);
 
 await host.goto(`${BASE}/`);
-await host.waitForFunction(() => window.__crossfile?.snapshot?.().phase === "waiting", null, { timeout: 60_000 });
+await host.waitForFunction(
+  () => window.__crossfile?.snapshot?.().phase === "waiting",
+  null,
+  { timeout: 60_000 },
+);
 const link = await host.evaluate(() => window.__crossfile.snapshot().link);
 writeFileSync(linkFile, link);
 console.log(`ROOM LINK: ${link}`);
 console.log("waiting for remote guest…");
 
-await host.waitForFunction(() => (window.__crossfile?.snapshot?.().guests ?? []).length >= 1, null, {
-  timeout: 600_000,
-});
+await host.waitForFunction(
+  () => (window.__crossfile?.snapshot?.().guests ?? []).length >= 1,
+  null,
+  {
+    timeout: 600_000,
+  },
+);
 console.log("guest joined, approving");
 await host.getByTestId("approve").first().click();
 await host.waitForFunction(
-  () => window.__crossfile?.snapshot?.().guests?.some((guest) => guest.status === "joined"),
+  () =>
+    window.__crossfile
+      ?.snapshot?.()
+      .guests?.some((guest) => guest.status === "joined"),
   null,
   { timeout: 60_000 },
 );
@@ -54,10 +67,18 @@ console.log("sending file");
 await host.getByTestId("file-input").setInputFiles(fixture);
 
 // The remote guest accepts on its side; wait until this host reports the transfer done.
-await host.waitForFunction(() => window.__crossfile?.snapshot?.().phase === "done", null, { timeout: 900_000 });
+await host.waitForFunction(
+  () => window.__crossfile?.snapshot?.().phase === "done",
+  null,
+  { timeout: 900_000 },
+);
 const result = await host.evaluate(() => window.__crossfile.snapshot().result);
-const guestInfo = await host.evaluate(() => window.__crossfile.snapshot().guests);
-console.log(`HOST DONE sha256=${result?.sha256} bytes=${result?.bytes} path=${guestInfo?.[0]?.path}`);
+const guestInfo = await host.evaluate(
+  () => window.__crossfile.snapshot().guests,
+);
+console.log(
+  `HOST DONE sha256=${result?.sha256} bytes=${result?.bytes} path=${guestInfo?.[0]?.path}`,
+);
 console.log(`HOST HASH MATCHES EXPECTED: ${result?.sha256 === expected}`);
 
 await browser.close();

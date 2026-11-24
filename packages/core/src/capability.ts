@@ -26,7 +26,11 @@ export function uaFamilyOf(ua: string): UAFamily {
   return "unknown";
 }
 
-export function platformOf(ua: string, uaFamily: UAFamily, maxTouchPoints = 0): Platform {
+export function platformOf(
+  ua: string,
+  uaFamily: UAFamily,
+  maxTouchPoints = 0,
+): Platform {
   if (/HarmonyOS|OpenHarmony/i.test(ua)) return "harmony";
   if (/iPhone|iPad|iPod/i.test(ua)) return "ios";
   if (/Android/i.test(ua)) return "android";
@@ -49,7 +53,8 @@ function defaultSource(): CapsSource {
   const maxTouchPoints = nav?.maxTouchPoints ?? 0;
   const width = win.screen?.width ?? 1280;
   const secureContext =
-    typeof (globalThis as { isSecureContext?: boolean }).isSecureContext === "boolean"
+    typeof (globalThis as { isSecureContext?: boolean }).isSecureContext ===
+    "boolean"
       ? (globalThis as { isSecureContext?: boolean }).isSecureContext!
       : false;
   return {
@@ -62,7 +67,8 @@ function defaultSource(): CapsSource {
     hasServiceWorker: typeof nav !== "undefined" && "serviceWorker" in nav,
     swDownload: false,
     nativeShell: win.__CROSSFILE_NATIVE__ === true,
-    deviceMemoryGB: (nav as { deviceMemory?: number } | undefined)?.deviceMemory,
+    deviceMemoryGB: (nav as { deviceMemory?: number } | undefined)
+      ?.deviceMemory,
   };
 }
 
@@ -85,7 +91,11 @@ export function detectCaps(source: CapsSource = defaultSource()): Caps {
 
   const width = source.screenWidth ?? 1280;
   const touch = (source.maxTouchPoints ?? 0) > 0;
-  const screen: Caps["screen"] = touch ? (width >= 768 ? "tablet" : "phone") : "desktop";
+  const screen: Caps["screen"] = touch
+    ? width >= 768
+      ? "tablet"
+      : "phone"
+    : "desktop";
 
   const caps: Caps = {
     platform,
@@ -98,8 +108,10 @@ export function detectCaps(source: CapsSource = defaultSource()): Caps {
     saveStrategies: strategies,
     screen,
   };
-  if (source.deviceMemoryGB !== undefined) caps.deviceMemoryGB = source.deviceMemoryGB;
-  if (source.storageQuotaMB !== undefined) caps.storageQuotaMB = source.storageQuotaMB;
+  if (source.deviceMemoryGB !== undefined)
+    caps.deviceMemoryGB = source.deviceMemoryGB;
+  if (source.storageQuotaMB !== undefined)
+    caps.storageQuotaMB = source.storageQuotaMB;
   return caps;
 }
 
@@ -108,7 +120,8 @@ const MB = 1024 * 1024;
 export interface LimitRule {
   softLimitMB: number;
   hardLimitMB: number;
-  reason: "native" | "fs" | "ios" | "android" | "safari" | "firefox" | "unknown";
+  reason:
+    "native" | "fs" | "ios" | "android" | "safari" | "firefox" | "unknown";
   /** i18n key, rendered by packages/ui/src/copy.ts */
   messageKey: string;
 }
@@ -119,24 +132,62 @@ export interface LimitRule {
  */
 export function limitsFor(caps: Caps): LimitRule {
   if (caps.nativeShell) {
-    return { softLimitMB: 500, hardLimitMB: 500, reason: "native", messageKey: "limit.native" };
+    return {
+      softLimitMB: 500,
+      hardLimitMB: 500,
+      reason: "native",
+      messageKey: "limit.native",
+    };
   }
-  if (caps.fsAccess && (caps.uaFamily === "chrome" || caps.uaFamily === "edge")) {
-    return { softLimitMB: 500, hardLimitMB: 500, reason: "fs", messageKey: "limit.fs" };
+  if (
+    caps.fsAccess &&
+    (caps.uaFamily === "chrome" || caps.uaFamily === "edge")
+  ) {
+    return {
+      softLimitMB: 500,
+      hardLimitMB: 500,
+      reason: "fs",
+      messageKey: "limit.fs",
+    };
   }
   if (caps.platform === "ios") {
-    return { softLimitMB: 100, hardLimitMB: 500, reason: "ios", messageKey: "limit.ios" };
+    return {
+      softLimitMB: 100,
+      hardLimitMB: 500,
+      reason: "ios",
+      messageKey: "limit.ios",
+    };
   }
   if (caps.platform === "android") {
-    return { softLimitMB: 150, hardLimitMB: 500, reason: "android", messageKey: "limit.android" };
+    return {
+      softLimitMB: 150,
+      hardLimitMB: 500,
+      reason: "android",
+      messageKey: "limit.android",
+    };
   }
   if (caps.uaFamily === "safari") {
-    return { softLimitMB: 250, hardLimitMB: 500, reason: "safari", messageKey: "limit.safari" };
+    return {
+      softLimitMB: 250,
+      hardLimitMB: 500,
+      reason: "safari",
+      messageKey: "limit.safari",
+    };
   }
   if (caps.uaFamily === "firefox") {
-    return { softLimitMB: 250, hardLimitMB: 500, reason: "firefox", messageKey: "limit.firefox" };
+    return {
+      softLimitMB: 250,
+      hardLimitMB: 500,
+      reason: "firefox",
+      messageKey: "limit.firefox",
+    };
   }
-  return { softLimitMB: 150, hardLimitMB: 500, reason: "unknown", messageKey: "limit.unknown" };
+  return {
+    softLimitMB: 150,
+    hardLimitMB: 500,
+    reason: "unknown",
+    messageKey: "limit.unknown",
+  };
 }
 
 export type LimitLevel = "ok" | "warn" | "reject";
@@ -151,8 +202,18 @@ export interface LimitVerdict {
 export function judgeFile(sizeBytes: number, caps: Caps): LimitVerdict {
   const rule = limitsFor(caps);
   const sizeMB = sizeBytes / MB;
-  const level: LimitLevel = sizeMB > rule.hardLimitMB ? "reject" : sizeMB > rule.softLimitMB ? "warn" : "ok";
-  return { level, softLimitMB: rule.softLimitMB, hardLimitMB: rule.hardLimitMB, rule };
+  const level: LimitLevel =
+    sizeMB > rule.hardLimitMB
+      ? "reject"
+      : sizeMB > rule.softLimitMB
+        ? "warn"
+        : "ok";
+  return {
+    level,
+    softLimitMB: rule.softLimitMB,
+    hardLimitMB: rule.hardLimitMB,
+    rule,
+  };
 }
 
 export function severityOrder(level: LimitLevel): number {

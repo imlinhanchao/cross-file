@@ -10,7 +10,10 @@ interface TauriInvoke {
   invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>;
 }
 interface TauriEvent {
-  listen(event: string, handler: (event: { payload: unknown }) => void): Promise<() => void>;
+  listen(
+    event: string,
+    handler: (event: { payload: unknown }) => void,
+  ): Promise<() => void>;
 }
 interface TauriGlobal {
   core?: TauriInvoke;
@@ -37,13 +40,19 @@ export function markNativeShell(): void {
   }
 }
 
-function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+function invoke<T>(
+  command: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
   const api = window.__TAURI__?.core;
   if (!api) return Promise.reject(new Error("Tauri IPC unavailable"));
   return api.invoke<T>(command, args);
 }
 
-async function listen(event: string, handler: (payload: unknown) => void): Promise<() => void> {
+async function listen(
+  event: string,
+  handler: (payload: unknown) => void,
+): Promise<() => void> {
   const api = window.__TAURI__?.event;
   if (!api) return () => undefined;
   return api.listen(event, (nativeEvent) => handler(nativeEvent.payload));
@@ -106,7 +115,9 @@ export function installNativeShellHooks(handlers: {
       void invoke("confirm_close").catch(() => undefined);
       return;
     }
-    const confirmed = window.confirm("正在传输文件，关闭窗口会中断传输并销毁房间。仍然关闭？");
+    const confirmed = window.confirm(
+      "正在传输文件，关闭窗口会中断传输并销毁房间。仍然关闭？",
+    );
     if (confirmed) void invoke("confirm_close").catch(() => undefined);
   }).then((off) => (disposed ? off() : cleanups.push(off)));
 

@@ -24,7 +24,13 @@ import {
   type ServerMessage,
 } from "@crossfile/core";
 import { copy, errorText } from "@crossfile/ui";
-import { createNativeSink, installNativeShellHooks, isNativeShell, setTransferActive, type SaveSink } from "./native.js";
+import {
+  createNativeSink,
+  installNativeShellHooks,
+  isNativeShell,
+  setTransferActive,
+  type SaveSink,
+} from "./native.js";
 import { SignalingSocket, withTimeout } from "./signal.js";
 import { useApp } from "../store.js";
 
@@ -36,7 +42,8 @@ interface FileReceiver {
 
 export class GuestController {
   private readonly caps: Caps = detectCaps();
-  private readonly relayOnly = new URLSearchParams(location.search).get("relay") === "1";
+  private readonly relayOnly =
+    new URLSearchParams(location.search).get("relay") === "1";
   private readonly nonce = createGuestNonce();
   private readonly joinCode?: string;
   private codeMode = false;
@@ -53,7 +60,8 @@ export class GuestController {
   private cleanupNative?: () => void;
   /** DEV-ONLY diagnostics for cross-machine acceptance tests (stripped from production builds). */
   private readonly autoAccept =
-    import.meta.env.DEV && new URLSearchParams(location.search).get("autoaccept") === "1";
+    import.meta.env.DEV &&
+    new URLSearchParams(location.search).get("autoaccept") === "1";
   private readonly reportUrl = import.meta.env.DEV
     ? new URLSearchParams(location.search).get("report")
     : null;
@@ -67,7 +75,9 @@ export class GuestController {
   }
 
   get link(): string {
-    return this.roomId ? buildRoomLink(location.origin, this.roomId, this.roomKey) : "";
+    return this.roomId
+      ? buildRoomLink(location.origin, this.roomId, this.roomKey)
+      : "";
   }
 
   async start(): Promise<void> {
@@ -81,7 +91,10 @@ export class GuestController {
     } else {
       const parsed = parseLocation();
       if (!parsed) {
-        store.patch({ phase: "error", error: "链接不完整：缺少房间密钥（# 后的部分）" });
+        store.patch({
+          phase: "error",
+          error: "链接不完整：缺少房间密钥（# 后的部分）",
+        });
         return;
       }
       this.roomId = parsed.roomId;
@@ -92,7 +105,8 @@ export class GuestController {
     }
 
     this.cleanupNative = installNativeShellHooks({
-      isTransferActive: () => ["transferring", "paused"].includes(useApp.getState().phase),
+      isTransferActive: () =>
+        ["transferring", "paused"].includes(useApp.getState().phase),
       onEndRoom: () => {
         this.close();
         location.assign("/");
@@ -117,7 +131,9 @@ export class GuestController {
       guestNonce: this.nonce,
       ...(this.codeMode
         ? {}
-        : { proof: computeJoinProof(this.roomKey, this.roomIdBytes, this.nonce) }),
+        : {
+            proof: computeJoinProof(this.roomKey, this.roomIdBytes, this.nonce),
+          }),
     } as ClientMessage);
     store.patch({ phase: "waiting", roomId: this.roomId, link: this.link });
     if (this.reportUrl) {
@@ -125,14 +141,20 @@ export class GuestController {
       // so a headless/GUI sender can see what the remote webview is doing.
       setInterval(() => {
         const state = useApp.getState();
-        const rtc = (globalThis as { __crossfileRtc?: Record<string, { state(): unknown }> }).__crossfileRtc?.guest;
+        const rtc = (
+          globalThis as {
+            __crossfileRtc?: Record<string, { state(): unknown }>;
+          }
+        ).__crossfileRtc?.guest;
         this.report("guest-diag", {
           phase: state.phase,
           roomId: state.roomId,
           error: state.error,
           files: state.files.length,
           hasKey: state.hasKey ?? false,
-          lastError: (globalThis as { __crossfileLastError?: string }).__crossfileLastError ?? null,
+          lastError:
+            (globalThis as { __crossfileLastError?: string })
+              .__crossfileLastError ?? null,
           rtc: rtc ? rtc.state() : null,
         });
       }, 3000);
@@ -151,9 +173,16 @@ export class GuestController {
     if (!this.manifest || !this.handles) return;
     void setTransferActive(true);
     const store = useApp.getState();
-    const totalBytes = this.manifest.files.reduce((sum, file) => sum + file.size, 0);
+    const totalBytes = this.manifest.files.reduce(
+      (sum, file) => sum + file.size,
+      0,
+    );
     this.handles.ctrl.send(
-      JSON.stringify({ v: 1, type: "accept", fileIds: this.manifest.files.map((file) => file.id) }),
+      JSON.stringify({
+        v: 1,
+        type: "accept",
+        fileIds: this.manifest.files.map((file) => file.id),
+      }),
     );
     store.patch({ phase: "transferring" });
     store.setTransfer({ sentBytes: 0, totalBytes, startedAt: Date.now() });
@@ -182,7 +211,8 @@ export class GuestController {
   }
 
   private async abortSinks(): Promise<void> {
-    for (const sink of this.nativeSinks.values()) await sink.abort().catch(() => undefined);
+    for (const sink of this.nativeSinks.values())
+      await sink.abort().catch(() => undefined);
     this.nativeSinks.clear();
   }
 
@@ -196,7 +226,10 @@ export class GuestController {
         break;
       }
       case "join_rejected": {
-        store.patch({ phase: "error", error: errorText(message.code, message.reason) });
+        store.patch({
+          phase: "error",
+          error: errorText(message.code, message.reason),
+        });
         break;
       }
       case "signal": {
@@ -209,11 +242,18 @@ export class GuestController {
         break;
       }
       case "room_closed": {
-        store.patch({ phase: "error", roomClosed: true, error: copy.roomClosed });
+        store.patch({
+          phase: "error",
+          roomClosed: true,
+          error: copy.roomClosed,
+        });
         break;
       }
       case "error": {
-        store.patch({ phase: "error", error: errorText(message.code, message.msg) });
+        store.patch({
+          phase: "error",
+          error: errorText(message.code, message.msg),
+        });
         break;
       }
       default:
@@ -239,17 +279,26 @@ export class GuestController {
       .then((handles) => {
         if (this.peer !== peer) return; // superseded by a resume connection
         this.handles = handles;
-        handles.ctrl.addEventListener("message", (event: MessageEvent) => this.onCtrl(event.data));
+        handles.ctrl.addEventListener("message", (event: MessageEvent) =>
+          this.onCtrl(event.data),
+        );
         handles.data.binaryType = "arraybuffer";
-        handles.data.addEventListener("message", (event: MessageEvent) => void this.onData(event.data));
+        handles.data.addEventListener(
+          "message",
+          (event: MessageEvent) => void this.onData(event.data),
+        );
         handles.data.addEventListener("close", () => {
           if (this.peer === peer) this.markChannelLost();
         });
         handles.ctrl.addEventListener("close", () => {
           if (this.peer === peer) this.markChannelLost();
         });
-        handles.ctrl.send(JSON.stringify({ v: 1, type: "hello", guestCaps: this.caps }));
-        void handles.path().then((path) => useApp.getState().setTransfer({ path }));
+        handles.ctrl.send(
+          JSON.stringify({ v: 1, type: "hello", guestCaps: this.caps }),
+        );
+        void handles
+          .path()
+          .then((path) => useApp.getState().setTransfer({ path }));
 
         if (this.codeMode && this.sessionKey.length === 0) {
           const sas = sasFromPeerConnection(handles.pc);
@@ -271,7 +320,8 @@ export class GuestController {
   private markChannelLost(): void {
     this.peerDead = true;
     const store = useApp.getState();
-    if (store.phase === "transferring") store.patch({ phase: "paused", notice: copy.resumeHint });
+    if (store.phase === "transferring")
+      store.patch({ phase: "paused", notice: copy.resumeHint });
   }
 
   /** Tell the host what is still missing; only those chunks are re-sent (docs/02 §6.5). */
@@ -282,7 +332,12 @@ export class GuestController {
       if (file.receiver.isComplete()) continue;
       asked = true;
       this.handles.ctrl.send(
-        JSON.stringify({ v: 1, type: "bitmap", fileId, bits: file.receiver.bitmap() }),
+        JSON.stringify({
+          v: 1,
+          type: "bitmap",
+          fileId,
+          bits: file.receiver.bitmap(),
+        }),
       );
     }
     const store = useApp.getState();
@@ -293,7 +348,9 @@ export class GuestController {
   private async onCtrl(raw: unknown): Promise<void> {
     let message: CtrlMessage;
     try {
-      message = parseCtrlMessage(typeof raw === "string" ? JSON.parse(raw) : raw);
+      message = parseCtrlMessage(
+        typeof raw === "string" ? JSON.parse(raw) : raw,
+      );
     } catch {
       return;
     }
@@ -301,7 +358,10 @@ export class GuestController {
     console.debug("[cf-guest] ctrl", message.type);
     switch (message.type) {
       case "manifest": {
-        const totalBytes = message.files.reduce((sum, file) => sum + file.size, 0);
+        const totalBytes = message.files.reduce(
+          (sum, file) => sum + file.size,
+          0,
+        );
         const verdict = judgeFile(totalBytes, this.caps);
         if (verdict.level === "reject") {
           // docs/01 §6: above the hard limit the receiver refuses outright.
@@ -322,7 +382,12 @@ export class GuestController {
         this.manifest = message;
         store.patch({
           phase: "joined",
-          files: message.files.map((file) => ({ id: file.id, name: file.name, size: file.size, mime: file.mime })),
+          files: message.files.map((file) => ({
+            id: file.id,
+            name: file.name,
+            size: file.size,
+            mime: file.mime,
+          })),
           risk:
             verdict.level === "warn"
               ? {
@@ -342,7 +407,9 @@ export class GuestController {
         this.roomIdBytes = base32Decode(message.roomId);
         this.sessionKey = deriveSessionKey(this.roomKey, this.roomIdBytes);
         this.handles?.ctrl.send(JSON.stringify({ v: 1, type: "key-ok" }));
-        useApp.getState().patch({ sas: undefined, sasPending: false, hasKey: true });
+        useApp
+          .getState()
+          .patch({ sas: undefined, sasPending: false, hasKey: true });
         break;
       }
       case "done": {
@@ -350,7 +417,10 @@ export class GuestController {
         break;
       }
       case "error": {
-        store.patch({ phase: "error", error: errorText(message.code, message.msg) });
+        store.patch({
+          phase: "error",
+          error: errorText(message.code, message.msg),
+        });
         break;
       }
       default:
@@ -358,7 +428,9 @@ export class GuestController {
     }
   }
 
-  private async finishFile(message: Extract<CtrlMessage, { type: "done" }>): Promise<void> {
+  private async finishFile(
+    message: Extract<CtrlMessage, { type: "done" }>,
+  ): Promise<void> {
     const store = useApp.getState();
     const file = this.receivers.get(message.fileId);
     if (!file || !this.handles) return;
@@ -370,8 +442,14 @@ export class GuestController {
     }
     const result = file.receiver.finish();
     const ok = result.complete && result.sha256 === message.sha256;
-    console.debug("[cf-guest] verify", { ok, complete: result.complete, got: result.sha256.slice(0, 12) });
-    this.handles.ctrl.send(JSON.stringify({ v: 1, type: "ack", fileId: message.fileId, ok }));
+    console.debug("[cf-guest] verify", {
+      ok,
+      complete: result.complete,
+      got: result.sha256.slice(0, 12),
+    });
+    this.handles.ctrl.send(
+      JSON.stringify({ v: 1, type: "ack", fileId: message.fileId, ok }),
+    );
 
     if (!ok) {
       const failedSink = this.nativeSinks.get(message.fileId);
@@ -380,7 +458,12 @@ export class GuestController {
         this.nativeSinks.delete(message.fileId);
       }
       void setTransferActive(false);
-      exposeTestState({ sha256: result.sha256, expected: message.sha256, size: result.size, complete: result.complete });
+      exposeTestState({
+        sha256: result.sha256,
+        expected: message.sha256,
+        size: result.size,
+        complete: result.complete,
+      });
       this.report("guest-fail", {
         sha: result.sha256,
         expected: message.sha256,
@@ -395,7 +478,9 @@ export class GuestController {
     }
 
     const byteLength = result.size;
-    const totalBytes = this.manifest?.files.reduce((sum, entry) => sum + entry.size, 0) ?? byteLength;
+    const totalBytes =
+      this.manifest?.files.reduce((sum, entry) => sum + entry.size, 0) ??
+      byteLength;
     void setTransferActive(false);
 
     const nativeSink = this.nativeSinks.get(message.fileId);
@@ -406,30 +491,63 @@ export class GuestController {
       store.patch({
         phase: "done",
         notice: copy.done,
-        result: { ok: true, sha256: result.sha256, path: savedPath, fileName: file.entry.name, bytes: byteLength },
+        result: {
+          ok: true,
+          sha256: result.sha256,
+          path: savedPath,
+          fileName: file.entry.name,
+          bytes: byteLength,
+        },
       });
       store.setTransfer({ sentBytes: totalBytes, totalBytes, speedBps: 0 });
-      exposeTestState({ sha256: result.sha256, expected: message.sha256, size: byteLength, complete: true });
-    this.report("guest-done", { sha: result.sha256, bytes: byteLength, path: useApp.getState().transfer?.path });
+      exposeTestState({
+        sha256: result.sha256,
+        expected: message.sha256,
+        size: byteLength,
+        complete: true,
+      });
+      this.report("guest-done", {
+        sha: result.sha256,
+        bytes: byteLength,
+        path: useApp.getState().transfer?.path,
+      });
       return;
     }
 
     const bytes = file.receiver.collectBytes();
-    const blob = new Blob([bytes.buffer as ArrayBuffer], { type: file.entry.mime });
+    const blob = new Blob([bytes.buffer as ArrayBuffer], {
+      type: file.entry.mime,
+    });
     const url = URL.createObjectURL(blob);
     store.patch({
       phase: "done",
       notice: copy.done,
-      result: { ok: true, sha256: result.sha256, url, fileName: file.entry.name, bytes: bytes.length },
+      result: {
+        ok: true,
+        sha256: result.sha256,
+        url,
+        fileName: file.entry.name,
+        bytes: bytes.length,
+      },
     });
     store.setTransfer({ sentBytes: totalBytes, totalBytes, speedBps: 0 });
-    exposeTestState({ sha256: result.sha256, expected: message.sha256, size: bytes.length, complete: true });
-    this.report("guest-done", { sha: result.sha256, bytes: bytes.length, path: useApp.getState().transfer?.path });
+    exposeTestState({
+      sha256: result.sha256,
+      expected: message.sha256,
+      size: bytes.length,
+      complete: true,
+    });
+    this.report("guest-done", {
+      sha: result.sha256,
+      bytes: bytes.length,
+      path: useApp.getState().transfer?.path,
+    });
   }
 
   private async onData(data: ArrayBuffer | string): Promise<void> {
     if (typeof data === "string" || !this.manifest) return;
-    (globalThis as { __cfFrames?: number }).__cfFrames = ((globalThis as { __cfFrames?: number }).__cfFrames ?? 0) + 1;
+    (globalThis as { __cfFrames?: number }).__cfFrames =
+      ((globalThis as { __cfFrames?: number }).__cfFrames ?? 0) + 1;
     const frame = decodeChunkFrame(new Uint8Array(data));
     const entry = this.manifest.files.find((file) => file.id === frame.fileId);
     if (!entry) return;
@@ -453,11 +571,19 @@ export class GuestController {
         salt,
         key,
         progressEveryChunks: 10,
-        ...(sinkRef ? { onChunk: (offset: number, plaintext: Uint8Array) => sinkRef.write(offset, plaintext) } : {}),
+        ...(sinkRef
+          ? {
+              onChunk: (offset: number, plaintext: Uint8Array) =>
+                sinkRef.write(offset, plaintext),
+            }
+          : {}),
         onProgress: (receivedBytes) => {
           const startedAt = store.transfer?.startedAt ?? Date.now();
           const elapsed = (Date.now() - startedAt) / 1000;
-          store.setTransfer({ sentBytes: receivedBytes, speedBps: elapsed > 0 ? receivedBytes / elapsed : 0 });
+          store.setTransfer({
+            sentBytes: receivedBytes,
+            speedBps: elapsed > 0 ? receivedBytes / elapsed : 0,
+          });
         },
       });
       file = { entry, receiver, key };

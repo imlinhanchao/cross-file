@@ -8,9 +8,18 @@ import { Icon } from "../ui/Icon.js";
 import { Dialog } from "../ui/Dialog.js";
 import { PathBadge, Progress, WarningCard } from "../ui/bits.js";
 
-function guestLabel(caps: { platform: string; screen: string; uaFamily: string }): string {
-  if (caps.screen === "phone") return caps.platform === "ios" ? "iPhone" : "手机";
-  return caps.uaFamily === "safari" ? "Safari" : caps.platform === "linux" ? "电脑" : "设备";
+function guestLabel(caps: {
+  platform: string;
+  screen: string;
+  uaFamily: string;
+}): string {
+  if (caps.screen === "phone")
+    return caps.platform === "ios" ? "iPhone" : "手机";
+  return caps.uaFamily === "safari"
+    ? "Safari"
+    : caps.platform === "linux"
+      ? "电脑"
+      : "设备";
 }
 
 export function HostPage() {
@@ -20,7 +29,9 @@ export function HostPage() {
   const [qrSvg, setQrSvg] = useState("");
   const [dragging, setDragging] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<"end-room" | "send-warn" | "remove-guest" | null>(null);
+  const [dialog, setDialog] = useState<
+    "end-room" | "send-warn" | "remove-guest" | null
+  >(null);
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
 
   useEffect(() => {
@@ -35,20 +46,36 @@ export function HostPage() {
 
   useEffect(() => {
     if (!state.link) return;
-    void QRCode.toString(state.link, { type: "svg", margin: 1, errorCorrectionLevel: "M" }).then((svg) => {
-      setQrSvg(svg.replace("<svg", '<svg class="qr-svg"').replace(/\s(?:width|height)="[^"]*"/g, ""));
+    void QRCode.toString(state.link, {
+      type: "svg",
+      margin: 1,
+      errorCorrectionLevel: "M",
+    }).then((svg) => {
+      setQrSvg(
+        svg
+          .replace("<svg", '<svg class="qr-svg"')
+          .replace(/\s(?:width|height)="[^"]*"/g, ""),
+      );
     });
   }, [state.link]);
 
   const guests = state.guests;
   const pending = guests.filter((guest) => guest.status === "pending");
-  const joined = guests.filter((guest) => guest.status === "joined" || guest.status === "transferring" || guest.status === "done");
+  const joined = guests.filter(
+    (guest) =>
+      guest.status === "joined" ||
+      guest.status === "transferring" ||
+      guest.status === "done",
+  );
   const totalBytes = state.files.reduce((sum, file) => sum + file.size, 0);
   const assignedBytes = state.files.reduce(
     (sum, file) => sum + file.size * (state.assignments[file.id]?.length ?? 0),
     0,
   );
-  const verdicts = joined.map((guest) => ({ guest, verdict: judgeFile(totalBytes, guest.caps) }));
+  const verdicts = joined.map((guest) => ({
+    guest,
+    verdict: judgeFile(totalBytes, guest.caps),
+  }));
   const rejected = verdicts.find((entry) => entry.verdict.level === "reject");
   const warned = verdicts.find((entry) => entry.verdict.level === "warn");
   const canSend =
@@ -68,7 +95,11 @@ export function HostPage() {
       setDialog("send-warn");
       return;
     }
-    void controller.current?.sendNow().catch((error: unknown) => useApp.getState().patch({ error: String(error) }));
+    void controller.current
+      ?.sendNow()
+      .catch((error: unknown) =>
+        useApp.getState().patch({ error: String(error) }),
+      );
   };
 
   useEffect(() => {
@@ -113,10 +144,19 @@ export function HostPage() {
           <span>{copy.secure}</span>
         </span>
         <span className="topbar__spacer" />
-        <button className="icon-btn" type="button" aria-label={copy.copyLink} onClick={() => void copyLink()}>
+        <button
+          className="icon-btn"
+          type="button"
+          aria-label={copy.copyLink}
+          onClick={() => void copyLink()}
+        >
           <Icon name="link" />
         </button>
-        <button className="btn btn--ghost" type="button" onClick={() => setDialog("end-room")}>
+        <button
+          className="btn btn--ghost"
+          type="button"
+          onClick={() => setDialog("end-room")}
+        >
           {copy.endRoom}
         </button>
       </header>
@@ -126,13 +166,21 @@ export function HostPage() {
           <section className="stack gap-5" aria-labelledby="room-title">
             <div className="stack gap-2">
               <p className="eyebrow">
-                {state.phase === "waiting" ? "房间已创建 · 等待接收方" : state.phase === "approval" ? "有人请求加入" : "房间进行中"}
+                {state.phase === "waiting"
+                  ? "房间已创建 · 等待接收方"
+                  : state.phase === "approval"
+                    ? "有人请求加入"
+                    : "房间进行中"}
               </p>
-              <h1 id="room-title" className="display">{copy.roomTitle}</h1>
+              <h1 id="room-title" className="display">
+                {copy.roomTitle}
+              </h1>
               <p className="lead">{copy.roomLead}</p>
             </div>
 
-            {state.error ? <WarningCard title={copy.errorGeneric} body={state.error} /> : null}
+            {state.error ? (
+              <WarningCard title={copy.errorGeneric} body={state.error} />
+            ) : null}
 
             <div
               className={dragging ? "dropzone dropzone--active" : "dropzone"}
@@ -140,7 +188,8 @@ export function HostPage() {
               tabIndex={0}
               onClick={() => fileInput.current?.click()}
               onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") fileInput.current?.click();
+                if (event.key === "Enter" || event.key === " ")
+                  fileInput.current?.click();
               }}
               onDragOver={(event) => {
                 event.preventDefault();
@@ -153,8 +202,12 @@ export function HostPage() {
                 pickFiles(event.dataTransfer.files);
               }}
             >
-              <span className="dropzone__icon"><Icon name="upload" size="lg" /></span>
-              <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>{copy.dropzone}</span>
+              <span className="dropzone__icon">
+                <Icon name="upload" size="lg" />
+              </span>
+              <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>
+                {copy.dropzone}
+              </span>
               <span className="small muted">{copy.dropzoneHint}</span>
             </div>
             <input
@@ -169,8 +222,12 @@ export function HostPage() {
             {state.files.length > 0 ? (
               <div className="card">
                 <div className="card__head">
-                  <span className="card__title">已选 {state.files.length} 个文件</span>
-                  <span className="card__hint">共 {formatBytes(totalBytes)}</span>
+                  <span className="card__title">
+                    已选 {state.files.length} 个文件
+                  </span>
+                  <span className="card__hint">
+                    共 {formatBytes(totalBytes)}
+                  </span>
                   <span className="spacer" />
                   <button
                     className="btn btn--ghost btn--sm"
@@ -183,15 +240,27 @@ export function HostPage() {
                 <ul className="file-list">
                   {state.files.map((file) => (
                     <li className="file-row" key={file.id}>
-                      <span className="file-tile"><Icon name={file.mime.startsWith("video/") ? "file-video" : "file"} /></span>
+                      <span className="file-tile">
+                        <Icon
+                          name={
+                            file.mime.startsWith("video/")
+                              ? "file-video"
+                              : "file"
+                          }
+                        />
+                      </span>
                       <span className="stack" style={{ gap: 2, minWidth: 0 }}>
                         <span className="file-name">{file.name}</span>
-                        <span className="file-meta">{formatBytes(file.size)}</span>
+                        <span className="file-meta">
+                          {formatBytes(file.size)}
+                        </span>
                       </span>
                       <span className="spacer" />
                       <span className="row gap-1 wrap" aria-label="发送给">
                         {joined.map((guest) => {
-                          const checked = (state.assignments[file.id] ?? []).includes(guest.id);
+                          const checked = (
+                            state.assignments[file.id] ?? []
+                          ).includes(guest.id);
                           return (
                             <button
                               key={guest.id}
@@ -200,7 +269,9 @@ export function HostPage() {
                               data-checked={checked}
                               data-testid={`assign-${file.id}-${guest.id}`}
                               onClick={() => {
-                                useApp.getState().toggleAssignment(file.id, guest.id);
+                                useApp
+                                  .getState()
+                                  .toggleAssignment(file.id, guest.id);
                                 controller.current?.refreshManifests();
                               }}
                             >
@@ -209,7 +280,9 @@ export function HostPage() {
                             </button>
                           );
                         })}
-                        <span className="small muted">{assignedBytes > 0 ? "" : "未选择接收方"}</span>
+                        <span className="small muted">
+                          {assignedBytes > 0 ? "" : "未选择接收方"}
+                        </span>
                       </span>
                     </li>
                   ))}
@@ -242,9 +315,14 @@ export function HostPage() {
                   <span className="card__hint">6 位码加入</span>
                 </div>
                 <p className="small muted">
-                  对方用 6 位码加入，密钥还没有送过去。先和对方核对下面 4 个图标，一致后再通过加密通道传密钥。
+                  对方用 6 位码加入，密钥还没有送过去。先和对方核对下面 4
+                  个图标，一致后再通过加密通道传密钥。
                 </p>
-                <div className="row gap-4 mt-4" style={{ fontSize: 40, lineHeight: 1.2 }} aria-label="安全码图标">
+                <div
+                  className="row gap-4 mt-4"
+                  style={{ fontSize: 40, lineHeight: 1.2 }}
+                  aria-label="安全码图标"
+                >
                   {state.sas.map((emoji, index) => (
                     <span key={index}>{emoji}</span>
                   ))}
@@ -280,7 +358,13 @@ export function HostPage() {
             ) : null}
 
             {state.phase === "done" ? (
-              <div className="warn-card" style={{ background: "var(--primary-soft)", borderColor: "var(--primary)" }}>
+              <div
+                className="warn-card"
+                style={{
+                  background: "var(--primary-soft)",
+                  borderColor: "var(--primary)",
+                }}
+              >
                 <Icon name="circle-check" />
                 <div>
                   <div className="warn-card__title">{copy.done}</div>
@@ -291,14 +375,17 @@ export function HostPage() {
 
             <div className="signal-rule" aria-hidden="true" />
             <p className="small muted">
-              对方需保持页面打开 · 服务器不保存任何内容 · <a href="/privacy">隐私说明</a>
+              对方需保持页面打开 · 服务器不保存任何内容 ·{" "}
+              <a href="/privacy">隐私说明</a>
             </p>
           </section>
 
           <aside className="stack gap-4">
             <section className="card qr-card" aria-labelledby="qr-title">
               <div className="card__head" style={{ marginBottom: 0 }}>
-                <span className="card__title" id="qr-title">{copy.joinCardTitle}</span>
+                <span className="card__title" id="qr-title">
+                  {copy.joinCardTitle}
+                </span>
                 <span className="spacer" />
                 <span className="pill">
                   <Icon name="wifi" size="sm" />
@@ -307,7 +394,9 @@ export function HostPage() {
               </div>
 
               <div className="qr-frame" role="img" aria-label={copy.qrAlt}>
-                {qrSvg ? <div dangerouslySetInnerHTML={{ __html: qrSvg }} /> : null}
+                {qrSvg ? (
+                  <div dangerouslySetInnerHTML={{ __html: qrSvg }} />
+                ) : null}
               </div>
 
               <div className="join-line">
@@ -326,7 +415,10 @@ export function HostPage() {
               </div>
 
               <div className="code-block">
-                <span className="code-digits" aria-label={`6 位房间码 ${state.code ?? ""}`}>
+                <span
+                  className="code-digits"
+                  aria-label={`6 位房间码 ${state.code ?? ""}`}
+                >
                   {state.code ? splitCode(state.code) : "··· ···"}
                 </span>
                 <span className="code-label">
@@ -342,7 +434,9 @@ export function HostPage() {
               <p className="note">
                 <Icon name="link" size="sm" />
                 <span>
-                  接收方也可以打开 <span className="mono">{location.origin}/code</span> 输入房间码
+                  接收方也可以打开{" "}
+                  <span className="mono">{location.origin}/code</span>{" "}
+                  输入房间码
                 </span>
               </p>
             </section>
@@ -362,16 +456,30 @@ export function HostPage() {
                 <ul className="receiver-list">
                   {guests.map((guest) => (
                     <li
-                      className={guest.status === "pending" ? "receiver receiver--pending" : "receiver"}
+                      className={
+                        guest.status === "pending"
+                          ? "receiver receiver--pending"
+                          : "receiver"
+                      }
                       key={guest.id}
                       data-testid={`guest-${guest.id}`}
                     >
                       <span className="receiver__tile">
-                        <Icon name={guest.caps.screen === "phone" ? "smartphone" : "laptop"} />
+                        <Icon
+                          name={
+                            guest.caps.screen === "phone"
+                              ? "smartphone"
+                              : "laptop"
+                          }
+                        />
                       </span>
                       <span className="stack" style={{ gap: 1, minWidth: 0 }}>
                         <span className="receiver__name">
-                          {guest.caps.platform === "ios" ? "iPhone" : guest.caps.screen === "phone" ? "手机" : "电脑"}
+                          {guest.caps.platform === "ios"
+                            ? "iPhone"
+                            : guest.caps.screen === "phone"
+                              ? "手机"
+                              : "电脑"}
                           {" · "}
                           {guest.caps.uaFamily}
                         </span>
@@ -394,7 +502,9 @@ export function HostPage() {
                             className="btn btn--primary btn--sm"
                             type="button"
                             data-testid="approve"
-                            onClick={() => controller.current?.approve(guest.id)}
+                            onClick={() =>
+                              controller.current?.approve(guest.id)
+                            }
                           >
                             {copy.approve}
                           </button>
@@ -446,7 +556,11 @@ export function HostPage() {
             : copy.emptyReceivers}
         </span>
         <span className="spacer" />
-        <button className="btn btn--secondary" type="button" onClick={() => fileInput.current?.click()}>
+        <button
+          className="btn btn--secondary"
+          type="button"
+          onClick={() => fileInput.current?.click()}
+        >
           <Icon name="plus" size="sm" />
           {copy.addFile}
         </button>
@@ -458,7 +572,9 @@ export function HostPage() {
           onClick={() => startSend()}
         >
           <Icon name="arrow-right" size="sm" />
-          {state.phase === "transferring" ? copy.transferInProgress : copy.startSend}
+          {state.phase === "transferring"
+            ? copy.transferInProgress
+            : copy.startSend}
         </button>
       </div>
 
@@ -482,11 +598,16 @@ export function HostPage() {
         confirmLabel="仍要发送"
         onConfirm={() => {
           setDialog(null);
-          void controller.current?.sendNow().catch((error: unknown) => useApp.getState().patch({ error: String(error) }));
+          void controller.current
+            ?.sendNow()
+            .catch((error: unknown) =>
+              useApp.getState().patch({ error: String(error) }),
+            );
         }}
         onCancel={() => setDialog(null)}
       >
-        {formatBytes(totalBytes)} 超过对方设备稳定保存上限（约 {warned?.verdict.softLimitMB ?? 150} MB）。
+        {formatBytes(totalBytes)} 超过对方设备稳定保存上限（约{" "}
+        {warned?.verdict.softLimitMB ?? 150} MB）。
         可以继续发送，但对方可能在保存时失败；建议改用电脑接收或让对方安装 App。
       </Dialog>
 
@@ -513,7 +634,11 @@ export function HostPage() {
           {toast}
         </div>
       ) : null}
-      {pending.length > 0 ? <span className="sr-only" role="status">{copy.approveHint}</span> : null}
+      {pending.length > 0 ? (
+        <span className="sr-only" role="status">
+          {copy.approveHint}
+        </span>
+      ) : null}
     </div>
   );
 }

@@ -16,7 +16,8 @@ const uris = (process.env.TURN_URIS ?? "")
   .map((uri) => uri.trim())
   .filter((uri) => uri.length > 0);
 const secret = process.env.TURN_SECRET;
-const turn: TurnOptions | undefined = uris.length > 0 && secret ? { uris, secret } : undefined;
+const turn: TurnOptions | undefined =
+  uris.length > 0 && secret ? { uris, secret } : undefined;
 
 // HOST lets the container bind 0.0.0.0 (a published port cannot reach 127.0.0.1).
 const host = process.env.HOST?.trim();
@@ -37,7 +38,9 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 server
   .start()
   .then(({ port: activePort }) => {
-    console.log(`[crossfile-signaling] listening on ws://127.0.0.1:${activePort}/v1/ws`);
+    console.log(
+      `[crossfile-signaling] listening on ws://127.0.0.1:${activePort}/v1/ws`,
+    );
   })
   .catch((error: unknown) => {
     logError("startup", error);

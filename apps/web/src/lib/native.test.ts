@@ -15,17 +15,24 @@ let fakeWindow: FakeWindow;
 let listenHandlers: Map<string, (event: { payload: unknown }) => void>;
 
 function installFakeTauri(): { invoke: ReturnType<typeof vi.fn> } {
-  const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
-    if (command === "save_open") return 7;
-    if (command === "save_close") return "/home/me/Downloads/demo.bin";
-    void args;
-    return undefined;
-  });
+  const invoke = vi.fn(
+    async (command: string, args?: Record<string, unknown>) => {
+      if (command === "save_open") return 7;
+      if (command === "save_close") return "/home/me/Downloads/demo.bin";
+      void args;
+      return undefined;
+    },
+  );
   listenHandlers = new Map();
-  const listen = vi.fn(async (event: string, handler: (nativeEvent: { payload: unknown }) => void) => {
-    listenHandlers.set(event, handler);
-    return () => listenHandlers.delete(event);
-  });
+  const listen = vi.fn(
+    async (
+      event: string,
+      handler: (nativeEvent: { payload: unknown }) => void,
+    ) => {
+      listenHandlers.set(event, handler);
+      return () => listenHandlers.delete(event);
+    },
+  );
   fakeWindow.__TAURI__ = { core: { invoke }, event: { listen } };
   fakeWindow.__TAURI_INTERNALS__ = {};
   fakeWindow.__CROSSFILE_NATIVE__ = true;
@@ -35,7 +42,9 @@ function installFakeTauri(): { invoke: ReturnType<typeof vi.fn> } {
 beforeEach(() => {
   fakeWindow = {};
   (globalThis as unknown as { window: FakeWindow }).window = fakeWindow;
-  (globalThis as unknown as { location: { protocol: string; host: string } }).location = {
+  (
+    globalThis as unknown as { location: { protocol: string; host: string } }
+  ).location = {
     protocol: "https:",
     host: "room.example",
   };
@@ -67,9 +76,19 @@ describe("native save sink", () => {
     const path = await sink.close();
 
     expect(path).toBe("/home/me/Downloads/demo.bin");
-    expect(invoke).toHaveBeenNthCalledWith(1, "save_open", { name: "demo.bin" });
-    expect(invoke).toHaveBeenNthCalledWith(2, "save_write", { handle: 7, offset: 0, bytes: [104, 105] });
-    expect(invoke).toHaveBeenNthCalledWith(3, "save_write", { handle: 7, offset: 1024, bytes: [104, 105] });
+    expect(invoke).toHaveBeenNthCalledWith(1, "save_open", {
+      name: "demo.bin",
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, "save_write", {
+      handle: 7,
+      offset: 0,
+      bytes: [104, 105],
+    });
+    expect(invoke).toHaveBeenNthCalledWith(3, "save_write", {
+      handle: 7,
+      offset: 1024,
+      bytes: [104, 105],
+    });
     expect(invoke).toHaveBeenNthCalledWith(4, "save_close", { handle: 7 });
   });
 
@@ -84,7 +103,10 @@ describe("native save sink", () => {
     const second = createNativeSink();
     await second.open("b.bin");
     await second.abort();
-    expect(fakeWindow.__TAURI__!.core.invoke).toHaveBeenCalledWith("save_abort", { handle: 7 });
+    expect(fakeWindow.__TAURI__!.core.invoke).toHaveBeenCalledWith(
+      "save_abort",
+      { handle: 7 },
+    );
   });
 });
 
@@ -93,7 +115,9 @@ describe("transfer-active flag", () => {
     const { invoke } = installFakeTauri();
     const { setTransferActive } = await import("./native.js");
     await setTransferActive(true);
-    expect(invoke).toHaveBeenCalledWith("set_transfer_active", { active: true });
+    expect(invoke).toHaveBeenCalledWith("set_transfer_active", {
+      active: true,
+    });
 
     invoke.mockRejectedValueOnce(new Error("no shell"));
     await expect(setTransferActive(false)).resolves.toBeUndefined();
@@ -127,7 +151,8 @@ describe("native window/menu hooks", () => {
     // Busy transfer: the confirmation dialog decides; a "no" must not close.
     transferActive = true;
     const confirm = vi.fn(() => false);
-    (globalThis as unknown as { window: { confirm: unknown } }).window.confirm = confirm;
+    (globalThis as unknown as { window: { confirm: unknown } }).window.confirm =
+      confirm;
     listenHandlers.get("close-requested")?.({ payload: undefined });
     expect(confirm).toHaveBeenCalled();
 

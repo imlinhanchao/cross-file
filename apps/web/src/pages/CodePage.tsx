@@ -34,11 +34,18 @@ export function CodePage() {
       </header>
 
       <main className="shell">
-        <form className="card stack gap-4" style={{ maxWidth: 420, margin: "48px auto 0" }} onSubmit={submit}>
+        <form
+          className="card stack gap-4"
+          style={{ maxWidth: 420, margin: "48px auto 0" }}
+          onSubmit={submit}
+        >
           <div className="stack gap-2">
             <p className="eyebrow">输入房间码</p>
             <h1 className="h2">输入对方屏幕上的 6 位码</h1>
-            <p className="small muted">10 分钟内有效。加入后需要和对方核对 4 个图标，密钥才会通过加密通道送来。</p>
+            <p className="small muted">
+              10 分钟内有效。加入后需要和对方核对 4
+              个图标，密钥才会通过加密通道送来。
+            </p>
           </div>
           <label className="stack gap-2">
             <span className="eyebrow">房间码</span>
@@ -51,14 +58,28 @@ export function CodePage() {
               data-testid="code-input"
               onChange={(event) => {
                 setError(null);
-                setDigits(event.target.value.replace(/[^0-9]/g, "").slice(0, 6));
+                setDigits(
+                  event.target.value.replace(/[^0-9]/g, "").slice(0, 6),
+                );
               }}
               placeholder="482913"
-              style={{ letterSpacing: "0.16em", fontFamily: "var(--font-mono)", fontSize: "2rem" }}
+              style={{
+                letterSpacing: "0.16em",
+                fontFamily: "var(--font-mono)",
+                fontSize: "2rem",
+              }}
             />
           </label>
-          {error ? <p className="small" style={{ color: "var(--danger-text)" }}>{error}</p> : null}
-          <button className="btn btn--primary btn--lg btn--block" type="submit" data-testid="code-submit">
+          {error ? (
+            <p className="small" style={{ color: "var(--danger-text)" }}>
+              {error}
+            </p>
+          ) : null}
+          <button
+            className="btn btn--primary btn--lg btn--block"
+            type="submit"
+            data-testid="code-submit"
+          >
             <Icon name="arrow-right" size="sm" />
             加入房间
           </button>

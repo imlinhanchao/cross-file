@@ -1,4 +1,9 @@
-import { base32Encode, base64urlEncode, base64urlDecode, randomBytes } from "./bytes.js";
+import {
+  base32Encode,
+  base64urlEncode,
+  base64urlDecode,
+  randomBytes,
+} from "./bytes.js";
 
 /** docs/02 §1: roomId = 16 random bytes, base32 encoded (26 chars), public. */
 export const ROOM_ID_BYTES = 16;
@@ -36,12 +41,18 @@ export function createFileSalt(): Uint8Array {
 }
 
 /** `https://host/r/<roomId>#<roomKey>` — the key lives in the fragment only (docs/01 D3). */
-export function buildRoomLink(origin: string, roomId: string, roomKey: Uint8Array): string {
+export function buildRoomLink(
+  origin: string,
+  roomId: string,
+  roomKey: Uint8Array,
+): string {
   const base = origin.replace(/\/+$/, "");
   return `${base}/r/${roomId}#${base64urlEncode(roomKey)}`;
 }
 
-export function parseRoomLink(url: string): { roomId: string; roomKey: Uint8Array } | null {
+export function parseRoomLink(
+  url: string,
+): { roomId: string; roomKey: Uint8Array } | null {
   try {
     const parsed = new URL(url);
     const match = /\/r\/([a-z2-7]+)\/?$/.exec(parsed.pathname);

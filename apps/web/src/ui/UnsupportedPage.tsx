@@ -18,14 +18,19 @@ export function UnsupportedPage() {
         </span>
       </header>
       <main className="shell">
-        <div className="card stack gap-4" style={{ maxWidth: 640, margin: "48px auto 0" }}>
+        <div
+          className="card stack gap-4"
+          style={{ maxWidth: 640, margin: "48px auto 0" }}
+        >
           <h1 className="h2">当前环境不支持 WebRTC</h1>
           <p className="lead">
-            这个浏览器内核没有提供 RTCPeerConnection，CrossFile 无法建立点对点连接。常见于 Linux 上的
-            WebKitGTK（Tauri 桌面壳默认内核）。
+            这个浏览器内核没有提供 RTCPeerConnection，CrossFile
+            无法建立点对点连接。常见于 Linux 上的 WebKitGTK（Tauri
+            桌面壳默认内核）。
           </p>
           <p className="small muted">
-            请改用 Chrome / Edge / Safari 打开同一地址；Windows 与 macOS 的桌面壳使用系统 WebView，通常可用。
+            请改用 Chrome / Edge / Safari 打开同一地址；Windows 与 macOS
+            的桌面壳使用系统 WebView，通常可用。
           </p>
           <p className="note">
             <Icon name="shield-check" size="sm" />

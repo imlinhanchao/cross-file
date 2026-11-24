@@ -25,13 +25,17 @@ interface Snapshot {
 
 function snapshot(page: Page): Promise<Snapshot> {
   return page.evaluate(() => {
-    const hook = (window as unknown as { __crossfile?: { snapshot?: () => Snapshot } }).__crossfile;
+    const hook = (
+      window as unknown as { __crossfile?: { snapshot?: () => Snapshot } }
+    ).__crossfile;
     if (!hook?.snapshot) throw new Error("__crossfile hook missing");
     return hook.snapshot();
   });
 }
 
-test("capability gate: iPhone-class receiver warns above its 100 MB soft limit", async ({ browser }) => {
+test("capability gate: iPhone-class receiver warns above its 100 MB soft limit", async ({
+  browser,
+}) => {
   const bytes = randomBytes(SIZE);
   const expected = createHash("sha256").update(bytes).digest("hex");
   const dir = resolve(".cache/fixtures");
@@ -48,19 +52,31 @@ test("capability gate: iPhone-class receiver warns above its 100 MB soft limit",
   await guest.addInitScript((ua) => {
     Object.defineProperty(navigator, "userAgent", { get: () => ua });
     Object.defineProperty(navigator, "maxTouchPoints", { get: () => 5 });
-    Object.defineProperty(window, "showSaveFilePicker", { get: () => undefined });
+    Object.defineProperty(window, "showSaveFilePicker", {
+      get: () => undefined,
+    });
   }, IPHONE_UA);
 
   await host.goto("/");
-  await expect.poll(async () => (await snapshot(host)).phase, { timeout: 30_000 }).toBe("waiting");
+  await expect
+    .poll(async () => (await snapshot(host)).phase, { timeout: 30_000 })
+    .toBe("waiting");
   const link = (await snapshot(host)).link!;
   await guest.goto(link);
-  await expect.poll(async () => (await snapshot(host)).guests.length, { timeout: 30_000 }).toBe(1);
+  await expect
+    .poll(async () => (await snapshot(host)).guests.length, { timeout: 30_000 })
+    .toBe(1);
   await host.getByTestId("approve").click();
-  await expect.poll(async () => (await snapshot(host)).guests[0]?.status, { timeout: 30_000 }).toBe("joined");
+  await expect
+    .poll(async () => (await snapshot(host)).guests[0]?.status, {
+      timeout: 30_000,
+    })
+    .toBe("joined");
 
   await host.getByTestId("file-input").setInputFiles(fixture);
-  await expect.poll(async () => (await snapshot(guest)).files.length, { timeout: 30_000 }).toBe(1);
+  await expect
+    .poll(async () => (await snapshot(guest)).files.length, { timeout: 30_000 })
+    .toBe(1);
 
   // The guest judges the manifest against its own caps: iOS -> 100 MB soft limit.
   const risk = (await snapshot(guest)).risk;
@@ -71,11 +87,17 @@ test("capability gate: iPhone-class receiver warns above its 100 MB soft limit",
   await guest.getByTestId("accept").click();
   // Above the soft limit the receiver must confirm in a dialog before accepting.
   await guest.getByTestId("dialog-confirm").click();
-  await expect.poll(async () => (await snapshot(guest)).phase, { timeout: 240_000 }).toBe("done");
-  await expect.poll(async () => (await snapshot(host)).phase, { timeout: 240_000 }).toBe("done");
+  await expect
+    .poll(async () => (await snapshot(guest)).phase, { timeout: 240_000 })
+    .toBe("done");
+  await expect
+    .poll(async () => (await snapshot(host)).phase, { timeout: 240_000 })
+    .toBe("done");
 
   const guestHash = await guest.evaluate(
-    () => (window as unknown as { __crossfile?: { sha256?: string } }).__crossfile?.sha256,
+    () =>
+      (window as unknown as { __crossfile?: { sha256?: string } }).__crossfile
+        ?.sha256,
   );
   expect(guestHash).toBe(expected);
   expect((await snapshot(host)).result?.sha256).toBe(expected);

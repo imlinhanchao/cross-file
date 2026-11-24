@@ -9,7 +9,10 @@ const icons = import.meta.glob("../../../../design/assets/icons/*.svg", {
 
 const byName = new Map<string, string>();
 for (const [path, raw] of Object.entries(icons)) {
-  const name = path.split("/").pop()!.replace(/\.svg$/, "");
+  const name = path
+    .split("/")
+    .pop()!
+    .replace(/\.svg$/, "");
   byName.set(name, raw);
 }
 
@@ -32,11 +35,18 @@ export function Icon({ name, size = "md", className }: IconProps) {
     const raw = byName.get(name);
     if (!raw) return "";
     const svg = normalize(raw);
-    if (size === "sm") return svg.replace('class="icon"', 'class="icon icon--sm"');
-    if (size === "lg") return svg.replace('class="icon"', 'class="icon icon--lg"');
+    if (size === "sm")
+      return svg.replace('class="icon"', 'class="icon icon--sm"');
+    if (size === "lg")
+      return svg.replace('class="icon"', 'class="icon icon--lg"');
     return svg;
   }, [name, size]);
 
   if (!html) return null;
-  return <span className={`icon-slot ${className ?? ""}`} dangerouslySetInnerHTML={{ __html: html }} />;
+  return (
+    <span
+      className={`icon-slot ${className ?? ""}`}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
 }

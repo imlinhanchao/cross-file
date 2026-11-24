@@ -6,7 +6,11 @@ import { createHmac } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Caps, ServerMessage } from "@crossfile/core/protocol";
 import { createRoomIdentity } from "@crossfile/core/ids";
-import { createSignalingServer, type SignalingServer, type SignalingServerOptions } from "./index.js";
+import {
+  createSignalingServer,
+  type SignalingServer,
+  type SignalingServerOptions,
+} from "./index.js";
 import { SHORTCODE_TTL_MS } from "./shortcode.js";
 import { GUEST_CAPS, HOST_CAPS, sleep, TestClient } from "./test-support.js";
 
@@ -17,8 +21,14 @@ type JoinOkMessage = Extract<ServerMessage, { type: "join_ok" }>;
 const servers: SignalingServer[] = [];
 const clients: TestClient[] = [];
 
-async function startServer(overrides: SignalingServerOptions = {}): Promise<{ server: SignalingServer; port: number }> {
-  const server = createSignalingServer({ port: 0, host: "127.0.0.1", ...overrides });
+async function startServer(
+  overrides: SignalingServerOptions = {},
+): Promise<{ server: SignalingServer; port: number }> {
+  const server = createSignalingServer({
+    port: 0,
+    host: "127.0.0.1",
+    ...overrides,
+  });
   const { port } = await server.start();
   servers.push(server);
   return { server, port };
@@ -36,7 +46,12 @@ afterEach(async () => {
   for (const server of servers.splice(0)) await server.stop();
 });
 
-async function createRoom(port: number): Promise<{ host: TestClient; roomId: string; code: string; created: CreatedMessage }> {
+async function createRoom(port: number): Promise<{
+  host: TestClient;
+  roomId: string;
+  code: string;
+  created: CreatedMessage;
+}> {
   const host = await connect(port);
   const { roomId } = createRoomIdentity();
   host.send({ v: 1, type: "hello", clientCaps: HOST_CAPS });
@@ -64,7 +79,11 @@ async function requestJoin(
   return host.next("join_request");
 }
 
-async function approve(host: TestClient, guest: TestClient, request: JoinRequestMessage): Promise<{ guestOk: JoinOkMessage; hostOk: JoinOkMessage }> {
+async function approve(
+  host: TestClient,
+  guest: TestClient,
+  request: JoinRequestMessage,
+): Promise<{ guestOk: JoinOkMessage; hostOk: JoinOkMessage }> {
   host.send({ v: 1, type: "approve", guestId: request.guestId });
   const guestOk = await guest.next("join_ok");
   const hostOk = await host.next("join_ok");
@@ -85,7 +104,10 @@ async function joinedPair(port: number): Promise<{
 }
 
 /** Retry a host create until the server has noticed the old socket is gone. */
-async function reconnectHost(port: number, roomId: string): Promise<{ host: TestClient; created: CreatedMessage }> {
+async function reconnectHost(
+  port: number,
+  roomId: string,
+): Promise<{ host: TestClient; created: CreatedMessage }> {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     const host = await connect(port);
     host.send({ v: 1, type: "create", roomId, hostCaps: HOST_CAPS });
@@ -97,7 +119,11 @@ async function reconnectHost(port: number, roomId: string): Promise<{ host: Test
   throw new Error("host could not reconnect to its room");
 }
 
-async function expectNoMessage(client: TestClient, type: ServerMessage["type"], waitMs = 80): Promise<void> {
+async function expectNoMessage(
+  client: TestClient,
+  type: ServerMessage["type"],
+  waitMs = 80,
+): Promise<void> {
   await expect(client.next(type, waitMs)).rejects.toThrow(/timed out/);
 }
 
@@ -139,7 +165,12 @@ describe("create (docs/02 §3.2)", () => {
     expect(replay.guestId).toBe(request.guestId);
     expect(replay.peerCaps).toEqual(GUEST_CAPS);
 
-    guest.send({ v: 1, type: "signal", to: "host", payload: { k: "offer", sdp: "v=0\r\n" } });
+    guest.send({
+      v: 1,
+      type: "signal",
+      to: "host",
+      payload: { k: "offer", sdp: "v=0\r\n" },
+    });
     const signal = await host2.next("signal");
     expect(signal.from).toBe(request.guestId);
   });
@@ -174,13 +205,23 @@ describe("join / approve / deny (docs/02 §3.4, §3.5)", () => {
     const guest = await connect(port);
     const request = await requestJoin(host, guest, roomId);
 
-    host.send({ v: 1, type: "deny", guestId: request.guestId, reason: "ROOM_NOT_FOUND" });
+    host.send({
+      v: 1,
+      type: "deny",
+      guestId: request.guestId,
+      reason: "ROOM_NOT_FOUND",
+    });
     const rejected = await guest.next("join_rejected");
     expect(rejected.code).toBe("ROOM_NOT_FOUND");
     expect(rejected.reason).toBe("ROOM_NOT_FOUND");
 
     // The denied guest is gone: signaling to it yields PEER_GONE.
-    host.send({ v: 1, type: "signal", to: request.guestId, payload: { k: "offer", sdp: "v=0" } });
+    host.send({
+      v: 1,
+      type: "signal",
+      to: request.guestId,
+      payload: { k: "offer", sdp: "v=0" },
+    });
     expect((await host.next("error")).code).toBe("PEER_GONE");
 
     // And a new guest can still join the room afterwards.
@@ -193,7 +234,12 @@ describe("join / approve / deny (docs/02 §3.4, §3.5)", () => {
     const { host, roomId } = await createRoom(port);
     const guest = await connect(port);
     const request = await requestJoin(host, guest, roomId);
-    host.send({ v: 1, type: "deny", guestId: request.guestId, reason: "not right now" });
+    host.send({
+      v: 1,
+      type: "deny",
+      guestId: request.guestId,
+      reason: "not right now",
+    });
     const rejected = await guest.next("join_rejected");
     expect(rejected.code).toBe("ROOM_CLOSED");
     expect(rejected.reason).toBe("not right now");
@@ -245,7 +291,12 @@ describe("signal (docs/02 §3.2)", () => {
     expect(offer.from).toBeTruthy();
     expect(offer.payload).toEqual({ k: "offer", sdp: "v=0" });
 
-    guest.send({ v: 1, type: "signal", to: "host", payload: { k: "answer", sdp: "v=0\r\n" } });
+    guest.send({
+      v: 1,
+      type: "signal",
+      to: "host",
+      payload: { k: "answer", sdp: "v=0\r\n" },
+    });
     const answer = await host.next("signal");
     expect(answer.from).toBe(request.guestId);
     expect(answer.payload).toEqual({ k: "answer", sdp: "v=0\r\n" });
@@ -254,12 +305,21 @@ describe("signal (docs/02 §3.2)", () => {
       v: 1,
       type: "signal",
       to: "host",
-      payload: { k: "candidate", candidate: { candidate: "candidate:1 1 udp 1 127.0.0.1 5000 typ host", sdpMid: "0" } },
+      payload: {
+        k: "candidate",
+        candidate: {
+          candidate: "candidate:1 1 udp 1 127.0.0.1 5000 typ host",
+          sdpMid: "0",
+        },
+      },
     });
     const candidate = await host.next("signal");
     expect(candidate.payload).toEqual({
       k: "candidate",
-      candidate: { candidate: "candidate:1 1 udp 1 127.0.0.1 5000 typ host", sdpMid: "0" },
+      candidate: {
+        candidate: "candidate:1 1 udp 1 127.0.0.1 5000 typ host",
+        sdpMid: "0",
+      },
     });
   });
 
@@ -267,10 +327,20 @@ describe("signal (docs/02 §3.2)", () => {
     const { port } = await startServer();
     const { host, guest } = await joinedPair(port);
 
-    host.send({ v: 1, type: "signal", to: "no-such-guest", payload: { k: "offer", sdp: "v=0" } });
+    host.send({
+      v: 1,
+      type: "signal",
+      to: "no-such-guest",
+      payload: { k: "offer", sdp: "v=0" },
+    });
     expect((await host.next("error")).code).toBe("PEER_GONE");
 
-    guest.send({ v: 1, type: "signal", to: "no-such-host", payload: { k: "answer", sdp: "v=0" } });
+    guest.send({
+      v: 1,
+      type: "signal",
+      to: "no-such-host",
+      payload: { k: "answer", sdp: "v=0" },
+    });
     expect((await guest.next("error")).code).toBe("PEER_GONE");
   });
 
@@ -279,7 +349,12 @@ describe("signal (docs/02 §3.2)", () => {
     const { host, roomId } = await createRoom(port);
     const guest = await connect(port);
     const request = await requestJoin(host, guest, roomId);
-    guest.send({ v: 1, type: "signal", to: "host", payload: { k: "answer", sdp: "v=0" } });
+    guest.send({
+      v: 1,
+      type: "signal",
+      to: "host",
+      payload: { k: "answer", sdp: "v=0" },
+    });
     expect((await guest.next("error")).code).toBe("PEER_GONE");
     // host can still approve afterwards
     await approve(host, guest, request);
@@ -448,7 +523,9 @@ describe("robustness (docs/02 §3.1, §3.6)", () => {
   });
 
   it("rate limits a client by IP with RATE_LIMITED", async () => {
-    const { port } = await startServer({ rateLimit: { windowMs: 60_000, max: 3 } });
+    const { port } = await startServer({
+      rateLimit: { windowMs: 60_000, max: 3 },
+    });
     const client = await connect(port);
     for (let i = 0; i < 3; i += 1) client.send({ v: 1, type: "hello" });
     client.send({ v: 1, type: "hello" });
@@ -460,7 +537,10 @@ describe("robustness (docs/02 §3.1, §3.6)", () => {
 describe("TURN credentials (docs/02 §6.7)", () => {
   it("issues coturn static-auth credentials on created and join_ok", async () => {
     const secret = "static-auth-secret-for-tests";
-    const uris = ["turn:turn.example.org:3478?transport=udp", "turns:turn.example.org:5349"];
+    const uris = [
+      "turn:turn.example.org:3478?transport=udp",
+      "turns:turn.example.org:5349",
+    ];
     const ttl = 600;
     const { port } = await startServer({ turn: { uris, secret, ttl } });
     const { host, roomId, created } = await createRoom(port);
@@ -474,7 +554,9 @@ describe("TURN credentials (docs/02 §6.7)", () => {
     const expiry = Number(match![1]);
     const nowSeconds = Math.floor(Date.now() / 1_000);
     expect(Math.abs(expiry - (nowSeconds + ttl))).toBeLessThanOrEqual(2);
-    const expected = createHmac("sha1", secret).update(credential.username).digest("base64");
+    const expected = createHmac("sha1", secret)
+      .update(credential.username)
+      .digest("base64");
     expect(credential.credential).toBe(expected);
 
     // join_ok carries a credential per peer: one for the guest, one for the host.

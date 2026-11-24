@@ -4,9 +4,16 @@ import { Icon } from "./Icon.js";
 
 export function PathBadge({ path }: { path: PathLabel }) {
   const modifier =
-    path === "lan" ? "path-badge--lan" : path === "direct" ? "path-badge--direct" : "path-badge--relay";
+    path === "lan"
+      ? "path-badge--lan"
+      : path === "direct"
+        ? "path-badge--direct"
+        : "path-badge--relay";
   return (
-    <span className={`path-badge ${modifier}`} aria-label={`当前路径：${pathLabel(path)}`}>
+    <span
+      className={`path-badge ${modifier}`}
+      aria-label={`当前路径：${pathLabel(path)}`}
+    >
       <span className="dot" />
       {pathLabel(path)}
     </span>
@@ -21,13 +28,25 @@ export interface ProgressProps {
   compact?: boolean;
 }
 
-export function Progress({ sentBytes, totalBytes, speedBps, path, compact }: ProgressProps) {
+export function Progress({
+  sentBytes,
+  totalBytes,
+  speedBps,
+  path,
+  compact,
+}: ProgressProps) {
   const ratio = totalBytes > 0 ? Math.min(1, sentBytes / totalBytes) : 0;
   const percent = Math.round(ratio * 100);
 
   if (compact) {
     return (
-      <span className="mini-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
+      <span
+        className="mini-track"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+      >
         <span className="mini-bar" style={{ width: `${percent}%` }} />
       </span>
     );
@@ -54,7 +73,9 @@ export function Progress({ sentBytes, totalBytes, speedBps, path, compact }: Pro
         <div className="progress__bar" style={{ width: `${percent}%` }} />
       </div>
       <div className="progress__meta">
-        {speedBps ? <span className="tnum">{formatSpeed(speedBps)}</span> : null}
+        {speedBps ? (
+          <span className="tnum">{formatSpeed(speedBps)}</span>
+        ) : null}
         <span>已传 {formatBytes(sentBytes)}</span>
       </div>
     </div>

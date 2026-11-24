@@ -28,7 +28,10 @@ const fixture = resolve(cache, `ac4-${SIZE_MB}mb.bin`);
 writeFileSync(fixture, bytes);
 
 function publish(link) {
-  for (const file of [resolve(cache, "ac4-link.txt"), resolve(share, "link.txt")]) {
+  for (const file of [
+    resolve(cache, "ac4-link.txt"),
+    resolve(share, "link.txt"),
+  ]) {
     const tmp = `${file}.tmp`;
     writeFileSync(tmp, link);
     renameSync(tmp, file);
@@ -36,7 +39,10 @@ function publish(link) {
 }
 
 function clearPublished() {
-  for (const file of [resolve(cache, "ac4-link.txt"), resolve(share, "link.txt")]) {
+  for (const file of [
+    resolve(cache, "ac4-link.txt"),
+    resolve(share, "link.txt"),
+  ]) {
     const tmp = `${file}.tmp`;
     writeFileSync(tmp, "");
     renameSync(tmp, file);
@@ -49,24 +55,37 @@ const browser = await chromium.launch({ channel: "chrome" });
 for (let round = 1; round <= 20; round++) {
   const context = await browser.newContext({ ignoreHTTPSErrors: true });
   const host = await context.newPage();
-  host.on("pageerror", (error) => console.log("[host] PAGEERROR", String(error).slice(0, 200)));
+  host.on("pageerror", (error) =>
+    console.log("[host] PAGEERROR", String(error).slice(0, 200)),
+  );
   try {
     await host.goto(`${BASE}/?${QUERY}`);
-    await host.waitForFunction(() => window.__crossfile?.snapshot?.().phase === "waiting", null, {
-      timeout: 60_000,
-    });
+    await host.waitForFunction(
+      () => window.__crossfile?.snapshot?.().phase === "waiting",
+      null,
+      {
+        timeout: 60_000,
+      },
+    );
     const link = await host.evaluate(() => window.__crossfile.snapshot().link);
     // Query string carries diagnostics; report URLs must be URL-encoded inside it.
     publish(link.replace("#", `?${QUERY}#`));
     console.log(`round ${round}: ROOM LINK ${link}`);
 
-    await host.waitForFunction(() => (window.__crossfile?.snapshot?.().guests ?? []).length >= 1, null, {
-      timeout: GUEST_WAIT_MS,
-    });
+    await host.waitForFunction(
+      () => (window.__crossfile?.snapshot?.().guests ?? []).length >= 1,
+      null,
+      {
+        timeout: GUEST_WAIT_MS,
+      },
+    );
     console.log(`round ${round}: guest joined, approving`);
     await host.getByTestId("approve").first().click();
     await host.waitForFunction(
-      () => window.__crossfile?.snapshot?.().guests?.some((guest) => guest.status === "joined"),
+      () =>
+        window.__crossfile
+          ?.snapshot?.()
+          .guests?.some((guest) => guest.status === "joined"),
       null,
       { timeout: 60_000 },
     );
@@ -90,20 +109,32 @@ for (let round = 1; round <= 20; round++) {
         .catch(() => undefined);
     }, 15_000);
     try {
-      await host.waitForFunction(() => window.__crossfile?.snapshot?.().phase === "done", null, {
-        timeout: 900_000,
-      });
+      await host.waitForFunction(
+        () => window.__crossfile?.snapshot?.().phase === "done",
+        null,
+        {
+          timeout: 900_000,
+        },
+      );
     } finally {
       clearInterval(diag);
     }
-    const result = await host.evaluate(() => window.__crossfile.snapshot().result);
-    const guests = await host.evaluate(() => window.__crossfile.snapshot().guests);
-    console.log(`HOST DONE sha256=${result?.sha256} bytes=${result?.bytes} path=${guests?.[0]?.path}`);
+    const result = await host.evaluate(
+      () => window.__crossfile.snapshot().result,
+    );
+    const guests = await host.evaluate(
+      () => window.__crossfile.snapshot().guests,
+    );
+    console.log(
+      `HOST DONE sha256=${result?.sha256} bytes=${result?.bytes} path=${guests?.[0]?.path}`,
+    );
     console.log(`HOST HASH MATCHES EXPECTED: ${result?.sha256 === expected}`);
     await context.close();
     break;
   } catch (error) {
-    console.log(`round ${round}: no guest / failed (${String(error).slice(0, 120)}) — opening a new room`);
+    console.log(
+      `round ${round}: no guest / failed (${String(error).slice(0, 120)}) — opening a new room`,
+    );
     await context.close().catch(() => undefined);
     clearPublished();
   }

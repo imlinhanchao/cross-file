@@ -12,8 +12,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const APP_URL = process.env.CROSSFILE_URL || "http://127.0.0.1:8788";
-const PRIVACY_URL = process.env.CROSSFILE_PRIVACY_URL || "https://room.net.time-pack.com/privacy";
-const HOMEPAGE_URL = process.env.CROSSFILE_HOMEPAGE_URL || "https://room.net.time-pack.com/";
+const PRIVACY_URL =
+  process.env.CROSSFILE_PRIVACY_URL || "https://room.net.time-pack.com/privacy";
+const HOMEPAGE_URL =
+  process.env.CROSSFILE_HOMEPAGE_URL || "https://room.net.time-pack.com/";
 
 // The agent/CI sandbox cannot use Chromium's setuid sandbox; harmless for normal runs.
 app.commandLine.appendSwitch("no-sandbox");
@@ -29,7 +31,9 @@ function safeFileName(raw) {
     .split(/[/\\]/)
     .filter(Boolean)
     .pop();
-  const cleaned = (base ?? "").replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").replace(/^[\s.]+|[\s.]+$/g, "");
+  const cleaned = (base ?? "")
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_")
+    .replace(/^[\s.]+|[\s.]+$/g, "");
   return cleaned || "crossfile-download.bin";
 }
 
@@ -63,7 +67,13 @@ ipcMain.handle("save_write", (_event, { handle, offset, bytes }) => {
   const buffer = Buffer.from(bytes);
   let written = 0;
   while (written < buffer.length) {
-    written += fs.writeSync(entry.fd, buffer, written, buffer.length - written, offset + written);
+    written += fs.writeSync(
+      entry.fd,
+      buffer,
+      written,
+      buffer.length - written,
+      offset + written,
+    );
   }
 });
 
@@ -99,8 +109,16 @@ function buildMenu() {
     {
       label: "房间",
       submenu: [
-        { label: "新建房间", accelerator: "CmdOrCtrl+N", click: () => mainWindow?.webContents.send("menu-action", "new-room") },
-        { label: "结束房间", accelerator: "CmdOrCtrl+W", click: () => mainWindow?.webContents.send("menu-action", "end-room") },
+        {
+          label: "新建房间",
+          accelerator: "CmdOrCtrl+N",
+          click: () => mainWindow?.webContents.send("menu-action", "new-room"),
+        },
+        {
+          label: "结束房间",
+          accelerator: "CmdOrCtrl+W",
+          click: () => mainWindow?.webContents.send("menu-action", "end-room"),
+        },
         { type: "separator" },
         { role: "quit" },
       ],
@@ -112,8 +130,14 @@ function buildMenu() {
     {
       label: "帮助",
       submenu: [
-        { label: "隐私说明", click: () => void shell.openExternal(PRIVACY_URL) },
-        { label: "项目主页", click: () => void shell.openExternal(HOMEPAGE_URL) },
+        {
+          label: "隐私说明",
+          click: () => void shell.openExternal(PRIVACY_URL),
+        },
+        {
+          label: "项目主页",
+          click: () => void shell.openExternal(HOMEPAGE_URL),
+        },
       ],
     },
   ]);
@@ -144,9 +168,12 @@ function createWindow() {
   mainWindow.webContents.on("did-finish-load", () => {
     console.log("[electron] loaded", mainWindow.webContents.getURL());
   });
-  mainWindow.webContents.on("did-fail-load", (_event, code, description, url) => {
-    console.log("[electron] load failed", code, description, url);
-  });
+  mainWindow.webContents.on(
+    "did-fail-load",
+    (_event, code, description, url) => {
+      console.log("[electron] load failed", code, description, url);
+    },
+  );
   console.log("[electron] loading", APP_URL);
   void mainWindow.loadURL(APP_URL);
 }

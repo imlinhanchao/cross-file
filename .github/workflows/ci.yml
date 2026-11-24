@@ -16,6 +16,7 @@ jobs:
           node-version: 22
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test:coverage
       - run: pnpm gate:contrast

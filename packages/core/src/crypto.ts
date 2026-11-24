@@ -32,16 +32,34 @@ const KEY_BYTES = 32;
 const TAG_BYTES = 16;
 const NONCE_BYTES = 12;
 
-export function deriveSessionKey(roomKey: Uint8Array, roomIdBytes: Uint8Array): Uint8Array {
+export function deriveSessionKey(
+  roomKey: Uint8Array,
+  roomIdBytes: Uint8Array,
+): Uint8Array {
   return hkdf(sha256, roomKey, roomIdBytes, utf8(SESSION_INFO), KEY_BYTES);
 }
 
-export function deriveFileKey(sessionKey: Uint8Array, fileId: number): Uint8Array {
-  return hkdf(sha256, sessionKey, new Uint8Array(0), utf8(`file:${fileId}`), KEY_BYTES);
+export function deriveFileKey(
+  sessionKey: Uint8Array,
+  fileId: number,
+): Uint8Array {
+  return hkdf(
+    sha256,
+    sessionKey,
+    new Uint8Array(0),
+    utf8(`file:${fileId}`),
+    KEY_BYTES,
+  );
 }
 
 export async function importFileKey(raw: Uint8Array): Promise<CryptoKey> {
-  return globalThis.crypto.subtle.importKey("raw", raw as BufferSource, "AES-GCM", false, ["encrypt", "decrypt"]);
+  return globalThis.crypto.subtle.importKey(
+    "raw",
+    raw as BufferSource,
+    "AES-GCM",
+    false,
+    ["encrypt", "decrypt"],
+  );
 }
 
 export function buildNonce(salt: Uint8Array, seq: number): Uint8Array {
@@ -49,7 +67,11 @@ export function buildNonce(salt: Uint8Array, seq: number): Uint8Array {
   return concatBytes(salt, u64be(BigInt(seq)));
 }
 
-export function buildAad(fileId: number, seq: number, ciphertextLength: number): Uint8Array {
+export function buildAad(
+  fileId: number,
+  seq: number,
+  ciphertextLength: number,
+): Uint8Array {
   return concatBytes(u16be(fileId), u32be(seq), u32be(ciphertextLength));
 }
 
@@ -61,13 +83,24 @@ export interface SealOptions {
   plaintext: Uint8Array;
 }
 
-export async function sealChunk({ key, fileId, seq, salt, plaintext }: SealOptions): Promise<Uint8Array> {
+export async function sealChunk({
+  key,
+  fileId,
+  seq,
+  salt,
+  plaintext,
+}: SealOptions): Promise<Uint8Array> {
   const ciphertextLength = plaintext.length + TAG_BYTES;
   const nonce = buildNonce(salt, seq);
   if (nonce.length !== NONCE_BYTES) throw new Error("bad nonce length");
   const aad = buildAad(fileId, seq, ciphertextLength);
   const sealed = await globalThis.crypto.subtle.encrypt(
-    { name: "AES-GCM", iv: nonce as BufferSource, additionalData: aad as BufferSource, tagLength: 128 },
+    {
+      name: "AES-GCM",
+      iv: nonce as BufferSource,
+      additionalData: aad as BufferSource,
+      tagLength: 128,
+    },
     key,
     plaintext as BufferSource,
   );
@@ -82,11 +115,22 @@ export interface OpenOptions {
   ciphertext: Uint8Array;
 }
 
-export async function openChunk({ key, fileId, seq, salt, ciphertext }: OpenOptions): Promise<Uint8Array> {
+export async function openChunk({
+  key,
+  fileId,
+  seq,
+  salt,
+  ciphertext,
+}: OpenOptions): Promise<Uint8Array> {
   const nonce = buildNonce(salt, seq);
   const aad = buildAad(fileId, seq, ciphertext.length);
   const opened = await globalThis.crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: nonce as BufferSource, additionalData: aad as BufferSource, tagLength: 128 },
+    {
+      name: "AES-GCM",
+      iv: nonce as BufferSource,
+      additionalData: aad as BufferSource,
+      tagLength: 128,
+    },
     key,
     ciphertext as BufferSource,
   );
@@ -94,13 +138,22 @@ export async function openChunk({ key, fileId, seq, salt, ciphertext }: OpenOpti
 }
 
 // --- join proof (docs/02 §2.3 / §4.1) --------------------------------------
-export function joinProofInput(roomIdBytes: Uint8Array, guestNonce: string): Uint8Array {
+export function joinProofInput(
+  roomIdBytes: Uint8Array,
+  guestNonce: string,
+): Uint8Array {
   return concatBytes(utf8(JOIN_PREFIX), roomIdBytes, utf8(guestNonce));
 }
 
-export function computeJoinProof(roomKey: Uint8Array, roomIdBytes: Uint8Array, guestNonce: string): string {
+export function computeJoinProof(
+  roomKey: Uint8Array,
+  roomIdBytes: Uint8Array,
+  guestNonce: string,
+): string {
   // HMAC-SHA256(roomKey, "join:" || roomId || guestNonce)
-  return base64urlEncode(hmac(sha256, roomKey, joinProofInput(roomIdBytes, guestNonce)));
+  return base64urlEncode(
+    hmac(sha256, roomKey, joinProofInput(roomIdBytes, guestNonce)),
+  );
 }
 
 export function verifyJoinProof(
@@ -116,7 +169,10 @@ export function verifyJoinProof(
   } catch {
     return false;
   }
-  return timingSafeEqual(received, hmac(sha256, roomKey, joinProofInput(roomIdBytes, guestNonce)));
+  return timingSafeEqual(
+    received,
+    hmac(sha256, roomKey, joinProofInput(roomIdBytes, guestNonce)),
+  );
 }
 
 // --- incremental SHA-256 (docs/02 §4.4) ------------------------------------
@@ -148,10 +204,17 @@ export class IncrementalSha256 {
 }
 
 /** Whole-file digest, streamed so a 500 MB file never lands in memory at once. */
-export async function wholeFileSha256(file: Blob, sliceBytes = 1024 * 1024): Promise<string> {
+export async function wholeFileSha256(
+  file: Blob,
+  sliceBytes = 1024 * 1024,
+): Promise<string> {
   const hasher = new IncrementalSha256();
   for (let offset = 0; offset < file.size; offset += sliceBytes) {
-    const part = new Uint8Array(await file.slice(offset, Math.min(offset + sliceBytes, file.size)).arrayBuffer());
+    const part = new Uint8Array(
+      await file
+        .slice(offset, Math.min(offset + sliceBytes, file.size))
+        .arrayBuffer(),
+    );
     hasher.update(part);
   }
   if (file.size === 0) hasher.update(new Uint8Array(0));
@@ -165,14 +228,70 @@ export function sha256Hex(bytes: Uint8Array): string {
 // --- SAS: 4 emoji from both DTLS fingerprints (docs/02 §4.5) ---------------
 /** 64 stable emoji; index = (sasBits[i] >> 2) & 0x3f, i.e. 24 bits total. */
 export const EMOJI_64 = [
-  "🔒", "🔑", "🛡️", "🧩", "🚀", "🛰️", "📡", "🔗",
-  "🧭", "🎯", "🧪", "🧬", "🔭", "🪐", "🌍", "🌤️",
-  "🌊", "🔥", "❄️", "⚡", "🌈", "☀️", "🌙", "⭐",
-  "🌟", "💫", "✨", "🍀", "🌵", "🌲", "🌴", "🌿",
-  "🍎", "🍊", "🍋", "🍇", "🍓", "🫐", "🍑", "🥝",
-  "🍒", "🥑", "🌽", "🥕", "🍄", "🧀", "🍞", "🥐",
-  "🍳", "🍕", "🍔", "🍟", "🍿", "🍩", "🍪", "🎂",
-  "🍫", "🍬", "🍭", "☕", "🍵", "🧃", "🥤", "🍷",
+  "🔒",
+  "🔑",
+  "🛡️",
+  "🧩",
+  "🚀",
+  "🛰️",
+  "📡",
+  "🔗",
+  "🧭",
+  "🎯",
+  "🧪",
+  "🧬",
+  "🔭",
+  "🪐",
+  "🌍",
+  "🌤️",
+  "🌊",
+  "🔥",
+  "❄️",
+  "⚡",
+  "🌈",
+  "☀️",
+  "🌙",
+  "⭐",
+  "🌟",
+  "💫",
+  "✨",
+  "🍀",
+  "🌵",
+  "🌲",
+  "🌴",
+  "🌿",
+  "🍎",
+  "🍊",
+  "🍋",
+  "🍇",
+  "🍓",
+  "🫐",
+  "🍑",
+  "🥝",
+  "🍒",
+  "🥑",
+  "🌽",
+  "🥕",
+  "🍄",
+  "🧀",
+  "🍞",
+  "🥐",
+  "🍳",
+  "🍕",
+  "🍔",
+  "🍟",
+  "🍿",
+  "🍩",
+  "🍪",
+  "🎂",
+  "🍫",
+  "🍬",
+  "🍭",
+  "☕",
+  "🍵",
+  "🧃",
+  "🥤",
+  "🍷",
 ] as const;
 
 /** Pull the sha-256 fingerprint out of an SDP (`a=fingerprint:sha-256 AB:CD:…`). */
@@ -181,7 +300,10 @@ export function parseDtlsFingerprint(sdp: string): string | null {
   return match ? match[1]!.toUpperCase() : null;
 }
 
-export function computeSas(fingerprintLocal: string, fingerprintRemote: string): string[] {
+export function computeSas(
+  fingerprintLocal: string,
+  fingerprintRemote: string,
+): string[] {
   const h1 = bytesToHex(sha256(utf8(fingerprintLocal.toUpperCase())));
   const h2 = bytesToHex(sha256(utf8(fingerprintRemote.toUpperCase())));
   const [a, b] = h1 <= h2 ? [h1, h2] : [h2, h1];

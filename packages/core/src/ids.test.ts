@@ -30,8 +30,14 @@ describe("room identity", () => {
 describe("join link", () => {
   it("keeps the key in the fragment and parses it back", () => {
     const identity = createRoomIdentity();
-    const link = buildRoomLink("https://room.example/", identity.roomId, identity.roomKey);
-    expect(link.startsWith(`https://room.example/r/${identity.roomId}#`)).toBe(true);
+    const link = buildRoomLink(
+      "https://room.example/",
+      identity.roomId,
+      identity.roomKey,
+    );
+    expect(link.startsWith(`https://room.example/r/${identity.roomId}#`)).toBe(
+      true,
+    );
     const parsed = parseRoomLink(link);
     expect(parsed?.roomId).toBe(identity.roomId);
     expect(parsed?.roomKey).toEqual(identity.roomKey);
@@ -39,13 +45,21 @@ describe("join link", () => {
 
   it("strips trailing slashes from the origin", () => {
     const identity = createRoomIdentity();
-    const link = buildRoomLink("https://room.example///", identity.roomId, identity.roomKey);
+    const link = buildRoomLink(
+      "https://room.example///",
+      identity.roomId,
+      identity.roomKey,
+    );
     expect(link.startsWith("https://room.example/r/")).toBe(true);
   });
 
   it("rejects links without a fragment or with the wrong key length", () => {
     const identity = createRoomIdentity();
-    const withKey = buildRoomLink("https://room.example", identity.roomId, identity.roomKey);
+    const withKey = buildRoomLink(
+      "https://room.example",
+      identity.roomId,
+      identity.roomKey,
+    );
     expect(parseRoomLink(withKey.split("#")[0]!)).toBeNull();
     expect(parseRoomLink(`${withKey.replace(/#.*/, "")}#AAAA`)).toBeNull();
     expect(parseRoomLink("https://room.example/not-a-room")).toBeNull();

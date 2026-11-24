@@ -46,6 +46,8 @@ export interface SignalingServer {
  * Create an in-memory signaling server. Construction is side-effect free; `start()` binds the
  * socket and `stop()` releases every room, counter and timer.
  */
-export function createSignalingServer(options?: SignalingServerOptions): SignalingServer {
+export function createSignalingServer(
+  options?: SignalingServerOptions,
+): SignalingServer {
   return create(options);
 }

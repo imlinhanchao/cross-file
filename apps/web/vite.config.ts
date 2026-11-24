@@ -1,7 +1,8 @@
 import { defineConfig, searchForWorkspaceRoot } from "vite";
 import react from "@vitejs/plugin-react";
 
-const SIGNALING_TARGET = process.env.CROSSFILE_SIGNALING_URL ?? "ws://127.0.0.1:8788";
+const SIGNALING_TARGET =
+  process.env.CROSSFILE_SIGNALING_URL ?? "ws://127.0.0.1:8788";
 
 /**
  * Dev-only reporter endpoint used by cross-machine acceptance tests: the receiving
@@ -12,7 +13,17 @@ function devReportPlugin() {
   return {
     name: "crossfile-dev-report",
     apply: "serve" as const,
-    configureServer(server: { middlewares: { use: (path: string, fn: (req: { url?: string }, res: { statusCode: number; end: () => void }) => void) => void } }) {
+    configureServer(server: {
+      middlewares: {
+        use: (
+          path: string,
+          fn: (
+            req: { url?: string },
+            res: { statusCode: number; end: () => void },
+          ) => void,
+        ) => void;
+      };
+    }) {
       server.middlewares.use("/__report", (req, res) => {
         console.log("[cf-report]", req.url ?? "");
         res.statusCode = 204;

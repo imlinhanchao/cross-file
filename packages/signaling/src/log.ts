@@ -32,6 +32,9 @@ export function redactIp(ip: string | undefined): string {
  * a technical error: never a request object, never an IP, never a room id.
  */
 export function logError(scope: string, detail: unknown): void {
-  const text = detail instanceof Error ? `${detail.name}: ${detail.message}` : String(detail);
+  const text =
+    detail instanceof Error
+      ? `${detail.name}: ${detail.message}`
+      : String(detail);
   console.error(`[signaling] ${scope}: ${text}`);
 }

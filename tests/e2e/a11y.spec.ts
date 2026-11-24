@@ -6,12 +6,16 @@ import AxeBuilder from "@axe-core/playwright";
  * We fail on serious/critical violations only: cosmetic "best practice" rules are
  * reported in the HTML artifact instead of blocking.
  */
-async function expectNoSeriousViolations(page: import("@playwright/test").Page, label: string) {
+async function expectNoSeriousViolations(
+  page: import("@playwright/test").Page,
+  label: string,
+) {
   const results = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
     .analyze();
   const blocking = results.violations.filter(
-    (violation) => violation.impact === "serious" || violation.impact === "critical",
+    (violation) =>
+      violation.impact === "serious" || violation.impact === "critical",
   );
   if (blocking.length > 0) {
     console.log(
@@ -31,7 +35,9 @@ async function expectNoSeriousViolations(page: import("@playwright/test").Page, 
   expect(blocking, `axe serious/critical violations on ${label}`).toEqual([]);
 }
 
-test("a11y: host room and guest confirmation have no serious axe violations", async ({ browser }) => {
+test("a11y: host room and guest confirmation have no serious axe violations", async ({
+  browser,
+}) => {
   const hostContext = await browser.newContext();
   const guestContext = await browser.newContext();
   const host = await hostContext.newPage();
@@ -39,13 +45,19 @@ test("a11y: host room and guest confirmation have no serious axe violations", as
 
   await host.goto("/");
   await expect
-    .poll(() => host.evaluate(() => window.__crossfile?.snapshot?.().phase), { timeout: 30_000 })
+    .poll(() => host.evaluate(() => window.__crossfile?.snapshot?.().phase), {
+      timeout: 30_000,
+    })
     .toBe("waiting");
   await expectNoSeriousViolations(host, "host-room");
 
   const link = await host.evaluate(() => window.__crossfile.snapshot().link);
   await guest.goto(link);
-  await expect.poll(() => host.evaluate(() => window.__crossfile?.snapshot?.().guests?.length ?? 0)).toBe(1);
+  await expect
+    .poll(() =>
+      host.evaluate(() => window.__crossfile?.snapshot?.().guests?.length ?? 0),
+    )
+    .toBe(1);
   await host.getByTestId("approve").first().click();
   await host.getByTestId("file-input").setInputFiles({
     name: "a11y.txt",
@@ -53,7 +65,13 @@ test("a11y: host room and guest confirmation have no serious axe violations", as
     buffer: Buffer.from("hello crossfile"),
   });
   await expect
-    .poll(() => guest.evaluate(() => window.__crossfile?.snapshot?.().files?.length ?? 0), { timeout: 30_000 })
+    .poll(
+      () =>
+        guest.evaluate(
+          () => window.__crossfile?.snapshot?.().files?.length ?? 0,
+        ),
+      { timeout: 30_000 },
+    )
     .toBe(1);
   await expectNoSeriousViolations(guest, "guest-confirm");
 

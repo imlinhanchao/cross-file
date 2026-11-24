@@ -21,7 +21,7 @@
     "format": "prettier --write .",
     "gate:contrast": "node design/tools/check-contrast.mjs",
     "gate:colors": "bash scripts/check-hardcoded-colors.sh",
-    "gate": "pnpm typecheck && pnpm test:coverage && pnpm gate:contrast && pnpm gate:colors",
+    "gate": "pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm gate:contrast && pnpm gate:colors",
     "build:desktop": "pnpm --filter @crossfile/desktop build",
     "dev:desktop-electron": "electron apps/desktop-electron"
   },

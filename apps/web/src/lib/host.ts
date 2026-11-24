@@ -43,7 +43,10 @@ interface GuestPeer {
   turn?: TurnCredential;
   prepared?: { files: PreparedFile[]; chunkSize: number };
   accept?: ReturnType<typeof deferred<number[]>>;
-  acks: Map<number, ReturnType<typeof deferred<{ ok: boolean; error?: string }>>>;
+  acks: Map<
+    number,
+    ReturnType<typeof deferred<{ ok: boolean; error?: string }>>
+  >;
   transferStarted?: boolean;
   acceptedIds?: number[];
   nextFileIndex?: number;
@@ -58,9 +61,13 @@ interface GuestPeer {
 
 export class HostController {
   private readonly identity = createRoomIdentity();
-  private readonly sessionKey = deriveSessionKey(this.identity.roomKey, this.identity.roomIdBytes);
+  private readonly sessionKey = deriveSessionKey(
+    this.identity.roomKey,
+    this.identity.roomIdBytes,
+  );
   private readonly caps: Caps = detectCaps();
-  private readonly relayOnly = new URLSearchParams(location.search).get("relay") === "1";
+  private readonly relayOnly =
+    new URLSearchParams(location.search).get("relay") === "1";
   private socket = new SignalingSocket();
   private readonly peers = new Map<string, GuestPeer>();
   private readonly guestNonces = new Map<string, string>();
@@ -74,7 +81,11 @@ export class HostController {
   private sendArmed = false;
 
   get roomLink(): string {
-    return buildRoomLink(location.origin, this.identity.roomId, this.identity.roomKey);
+    return buildRoomLink(
+      location.origin,
+      this.identity.roomId,
+      this.identity.roomKey,
+    );
   }
 
   async start(): Promise<void> {
@@ -87,24 +98,36 @@ export class HostController {
     });
     await this.socket.connect();
     this.cleanupNative = installNativeShellHooks({
-      isTransferActive: () => ["transferring", "paused"].includes(useApp.getState().phase),
+      isTransferActive: () =>
+        ["transferring", "paused"].includes(useApp.getState().phase),
       onEndRoom: () => this.close(),
       onNewRoom: () => location.assign("/"),
     });
     this.socket.send({ v: 1, type: "hello", clientCaps: this.caps });
-    this.socket.send({ v: 1, type: "create", roomId: this.identity.roomId, hostCaps: this.caps });
+    this.socket.send({
+      v: 1,
+      type: "create",
+      roomId: this.identity.roomId,
+      hostCaps: this.caps,
+    });
   }
 
   setFiles(files: File[]): void {
     this.fileList = files;
     const store = useApp.getState();
     store.patch({
-      files: files.map((file, index) => ({ id: index + 1, name: file.name, size: file.size, mime: file.type })),
+      files: files.map((file, index) => ({
+        id: index + 1,
+        name: file.name,
+        size: file.size,
+        mime: file.type,
+      })),
     });
     // New files default to "send to every joined guest"; the matrix can override.
     const joined = this.joinedGuestIds();
     const assignments: Record<number, string[]> = {};
-    for (let index = 0; index < files.length; index++) assignments[index + 1] = [...joined];
+    for (let index = 0; index < files.length; index++)
+      assignments[index + 1] = [...joined];
     store.setAssignments(assignments);
     this.refreshManifests();
   }
@@ -112,7 +135,8 @@ export class HostController {
   /** File × guest matrix changed: re-issue manifests to guests that have not started. */
   refreshManifests(): void {
     for (const [guestId, guest] of this.peers) {
-      if (guest.handles && !guest.transferStarted) void this.sendManifest(guestId, guest);
+      if (guest.handles && !guest.transferStarted)
+        void this.sendManifest(guestId, guest);
     }
   }
 
@@ -150,7 +174,9 @@ export class HostController {
    * (docs/01 D18: sequential queue, never parallel).
    */
   async sendNow(): Promise<void> {
-    const guestIds = this.joinedGuestIds().filter((guestId) => this.assignedFileIds(guestId).length > 0);
+    const guestIds = this.joinedGuestIds().filter(
+      (guestId) => this.assignedFileIds(guestId).length > 0,
+    );
     if (guestIds.length === 0) throw new Error(copy.emptyReceivers);
     this.sendArmed = true;
     for (const guestId of guestIds) {
@@ -188,36 +214,73 @@ export class HostController {
     const store = useApp.getState();
     switch (message.type) {
       case "created": {
-        store.patch({ phase: "waiting", roomId: this.identity.roomId, code: message.code, link: this.roomLink });
+        store.patch({
+          phase: "waiting",
+          roomId: this.identity.roomId,
+          code: message.code,
+          link: this.roomLink,
+        });
         this.heartbeat = setInterval(
-          () => this.socket.send({ v: 1, type: "heartbeat", roomId: this.identity.roomId }),
+          () =>
+            this.socket.send({
+              v: 1,
+              type: "heartbeat",
+              roomId: this.identity.roomId,
+            }),
           20_000,
         );
         break;
       }
       case "join_request": {
         const hasProof = message.proof !== undefined;
-        if (hasProof && !verifyJoinProof(this.identity.roomKey, this.identity.roomIdBytes, message.guestNonce, message.proof)) {
+        if (
+          hasProof &&
+          !verifyJoinProof(
+            this.identity.roomKey,
+            this.identity.roomIdBytes,
+            message.guestNonce,
+            message.proof,
+          )
+        ) {
           // A signaling server that does not know roomKey cannot forge this proof (docs/02 §2.3).
-          this.socket.send({ v: 1, type: "deny", guestId: message.guestId, reason: "PROOF_INVALID" });
+          this.socket.send({
+            v: 1,
+            type: "deny",
+            guestId: message.guestId,
+            reason: "PROOF_INVALID",
+          });
           break;
         }
         this.guestNonces.set(message.guestId, message.guestNonce);
         if (hasProof) this.keyedGuests.add(message.guestId);
-        store.upsertGuest({ id: message.guestId, caps: message.guestCaps, status: "pending" });
+        store.upsertGuest({
+          id: message.guestId,
+          caps: message.guestCaps,
+          status: "pending",
+        });
         store.patch({ phase: "approval" });
         break;
       }
       case "join_ok": {
-        store.upsertGuest({ id: message.guestId, caps: message.peerCaps, status: "joined" });
+        store.upsertGuest({
+          id: message.guestId,
+          caps: message.peerCaps,
+          status: "joined",
+        });
         const assignments = { ...store.assignments };
         for (const file of store.files) {
           const current = assignments[file.id] ?? [];
-          assignments[file.id] = current.includes(message.guestId) ? current : [...current, message.guestId];
+          assignments[file.id] = current.includes(message.guestId)
+            ? current
+            : [...current, message.guestId];
         }
         store.setAssignments(assignments);
         store.patch({ phase: "joined" });
-        this.openPeer(message.guestId, message.turn, this.guestHasKey(message.guestId));
+        this.openPeer(
+          message.guestId,
+          message.turn,
+          this.guestHasKey(message.guestId),
+        );
         break;
       }
       case "signal": {
@@ -232,11 +295,18 @@ export class HostController {
         break;
       }
       case "room_closed": {
-        store.patch({ phase: "error", roomClosed: true, error: copy.roomClosed });
+        store.patch({
+          phase: "error",
+          roomClosed: true,
+          error: copy.roomClosed,
+        });
         break;
       }
       case "error": {
-        store.patch({ phase: "error", error: errorText(message.code, message.msg) });
+        store.patch({
+          phase: "error",
+          error: errorText(message.code, message.msg),
+        });
         break;
       }
       default:
@@ -248,7 +318,11 @@ export class HostController {
     return this.keyedGuests.has(guestId);
   }
 
-  private openPeer(guestId: string, turn: TurnCredential | undefined, hasKey: boolean): void {
+  private openPeer(
+    guestId: string,
+    turn: TurnCredential | undefined,
+    hasKey: boolean,
+  ): void {
     const guest: GuestPeer = {
       peer: undefined as unknown as Peer,
       turn,
@@ -280,7 +354,9 @@ export class HostController {
       .then((handles) => {
         if (guest.peer !== peer) return; // a newer connection superseded this one
         guest.handles = handles;
-        handles.ctrl.addEventListener("message", (event: MessageEvent) => this.onCtrl(guestId, event.data));
+        handles.ctrl.addEventListener("message", (event: MessageEvent) =>
+          this.onCtrl(guestId, event.data),
+        );
         handles.data.binaryType = "arraybuffer";
         handles.data.addEventListener("close", () => {
           if (guest.peer === peer) this.onChannelLost(guestId, guest);
@@ -289,7 +365,9 @@ export class HostController {
           if (guest.peer === peer) this.onChannelLost(guestId, guest);
         });
         this.pathTimer = setTimeout(() => {
-          void handles.path().then((path) => useApp.getState().patchGuest(guestId, { path }));
+          void handles
+            .path()
+            .then((path) => useApp.getState().patchGuest(guestId, { path }));
         }, 1_000);
 
         if (guest.resuming) {
@@ -319,7 +397,8 @@ export class HostController {
     guest.handles = undefined;
     if (!guest.transferStarted) return;
     const store = useApp.getState();
-    if (store.phase === "transferring") store.patch({ phase: "paused", notice: copy.resumeHint });
+    if (store.phase === "transferring")
+      store.patch({ phase: "paused", notice: copy.resumeHint });
     this.scheduleReconnect(guestId);
   }
 
@@ -340,7 +419,8 @@ export class HostController {
   private async sendManifest(guestId: string, guest: GuestPeer): Promise<void> {
     if (!guest.handles) return;
     const maxMessageSize =
-      (guest.handles.pc.sctp as { maxMessageSize?: number } | null)?.maxMessageSize ?? 262_144;
+      (guest.handles.pc.sctp as { maxMessageSize?: number } | null)
+        ?.maxMessageSize ?? 262_144;
     const chunkSize = effectiveChunkSize(64 * 1024, maxMessageSize);
     const assigned = new Set(this.assignedFileIds(guestId));
     const files: PreparedFile[] = await Promise.all(
@@ -381,7 +461,9 @@ export class HostController {
   private onCtrl(guestId: string, raw: unknown): void {
     let message: CtrlMessage;
     try {
-      message = parseCtrlMessage(typeof raw === "string" ? JSON.parse(raw) : raw);
+      message = parseCtrlMessage(
+        typeof raw === "string" ? JSON.parse(raw) : raw,
+      );
     } catch {
       return;
     }
@@ -397,16 +479,24 @@ export class HostController {
         this.startTransferOnce(guestId, guest);
         break;
       case "ack":
-        guest.acks.get(message.fileId)?.resolve({ ok: message.ok, error: message.error });
+        guest.acks
+          .get(message.fileId)
+          ?.resolve({ ok: message.ok, error: message.error });
         break;
       case "bitmap": {
         // Resume: only the missing chunks of this file are re-sent (docs/02 §6.5).
-        const prepared = guest.prepared?.files.find((file) => file.entry.id === message.fileId);
+        const prepared = guest.prepared?.files.find(
+          (file) => file.entry.id === message.fileId,
+        );
         if (!prepared || !guest.handles) return;
         const missing = [...Array(prepared.entry.chunkCount).keys()].filter(
-          (seq) => !decodeBitmap(message.bits, prepared.entry.chunkCount).has(seq),
+          (seq) =>
+            !decodeBitmap(message.bits, prepared.entry.chunkCount).has(seq),
         );
-        console.debug("[cf-host] resume bitmap", { fileId: message.fileId, missing: missing.length });
+        console.debug("[cf-host] resume bitmap", {
+          fileId: message.fileId,
+          missing: missing.length,
+        });
         void this.sendPrepared(guestId, guest, prepared, missing)
           .then(() => {
             guest.nextFileIndex = (guest.nextFileIndex ?? 0) + 1;
@@ -423,13 +513,19 @@ export class HostController {
         this.maybeSendRoomKey(guestId, guest);
         break;
       case "key-ok":
-        useApp.getState().patch({ sas: undefined, sasPending: false, sasConfirmedByMe: false });
+        useApp.getState().patch({
+          sas: undefined,
+          sasPending: false,
+          sasConfirmedByMe: false,
+        });
         useApp.getState().patchGuest(guestId, { status: "joined" });
         if (this.fileList.length > 0) void this.sendManifest(guestId, guest);
         this.startTransferOnce(guestId, guest);
         break;
       case "error":
-        useApp.getState().patch({ error: errorText(message.code, message.msg) });
+        useApp
+          .getState()
+          .patch({ error: errorText(message.code, message.msg) });
         break;
       default:
         break;
@@ -453,7 +549,12 @@ export class HostController {
     if (!guest.handles) return;
     guest.keySent = true;
     guest.handles.ctrl.send(
-      JSON.stringify({ v: 1, type: "room-key", key: base64urlEncode(this.identity.roomKey), roomId: this.identity.roomId }),
+      JSON.stringify({
+        v: 1,
+        type: "room-key",
+        key: base64urlEncode(this.identity.roomKey),
+        roomId: this.identity.roomId,
+      }),
     );
     useApp.getState().patch({ sasPending: false });
   }
@@ -477,7 +578,9 @@ export class HostController {
     const guest = this.peers.get(guestId);
     if (!guest?.prepared) return;
     const accepted = guest.prepared.files.filter(
-      (file) => guest.acceptedIds?.includes(file.entry.id) && this.assignedFileIds(guestId).includes(file.entry.id),
+      (file) =>
+        guest.acceptedIds?.includes(file.entry.id) &&
+        this.assignedFileIds(guestId).includes(file.entry.id),
     );
     const store = useApp.getState();
     const totalBytes = accepted.reduce((sum, file) => sum + file.file.size, 0);
@@ -494,7 +597,11 @@ export class HostController {
       });
     }
 
-    for (let index = guest.nextFileIndex ?? 0; index < accepted.length; index++) {
+    for (
+      let index = guest.nextFileIndex ?? 0;
+      index < accepted.length;
+      index++
+    ) {
       if (!guest.handles) {
         // Channel dropped: wait for the bitmap-driven resume (close guard stays on).
         store.patch({ phase: "paused", notice: copy.resumeHint });
@@ -505,7 +612,10 @@ export class HostController {
       try {
         await this.sendPrepared(guestId, guest, prepared);
       } catch (error) {
-        console.debug("[cf-host] send failed, waiting for resume", String(error));
+        console.debug(
+          "[cf-host] send failed, waiting for resume",
+          String(error),
+        );
         this.onChannelLost(guestId, guest);
         return;
       }
@@ -514,8 +624,14 @@ export class HostController {
 
     const last = accepted[accepted.length - 1];
     void setTransferActive(false);
-    store.patch({ phase: "done", result: { ok: true, sha256: last?.sha256, bytes: totalBytes } });
-    store.patchGuest(guestId, { status: "done", progress: { sentBytes: totalBytes, totalBytes } });
+    store.patch({
+      phase: "done",
+      result: { ok: true, sha256: last?.sha256, bytes: totalBytes },
+    });
+    store.patchGuest(guestId, {
+      status: "done",
+      progress: { sentBytes: totalBytes, totalBytes },
+    });
     store.patch({ notice: `${copy.done} · ${formatBytes(totalBytes)}` });
   }
 
@@ -541,19 +657,34 @@ export class HostController {
       onProgress: (sentBytes) => {
         const startedAt = useApp.getState().transfer?.startedAt ?? Date.now();
         const elapsed = (Date.now() - startedAt) / 1000;
-        useApp.getState().setTransfer({ sentBytes, speedBps: elapsed > 0 ? sentBytes / elapsed : 0 });
+        useApp.getState().setTransfer({
+          sentBytes,
+          speedBps: elapsed > 0 ? sentBytes / elapsed : 0,
+        });
       },
     });
-    console.debug("[cf-host] chunks sent", { fileId, only: onlyChunks?.length ?? result.chunkCount, sha256: prepared.sha256.slice(0, 12) });
+    console.debug("[cf-host] chunks sent", {
+      fileId,
+      only: onlyChunks?.length ?? result.chunkCount,
+      sha256: prepared.sha256.slice(0, 12),
+    });
 
     const ack = deferred<{ ok: boolean; error?: string }>();
     guest.acks.set(fileId, ack);
     guest.handles.ctrl.send(
-      JSON.stringify({ v: 1, type: "done", fileId, sha256: prepared.sha256, chunkCount: result.chunkCount }),
+      JSON.stringify({
+        v: 1,
+        type: "done",
+        fileId,
+        sha256: prepared.sha256,
+        chunkCount: result.chunkCount,
+      }),
     );
     const outcome = await withTimeout(ack.promise, 120_000, "ack timeout");
     if (!outcome.ok) {
-      useApp.getState().patch({ phase: "error", error: outcome.error ?? copy.verifyFailed });
+      useApp
+        .getState()
+        .patch({ phase: "error", error: outcome.error ?? copy.verifyFailed });
       throw new Error(outcome.error ?? copy.verifyFailed);
     }
   }

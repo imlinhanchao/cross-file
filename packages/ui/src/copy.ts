@@ -5,7 +5,8 @@ export const copy = {
   privacyShort: "服务器不存一个字节。密钥只在这张码里。",
   privacyNote: "文件不经过服务器存储，房间结束后不留下任何副本",
   roomTitle: "把文件发给谁？",
-  roomLead: "对方扫码或打开链接即可接收，无需安装任何东西。文件直接在你的设备和对方设备之间传输。",
+  roomLead:
+    "对方扫码或打开链接即可接收，无需安装任何东西。文件直接在你的设备和对方设备之间传输。",
   dropzone: "拖入文件，或点击选择",
   dropzoneHint: "单个文件 ≤ 500 MB · 单次总计 ≤ 2 GB",
   emptyReceivers: "还没有设备加入。让对方扫码，或把 6 位码发给他。",
@@ -38,7 +39,8 @@ export const copy = {
   hostOffline: "对方的房间已关闭",
   roomClosed: "房间已结束，服务器没有留下任何副本。",
   tooLarge: "超过对方浏览器能接收的上限。换成电脑接收，或让对方安装 App。",
-  iosWarning: "这台 iPhone 接收大文件风险较高。浏览器最多稳定保存约 100 MB。建议改用电脑接收，或安装 CrossFile App。",
+  iosWarning:
+    "这台 iPhone 接收大文件风险较高。浏览器最多稳定保存约 100 MB。建议改用电脑接收，或安装 CrossFile App。",
   relaySlow: "正在通过中继服务器传输，速度会慢一些。",
   errorGeneric: "出错了，请重试",
   selectFileFirst: "先选择一个文件",
@@ -67,10 +69,13 @@ const ERROR_COPY: Record<string, string> = {
   ROOM_NOT_FOUND: "房间不存在或已过期。请重新扫码，或让对方重新建一个房间。",
   ROOM_CLOSED: "房间已结束。请让对方重新建一个房间，再扫码加入。",
   ROOM_FULL: "房间的接收方已经满了。请让对方移除一个接收方，或稍后再试。",
-  PROOF_INVALID: "这次加入的凭证无效，可能有人在冒充。已拒绝，请重新扫描对方的二维码。",
+  PROOF_INVALID:
+    "这次加入的凭证无效，可能有人在冒充。已拒绝，请重新扫描对方的二维码。",
   SAS_MISMATCH: "安全码不一致，连接可能被中间人劫持。已中止传输，请重新建房。",
-  TOO_LARGE: "这个文件超过对方设备能接收的上限。请让对方改用电脑接收，或安装 App。",
-  CAPABILITY_RISK_DECLINED: "对方设备无法可靠保存这么大的文件，接收方拒绝了这次传输。请改用电脑接收，或让对方安装 App。",
+  TOO_LARGE:
+    "这个文件超过对方设备能接收的上限。请让对方改用电脑接收，或安装 App。",
+  CAPABILITY_RISK_DECLINED:
+    "对方设备无法可靠保存这么大的文件，接收方拒绝了这次传输。请改用电脑接收，或让对方安装 App。",
   HASH_MISMATCH: "校验没通过，文件可能损坏。已停止保存，请让对方重发一次。",
   TIMEOUT: "连接超时。请检查网络后重试，或让对方重新加入。",
   PEER_GONE: "对方已经断开了。请重新扫码加入，或让对方重新发一次。",
@@ -84,5 +89,9 @@ export function errorText(code: string | undefined, fallback?: string): string {
 }
 
 export function pathLabel(path: "lan" | "direct" | "relay"): string {
-  return path === "lan" ? copy.pathLan : path === "direct" ? copy.pathDirect : copy.pathRelay;
+  return path === "lan"
+    ? copy.pathLan
+    : path === "direct"
+      ? copy.pathDirect
+      : copy.pathRelay;
 }

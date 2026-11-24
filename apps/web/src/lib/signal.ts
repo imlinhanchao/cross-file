@@ -1,4 +1,8 @@
-import type { ClientMessage, ServerMessage, SignalPayload } from "@crossfile/core";
+import type {
+  ClientMessage,
+  ServerMessage,
+  SignalPayload,
+} from "@crossfile/core";
 import { isNativeShell } from "./native.js";
 
 /** Desktop shell default: the dev/self-host instance runs on this machine. */
@@ -40,10 +44,15 @@ export class SignalingSocket {
       const ws = new WebSocket(url);
       this.ws = ws;
       ws.addEventListener("open", () => {
-        for (const message of this.outbox.splice(0)) ws.send(JSON.stringify(message));
+        for (const message of this.outbox.splice(0))
+          ws.send(JSON.stringify(message));
         resolve();
       });
-      ws.addEventListener("error", () => reject(new Error("signaling connection failed")), { once: true });
+      ws.addEventListener(
+        "error",
+        () => reject(new Error("signaling connection failed")),
+        { once: true },
+      );
       ws.addEventListener("message", (event) => {
         let parsed: ServerMessage;
         try {
@@ -70,7 +79,8 @@ export class SignalingSocket {
   }
 
   send(message: ClientMessage): void {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(message));
+    if (this.ws && this.ws.readyState === WebSocket.OPEN)
+      this.ws.send(JSON.stringify(message));
     else this.outbox.push(message);
   }
 
@@ -95,9 +105,15 @@ export function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-export function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+export function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  message: string,
+): Promise<T> {
   return Promise.race([
     promise,
-    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(message)), ms),
+    ),
   ]);
 }

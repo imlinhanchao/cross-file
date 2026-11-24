@@ -26,7 +26,11 @@ export function sleep(ms: number): Promise<void> {
 }
 
 /** Wait until the channel drains below its low watermark. Resolves immediately if already low. */
-export function waitForDrain(channel: DataChannelLike, lowWaterMark = LWM, timeoutMs = 15_000): Promise<void> {
+export function waitForDrain(
+  channel: DataChannelLike,
+  lowWaterMark = LWM,
+  timeoutMs = 15_000,
+): Promise<void> {
   if (channel.bufferedAmount <= lowWaterMark) return Promise.resolve();
   const addListener = channel.addEventListener;
   if (!addListener) {
@@ -48,7 +52,10 @@ export function waitForDrain(channel: DataChannelLike, lowWaterMark = LWM, timeo
   });
 }
 
-export async function waitForCapacity(channel: DataChannelLike, highWaterMark = HWM): Promise<void> {
+export async function waitForCapacity(
+  channel: DataChannelLike,
+  highWaterMark = HWM,
+): Promise<void> {
   while (channel.bufferedAmount > highWaterMark) {
     await waitForDrain(channel);
   }
@@ -89,7 +96,9 @@ export interface SendFileResult {
   sentChunks: number;
 }
 
-export async function sendFile(options: SendFileOptions): Promise<SendFileResult> {
+export async function sendFile(
+  options: SendFileOptions,
+): Promise<SendFileResult> {
   const {
     fileId,
     file,
@@ -115,7 +124,9 @@ export async function sendFile(options: SendFileOptions): Promise<SendFileResult
   let sentBytes = 0;
   let sentChunks = 0;
   const seqs = onlyChunks
-    ? [...onlyChunks].filter((seq) => seq >= 0 && seq < chunkCount).sort((a, b) => a - b)
+    ? [...onlyChunks]
+        .filter((seq) => seq >= 0 && seq < chunkCount)
+        .sort((a, b) => a - b)
     : Array.from({ length: chunkCount }, (_, index) => index);
 
   for (const seq of seqs) {
@@ -124,15 +135,24 @@ export async function sendFile(options: SendFileOptions): Promise<SendFileResult
 
     const start = seq * effective;
     const end = Math.min(totalBytes, start + effective);
-    const plaintext = new Uint8Array(await file.slice(start, end).arrayBuffer());
-    if (plaintext.length > CHUNK_MAX) throw new Error(`chunk too large: ${plaintext.length}`);
+    const plaintext = new Uint8Array(
+      await file.slice(start, end).arrayBuffer(),
+    );
+    if (plaintext.length > CHUNK_MAX)
+      throw new Error(`chunk too large: ${plaintext.length}`);
     if (computeHash) hasher.update(plaintext);
 
     const ciphertext = await sealChunk({ key, fileId, seq, salt, plaintext });
-    const frame = encodeChunkFrame({ fileId, seq, last: seq === chunkCount - 1, ciphertext });
+    const frame = encodeChunkFrame({
+      fileId,
+      seq,
+      last: seq === chunkCount - 1,
+      ciphertext,
+    });
 
     await waitForCapacity(channel, highWaterMark);
-    if (channel.readyState && channel.readyState !== "open") throw new Error("data channel closed");
+    if (channel.readyState && channel.readyState !== "open")
+      throw new Error("data channel closed");
     channel.send(frame);
 
     sentBytes += plaintext.length;
@@ -161,7 +181,10 @@ export interface ChunkBitmaps {
   encode(received: ReadonlySet<number>, chunkCount: number): string;
 }
 
-export function encodeBitmap(received: ReadonlySet<number>, chunkCount: number): string {
+export function encodeBitmap(
+  received: ReadonlySet<number>,
+  chunkCount: number,
+): string {
   const bytes = new Uint8Array(Math.ceil(chunkCount / 8));
   for (const seq of received) {
     if (seq < 0 || seq >= chunkCount) continue;
@@ -219,7 +242,8 @@ export class ChunkReceiver {
     this.fileId = options.fileId;
     this.size = options.size;
     this.chunkSize = options.chunkSize;
-    this.chunkCount = options.chunkCount ?? chunkCountFor(options.size, options.chunkSize);
+    this.chunkCount =
+      options.chunkCount ?? chunkCountFor(options.size, options.chunkSize);
     this.salt = options.salt;
     this.key = options.key;
     this.onChunk = options.onChunk;
@@ -228,8 +252,10 @@ export class ChunkReceiver {
   }
 
   async handleFrame(frame: ChunkFrame): Promise<void> {
-    if (frame.fileId !== this.fileId) throw new Error(`unexpected fileId ${frame.fileId}`);
-    if (frame.seq >= this.chunkCount) throw new Error(`seq out of range: ${frame.seq}`);
+    if (frame.fileId !== this.fileId)
+      throw new Error(`unexpected fileId ${frame.fileId}`);
+    if (frame.seq >= this.chunkCount)
+      throw new Error(`seq out of range: ${frame.seq}`);
     if (frame.last) this.lastFrameSeen = true;
     if (this.received.has(frame.seq)) return; // duplicate after a resume retry
 
@@ -241,9 +267,14 @@ export class ChunkReceiver {
       ciphertext: frame.ciphertext,
     });
 
-    const expectedLength = Math.min(this.chunkSize, this.size - frame.seq * this.chunkSize);
+    const expectedLength = Math.min(
+      this.chunkSize,
+      this.size - frame.seq * this.chunkSize,
+    );
     if (plaintext.length !== expectedLength) {
-      throw new Error(`chunk ${frame.seq} length ${plaintext.length}, expected ${expectedLength}`);
+      throw new Error(
+        `chunk ${frame.seq} length ${plaintext.length}, expected ${expectedLength}`,
+      );
     }
 
     this.received.add(frame.seq);
@@ -260,7 +291,11 @@ export class ChunkReceiver {
     if (frame.seq === this.nextHashSeq) {
       this.hasher.update(plaintext);
       this.nextHashSeq++;
-      for (let next = this.pendingHash.get(this.nextHashSeq); next; next = this.pendingHash.get(this.nextHashSeq)) {
+      for (
+        let next = this.pendingHash.get(this.nextHashSeq);
+        next;
+        next = this.pendingHash.get(this.nextHashSeq)
+      ) {
         this.pendingHash.delete(this.nextHashSeq);
         this.hasher.update(next);
         this.nextHashSeq++;
@@ -269,14 +304,18 @@ export class ChunkReceiver {
       this.pendingHash.set(frame.seq, plaintext);
     }
 
-    if (frame.seq % this.progressEveryChunks === 0 || this.received.size === this.chunkCount) {
+    if (
+      frame.seq % this.progressEveryChunks === 0 ||
+      this.received.size === this.chunkCount
+    ) {
       this.onProgress?.(this.receivedBytes, this.size, frame.seq);
     }
   }
 
   missingChunks(): number[] {
     const missing: number[] = [];
-    for (let seq = 0; seq < this.chunkCount; seq++) if (!this.received.has(seq)) missing.push(seq);
+    for (let seq = 0; seq < this.chunkCount; seq++)
+      if (!this.received.has(seq)) missing.push(seq);
     return missing;
   }
 
@@ -297,7 +336,10 @@ export class ChunkReceiver {
 
   /** True once every chunk arrived AND every chunk has been folded into the digest. */
   isComplete(): boolean {
-    return this.received.size === this.chunkCount && this.nextHashSeq === this.chunkCount;
+    return (
+      this.received.size === this.chunkCount &&
+      this.nextHashSeq === this.chunkCount
+    );
   }
 
   /**
@@ -305,7 +347,11 @@ export class ChunkReceiver {
    * only once, but a stray double call must not corrupt the running hash.
    */
   finish(): { sha256: string; size: number; complete: boolean } {
-    return { sha256: this.hasher.peekDigestHex(), size: this.receivedBytes, complete: this.isComplete() };
+    return {
+      sha256: this.hasher.peekDigestHex(),
+      size: this.receivedBytes,
+      complete: this.isComplete(),
+    };
   }
 
   get sawLastFrame(): boolean {

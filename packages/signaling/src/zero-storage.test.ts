@@ -15,7 +15,12 @@ const SRC_DIR = dirname(fileURLToPath(import.meta.url));
 const EXCLUDED_FILES = new Set(["dev.ts", "test-support.ts"]);
 
 const sourceFiles = readdirSync(SRC_DIR)
-  .filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts") && !EXCLUDED_FILES.has(name))
+  .filter(
+    (name) =>
+      name.endsWith(".ts") &&
+      !name.endsWith(".test.ts") &&
+      !EXCLUDED_FILES.has(name),
+  )
   .sort();
 
 function readSource(name: string): string {
@@ -33,15 +38,21 @@ describe("zero storage (docs/02 §7)", () => {
       // static.ts is the one place allowed to touch the filesystem, and only to read the
       // built web app (production single-origin hosting, docs/02 §7).
       if (file !== "static.ts") {
-        expect(source, file).not.toMatch(/from\s+["']node:fs(?:\/promises)?["']/);
+        expect(source, file).not.toMatch(
+          /from\s+["']node:fs(?:\/promises)?["']/,
+        );
       } else {
-        expect(source, file).not.toMatch(/\b(?:writeFile|appendFile|createWriteStream|mkdir|rm|unlink|rename|truncate|chmod)\w*\s*\(/);
+        expect(source, file).not.toMatch(
+          /\b(?:writeFile|appendFile|createWriteStream|mkdir|rm|unlink|rename|truncate|chmod)\w*\s*\(/,
+        );
       }
       expect(source, file).not.toMatch(/require\(\s*["']node:fs["']\s*\)/);
       expect(source, file).not.toMatch(
         /from\s+["'](?:pg|mysql2?|sqlite3?|better-sqlite3|redis|ioredis|mongoose|mongodb|knex|prisma|@prisma\/client|drizzle-orm|level|lowdb)["']/,
       );
-      expect(source, file).not.toMatch(/\b(?:writeFile|appendFile|createWriteStream|mkdirSync|writeFileSync)\s*\(/);
+      expect(source, file).not.toMatch(
+        /\b(?:writeFile|appendFile|createWriteStream|mkdirSync|writeFileSync)\s*\(/,
+      );
     }
   });
 
@@ -100,8 +111,8 @@ describe("zero storage (docs/02 §7)", () => {
   });
 
   it("stays silent (no console output) during a full signaling session", async () => {
-    const spies = (["log", "info", "warn", "error", "debug"] as const).map((method) =>
-      vi.spyOn(console, method).mockImplementation(() => undefined),
+    const spies = (["log", "info", "warn", "error", "debug"] as const).map(
+      (method) => vi.spyOn(console, method).mockImplementation(() => undefined),
     );
     const server = createSignalingServer({ port: 0, host: "127.0.0.1" });
     const { port } = await server.start();
@@ -112,12 +123,23 @@ describe("zero storage (docs/02 §7)", () => {
       host.send({ v: 1, type: "hello", clientCaps: HOST_CAPS });
       host.send({ v: 1, type: "create", roomId, hostCaps: HOST_CAPS });
       const created = await host.next("created");
-      guest.send({ v: 1, type: "join", roomId: created.roomId, guestCaps: GUEST_CAPS, guestNonce: "guest-nonce-0123456789" });
+      guest.send({
+        v: 1,
+        type: "join",
+        roomId: created.roomId,
+        guestCaps: GUEST_CAPS,
+        guestNonce: "guest-nonce-0123456789",
+      });
       const request = await host.next("join_request");
       host.send({ v: 1, type: "approve", guestId: request.guestId });
       await guest.next("join_ok");
       await host.next("join_ok");
-      host.send({ v: 1, type: "signal", to: request.guestId, payload: { k: "offer", sdp: "v=0" } });
+      host.send({
+        v: 1,
+        type: "signal",
+        to: request.guestId,
+        payload: { k: "offer", sdp: "v=0" },
+      });
       await guest.next("signal");
       host.send({ v: 1, type: "heartbeat", roomId });
       await sleep(20);
@@ -129,7 +151,10 @@ describe("zero storage (docs/02 §7)", () => {
       await guest.close();
       await server.stop();
     }
-    const output = spies.reduce((total, spy) => total + spy.mock.calls.length, 0);
+    const output = spies.reduce(
+      (total, spy) => total + spy.mock.calls.length,
+      0,
+    );
     expect(output).toBe(0);
   });
 });

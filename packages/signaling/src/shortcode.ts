@@ -36,11 +36,12 @@ export class ShortCodeStore {
       this.byRoom.delete(roomId);
     }
     for (let attempt = 0; attempt < 1_000; attempt += 1) {
-      const code = randomInt(0, 1_000_000)
-        .toString()
-        .padStart(6, "0");
+      const code = randomInt(0, 1_000_000).toString().padStart(6, "0");
       if (this.byCode.has(code)) continue;
-      this.byCode.set(code, { roomId, expiresAt: this.now() + SHORTCODE_TTL_MS });
+      this.byCode.set(code, {
+        roomId,
+        expiresAt: this.now() + SHORTCODE_TTL_MS,
+      });
       this.byRoom.set(roomId, code);
       return code;
     }
@@ -90,6 +91,7 @@ export class ShortCodeStore {
 
   private forget(code: string, entry: ShortCodeEntry): void {
     this.byCode.delete(code);
-    if (this.byRoom.get(entry.roomId) === code) this.byRoom.delete(entry.roomId);
+    if (this.byRoom.get(entry.roomId) === code)
+      this.byRoom.delete(entry.roomId);
   }
 }

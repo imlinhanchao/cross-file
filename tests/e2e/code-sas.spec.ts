@@ -16,7 +16,9 @@ interface Snapshot {
 
 function snapshot(page: Page): Promise<Snapshot> {
   return page.evaluate(() => {
-    const hook = (window as unknown as { __crossfile?: { snapshot?: () => Snapshot } }).__crossfile;
+    const hook = (
+      window as unknown as { __crossfile?: { snapshot?: () => Snapshot } }
+    ).__crossfile;
     if (!hook?.snapshot) throw new Error("__crossfile hook missing");
     return hook.snapshot();
   });
@@ -24,7 +26,9 @@ function snapshot(page: Page): Promise<Snapshot> {
 
 const SIZE = 2 * 1024 * 1024;
 
-test("6-digit code join: SAS hand-over, then an encrypted transfer", async ({ browser }) => {
+test("6-digit code join: SAS hand-over, then an encrypted transfer", async ({
+  browser,
+}) => {
   const bytes = randomBytes(SIZE);
   const expected = createHash("sha256").update(bytes).digest("hex");
 
@@ -37,11 +41,15 @@ test("6-digit code join: SAS hand-over, then an encrypted transfer", async ({ br
     ["host", host],
     ["guest", guest],
   ] as const) {
-    page.on("pageerror", (error) => pageErrors.push(`${name}: ${String(error)}`));
+    page.on("pageerror", (error) =>
+      pageErrors.push(`${name}: ${String(error)}`),
+    );
   }
 
   await host.goto("/");
-  await expect.poll(async () => (await snapshot(host)).phase, { timeout: 30_000 }).toBe("waiting");
+  await expect
+    .poll(async () => (await snapshot(host)).phase, { timeout: 30_000 })
+    .toBe("waiting");
   const code = (await snapshot(host)).code;
   expect(code).toMatch(/^[0-9]{6}$/);
 
@@ -49,12 +57,22 @@ test("6-digit code join: SAS hand-over, then an encrypted transfer", async ({ br
   await guest.goto("/code");
   await guest.getByTestId("code-input").fill(code!);
   await guest.getByTestId("code-submit").click();
-  await expect.poll(async () => (await snapshot(host)).guests.length, { timeout: 30_000 }).toBe(1);
+  await expect
+    .poll(async () => (await snapshot(host)).guests.length, { timeout: 30_000 })
+    .toBe(1);
   await host.getByTestId("approve").click();
 
   // Both sides derive the same 4 emoji from the DTLS fingerprints.
-  await expect.poll(async () => (await snapshot(host)).sasPending === true, { timeout: 30_000 }).toBe(true);
-  await expect.poll(async () => (await snapshot(guest)).sasPending === true, { timeout: 30_000 }).toBe(true);
+  await expect
+    .poll(async () => (await snapshot(host)).sasPending === true, {
+      timeout: 30_000,
+    })
+    .toBe(true);
+  await expect
+    .poll(async () => (await snapshot(guest)).sasPending === true, {
+      timeout: 30_000,
+    })
+    .toBe(true);
   const hostSas = (await snapshot(host)).sas;
   const guestSas = (await snapshot(guest)).sas;
   expect(hostSas).toHaveLength(4);
@@ -64,25 +82,40 @@ test("6-digit code join: SAS hand-over, then an encrypted transfer", async ({ br
   await guest.getByTestId("sas-confirm").click();
 
   // The key only travels after both confirmations.
-  await expect.poll(async () => (await snapshot(guest)).hasKey === true, { timeout: 30_000 }).toBe(true);
-  await expect.poll(async () => (await snapshot(host)).sasPending, { timeout: 30_000 }).toBe(false);
+  await expect
+    .poll(async () => (await snapshot(guest)).hasKey === true, {
+      timeout: 30_000,
+    })
+    .toBe(true);
+  await expect
+    .poll(async () => (await snapshot(host)).sasPending, { timeout: 30_000 })
+    .toBe(false);
 
   await host.getByTestId("file-input").setInputFiles({
     name: "code-path.bin",
     mimeType: "application/octet-stream",
     buffer: bytes,
   });
-  await expect.poll(async () => (await snapshot(guest)).files.length, { timeout: 30_000 }).toBe(1);
+  await expect
+    .poll(async () => (await snapshot(guest)).files.length, { timeout: 30_000 })
+    .toBe(1);
   await guest.getByTestId("accept").click();
 
-  await expect.poll(async () => (await snapshot(host)).phase, { timeout: 120_000 }).toBe("done");
-  await expect.poll(async () => (await snapshot(guest)).phase, { timeout: 120_000 }).toBe("done");
+  await expect
+    .poll(async () => (await snapshot(host)).phase, { timeout: 120_000 })
+    .toBe("done");
+  await expect
+    .poll(async () => (await snapshot(guest)).phase, { timeout: 120_000 })
+    .toBe("done");
   const guestHash = await guest.evaluate(
-    () => (window as unknown as { __crossfile?: { sha256?: string } }).__crossfile?.sha256,
+    () =>
+      (window as unknown as { __crossfile?: { sha256?: string } }).__crossfile
+        ?.sha256,
   );
   expect(guestHash).toBe(expected);
   expect((await snapshot(host)).result?.sha256).toBe(expected);
-  if (pageErrors.length > 0) console.log("PAGE ERRORS:", JSON.stringify(pageErrors, null, 2));
+  if (pageErrors.length > 0)
+    console.log("PAGE ERRORS:", JSON.stringify(pageErrors, null, 2));
   expect(pageErrors).toEqual([]);
 
   await hostContext.close();

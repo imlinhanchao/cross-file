@@ -16,9 +16,12 @@ export function GuestPage({ code }: { code?: string }) {
   useEffect(() => {
     if (!import.meta.env.DEV) return;
     if (new URLSearchParams(location.search).get("autosave") !== "1") return;
-    if (state.phase !== "done" || !state.result?.url || autoSaveRef.current) return;
+    if (state.phase !== "done" || !state.result?.url || autoSaveRef.current)
+      return;
     autoSaveRef.current = true;
-    const anchor = document.querySelector<HTMLAnchorElement>('[data-testid="save"]');
+    const anchor = document.querySelector<HTMLAnchorElement>(
+      '[data-testid="save"]',
+    );
     anchor?.click();
   }, [state.phase, state.result?.url]);
 
@@ -53,11 +56,16 @@ export function GuestPage({ code }: { code?: string }) {
       </header>
 
       <main className="shell">
-        <div className="stack gap-4" style={{ maxWidth: 640, margin: "24px auto 0" }}>
+        <div
+          className="stack gap-4"
+          style={{ maxWidth: 640, margin: "24px auto 0" }}
+        >
           {state.phase === "provisioning" ? (
             <div className="card">
               <p className="lead">正在连接对方…</p>
-              <p className="small muted">密钥只存在于这个链接里，不会发给服务器。</p>
+              <p className="small muted">
+                密钥只存在于这个链接里，不会发给服务器。
+              </p>
             </div>
           ) : null}
 
@@ -69,7 +77,11 @@ export function GuestPage({ code }: { code?: string }) {
                 <span className="card__hint">6 位码加入</span>
               </div>
               <p className="lead">和对方屏幕上的 4 个图标一致吗？</p>
-              <div className="row gap-4" style={{ fontSize: 44, lineHeight: 1.2 }} aria-label="安全码图标">
+              <div
+                className="row gap-4"
+                style={{ fontSize: 44, lineHeight: 1.2 }}
+                aria-label="安全码图标"
+              >
                 {state.sas.map((emoji, index) => (
                   <span key={index}>{emoji}</span>
                 ))}
@@ -121,7 +133,13 @@ export function GuestPage({ code }: { code?: string }) {
                 {state.files.map((file) => (
                   <li className="file-row" key={file.id}>
                     <span className="file-tile">
-                      <Icon name={file.mime.startsWith("video/") ? "file-video" : "file-text"} />
+                      <Icon
+                        name={
+                          file.mime.startsWith("video/")
+                            ? "file-video"
+                            : "file-text"
+                        }
+                      />
                     </span>
                     <span className="stack" style={{ gap: 2, minWidth: 0 }}>
                       <span className="file-name">{file.name}</span>
@@ -134,7 +152,10 @@ export function GuestPage({ code }: { code?: string }) {
               </ul>
               {state.risk?.level === "warn" ? (
                 <div className="mt-4">
-                  <WarningCard title="这台设备保存大文件有风险" body={state.risk.message} />
+                  <WarningCard
+                    title="这台设备保存大文件有风险"
+                    body={state.risk.message}
+                  />
                 </div>
               ) : null}
               {canAccept ? (
@@ -168,7 +189,9 @@ export function GuestPage({ code }: { code?: string }) {
                 speedBps={state.transfer.speedBps}
                 path={state.transfer.path}
               />
-              <p className="small muted mt-4">请保持页面在前台，锁屏或切后台可能导致中断。</p>
+              <p className="small muted mt-4">
+                请保持页面在前台，锁屏或切后台可能导致中断。
+              </p>
             </div>
           ) : null}
 
@@ -184,7 +207,10 @@ export function GuestPage({ code }: { code?: string }) {
               <p className="small muted">
                 {formatBytes(state.result.bytes ?? 0)} · {copy.hashOk}
               </p>
-              <p className="code-block small mono" style={{ wordBreak: "break-all", marginTop: 8 }}>
+              <p
+                className="code-block small mono"
+                style={{ wordBreak: "break-all", marginTop: 8 }}
+              >
                 {state.result.sha256}
               </p>
               {state.result.path ? (

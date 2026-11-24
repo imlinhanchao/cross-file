@@ -29,19 +29,27 @@ interface Snapshot {
 
 function snapshot(page: Page): Promise<Snapshot> {
   return page.evaluate(() => {
-    const hook = (window as unknown as { __crossfile?: { snapshot?: () => Snapshot } }).__crossfile;
+    const hook = (
+      window as unknown as { __crossfile?: { snapshot?: () => Snapshot } }
+    ).__crossfile;
     if (!hook?.snapshot) throw new Error("__crossfile hook missing");
     return hook.snapshot();
   });
 }
 
-async function waitPhase(page: Page, phase: string, timeout = 120_000): Promise<void> {
+async function waitPhase(
+  page: Page,
+  phase: string,
+  timeout = 120_000,
+): Promise<void> {
   await expect
     .poll(async () => (await snapshot(page)).phase, { timeout })
     .toBe(phase);
 }
 
-test("M0: two browsers transfer a file end to end with matching SHA-256", async ({ browser }) => {
+test("M0: two browsers transfer a file end to end with matching SHA-256", async ({
+  browser,
+}) => {
   const bytes = randomBytes(SIZE);
   const expected = createHash("sha256").update(bytes).digest("hex");
 
@@ -55,14 +63,18 @@ test("M0: two browsers transfer a file end to end with matching SHA-256", async 
     ["host", host],
     ["guest", guest],
   ] as const) {
-    page.on("pageerror", (error) => pageErrors.push(`${name}: ${String(error)}`));
+    page.on("pageerror", (error) =>
+      pageErrors.push(`${name}: ${String(error)}`),
+    );
     page.on("console", (message) => {
-      if (message.type() === "error") pageErrors.push(`${name} console: ${message.text()}`);
+      if (message.type() === "error")
+        pageErrors.push(`${name} console: ${message.text()}`);
     });
   }
 
   const t0 = Date.now();
-  const mark = (label: string): void => console.log(`[step ${((Date.now() - t0) / 1000).toFixed(1)}s] ${label}`);
+  const mark = (label: string): void =>
+    console.log(`[step ${((Date.now() - t0) / 1000).toFixed(1)}s] ${label}`);
   mark("start");
   // 1. Host creates a room and shows the join link (key lives in the fragment).
   await host.goto("/");
@@ -76,18 +88,28 @@ test("M0: two browsers transfer a file end to end with matching SHA-256", async 
   // 2. Guest opens the link -> joins with proof.
   mark("guest goto link");
   await guest.goto(created.link!);
-  await expect.poll(async () => (await snapshot(host)).guests.length, { timeout: 30_000 }).toBe(1);
-  await expect.poll(async () => (await snapshot(host)).guests[0]?.status).toBe("pending");
+  await expect
+    .poll(async () => (await snapshot(host)).guests.length, { timeout: 30_000 })
+    .toBe(1);
+  await expect
+    .poll(async () => (await snapshot(host)).guests[0]?.status)
+    .toBe("pending");
 
   // 3. Host approves; both peers open data channels.
   mark("approve click");
   await host.getByTestId("approve").click();
-  await expect.poll(async () => (await snapshot(host)).guests[0]?.status, { timeout: 30_000 }).toBe("joined");
+  await expect
+    .poll(async () => (await snapshot(host)).guests[0]?.status, {
+      timeout: 30_000,
+    })
+    .toBe("joined");
 
   // 4. Host picks the file; the manifest goes over the encrypted ctrl channel.
   mark("set files");
   await host.getByTestId("file-input").setInputFiles(fixturePath(bytes).path);
-  await expect.poll(async () => (await snapshot(guest)).files.length, { timeout: 30_000 }).toBe(1);
+  await expect
+    .poll(async () => (await snapshot(guest)).files.length, { timeout: 30_000 })
+    .toBe(1);
   const manifest = await snapshot(guest);
   expect(manifest.files[0]?.size).toBe(SIZE);
 
@@ -97,7 +119,9 @@ test("M0: two browsers transfer a file end to end with matching SHA-256", async 
   await host.getByTestId("start-send").click({ timeout: 10_000 });
   mark("start-send clicked (waiting for guest accept)");
   await guest.getByTestId("accept").click();
-  await expect.poll(async () => (await snapshot(host)).phase).toBe("transferring");
+  await expect
+    .poll(async () => (await snapshot(host)).phase)
+    .toBe("transferring");
   mark("after accept click");
 
   await waitPhase(host, "done");
@@ -107,12 +131,15 @@ test("M0: two browsers transfer a file end to end with matching SHA-256", async 
 
   // 6. Both sides independently computed the whole-file digest.
   const guestHash = await guest.evaluate(
-    () => (window as unknown as { __crossfile?: { sha256?: string } }).__crossfile?.sha256,
+    () =>
+      (window as unknown as { __crossfile?: { sha256?: string } }).__crossfile
+        ?.sha256,
   );
   const hostResult = await snapshot(host);
   expect(hostResult.result?.sha256).toBe(expected);
   expect(guestHash).toBe(expected);
-  if (pageErrors.length > 0) console.log("PAGE ERRORS:", JSON.stringify(pageErrors, null, 2));
+  if (pageErrors.length > 0)
+    console.log("PAGE ERRORS:", JSON.stringify(pageErrors, null, 2));
   expect(pageErrors).toEqual([]);
 
   await hostContext.close();

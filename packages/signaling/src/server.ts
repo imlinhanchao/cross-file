@@ -4,7 +4,12 @@
  * Everything lives in process memory: rooms, peer ids, join codes, rate-limit counters.
  * No database, no disk writes, no cookies, no access logs, and no IP/UA stored on a room.
  */
-import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type Server as HttpServer,
+  type ServerResponse,
+} from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import {
@@ -77,7 +82,9 @@ function createPeerId(): string {
   return base64urlEncode(randomBytes(8));
 }
 
-export function createSignalingServer(options: SignalingServerOptions = {}): SignalingServer {
+export function createSignalingServer(
+  options: SignalingServerOptions = {},
+): SignalingServer {
   const listenPort = options.port ?? DEFAULT_PORT;
   const listenHost = options.host ?? DEFAULT_HOST;
   const maxGuests = options.maxGuests ?? MAX_GUESTS;
@@ -85,7 +92,10 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
   const heartbeatMs = options.heartbeatMs ?? HEARTBEAT_MS;
   const rateLimit = options.rateLimit ?? DEFAULT_RATE_LIMIT;
   const turn = options.turn;
-  const sweepMs = Math.min(SWEEP_MAX_MS, Math.max(SWEEP_MIN_MS, Math.floor(roomTtlMs / 4)));
+  const sweepMs = Math.min(
+    SWEEP_MAX_MS,
+    Math.max(SWEEP_MIN_MS, Math.floor(roomTtlMs / 4)),
+  );
 
   const rooms = new RoomStore();
   const codes = new ShortCodeStore();
@@ -93,7 +103,8 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
   const connections = new Map<WebSocket, ConnectionState>();
 
   let httpServer: HttpServer | null = null;
-  let staticHandler: Awaited<ReturnType<typeof createStaticHandler>> | null = null;
+  let staticHandler: Awaited<ReturnType<typeof createStaticHandler>> | null =
+    null;
   let socketServer: WebSocketServer | null = null;
   let sweepTimer: ReturnType<typeof setInterval> | null = null;
   let keepAliveTimer: ReturnType<typeof setInterval> | null = null;
@@ -111,11 +122,18 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
     }
   }
 
-  function sendError(socket: WebSocket | null, code: ErrorCode, msg: string): void {
+  function sendError(
+    socket: WebSocket | null,
+    code: ErrorCode,
+    msg: string,
+  ): void {
     send(socket, { v: 1, type: "error", code, msg });
   }
 
-  function sendRoomClosed(socket: WebSocket | null, reason: "host_close" | "ttl" | "error"): void {
+  function sendRoomClosed(
+    socket: WebSocket | null,
+    reason: "host_close" | "ttl" | "error",
+  ): void {
     send(socket, { v: 1, type: "room_closed", reason });
   }
 
@@ -127,7 +145,13 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
   function createdMessage(room: RoomRecord): ServerMessage {
     const credential = turnFor(room.hostPeerId);
     return credential
-      ? { v: 1, type: "created", roomId: room.roomId, code: room.code, turn: credential }
+      ? {
+          v: 1,
+          type: "created",
+          roomId: room.roomId,
+          code: room.code,
+          turn: credential,
+        }
       : { v: 1, type: "created", roomId: room.roomId, code: room.code };
   }
 
@@ -135,7 +159,11 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
    * `peerCaps` always means "the other side's capabilities": hostCaps for a guest,
    * guestCaps for the host (web contract, docs/02 §3.2/§3.4).
    */
-  function joinOk(guestId: string, peerCaps: Caps, credentialPeerId: string): ServerMessage {
+  function joinOk(
+    guestId: string,
+    peerCaps: Caps,
+    credentialPeerId: string,
+  ): ServerMessage {
     const credential = turnFor(credentialPeerId);
     if (!credential) {
       // impl-note: core's type marks join_ok.turn required, but docs/02 §6.7 only hands out
@@ -148,7 +176,12 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
 
   // --- connection helpers ---------------------------------------------------
 
-  function bind(state: ConnectionState, role: "host" | "guest", roomId: string, guestId: string | null): void {
+  function bind(
+    state: ConnectionState,
+    role: "host" | "guest",
+    roomId: string,
+    guestId: string | null,
+  ): void {
     state.role = role;
     state.roomId = roomId;
     state.guestId = guestId;
@@ -160,7 +193,10 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
     state.guestId = null;
   }
 
-  function roomForHost(ws: WebSocket, state: ConnectionState): RoomRecord | null {
+  function roomForHost(
+    ws: WebSocket,
+    state: ConnectionState,
+  ): RoomRecord | null {
     if (state.role !== "host" || !state.roomId) {
       sendError(ws, "BAD_MESSAGE", "only the host can do that");
       return null;
@@ -205,8 +241,13 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
    */
   function replayRoomState(room: RoomRecord): void {
     for (const guest of room.guests) {
-      if (guest.state === "pending") send(room.hostSocket, joinRequestMessage(guest));
-      else send(room.hostSocket, joinOk(guest.guestId, guest.caps, room.hostPeerId));
+      if (guest.state === "pending")
+        send(room.hostSocket, joinRequestMessage(guest));
+      else
+        send(
+          room.hostSocket,
+          joinOk(guest.guestId, guest.caps, room.hostPeerId),
+        );
     }
   }
 
@@ -219,18 +260,30 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
    * join succeeds. A QR/link join always sends the 26 character roomId.
    */
   function prepareShortCode(raw: unknown): PreparedShortCode {
-    if (raw !== null && typeof raw === "object" && (raw as { type?: unknown }).type === "join") {
+    if (
+      raw !== null &&
+      typeof raw === "object" &&
+      (raw as { type?: unknown }).type === "join"
+    ) {
       const candidate = (raw as { roomId?: unknown }).roomId;
       if (typeof candidate === "string" && /^\d{6}$/.test(candidate)) {
         const roomId = codes.resolve(candidate);
         if (!roomId) return { status: "unknown-code" };
-        return { status: "ok", value: { ...(raw as Record<string, unknown>), roomId }, code: candidate };
+        return {
+          status: "ok",
+          value: { ...(raw as Record<string, unknown>), roomId },
+          code: candidate,
+        };
       }
     }
     return { status: "ok", value: raw, code: null };
   }
 
-  function rejectMessage(ws: WebSocket, state: ConnectionState, reason: string): void {
+  function rejectMessage(
+    ws: WebSocket,
+    state: ConnectionState,
+    reason: string,
+  ): void {
     state.violations += 1;
     sendError(ws, "BAD_MESSAGE", reason);
     if (state.violations >= MAX_CONSECUTIVE_BAD_MESSAGES) {
@@ -239,7 +292,12 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
     }
   }
 
-  function handleFrame(ws: WebSocket, state: ConnectionState, data: RawData, isBinary: boolean): void {
+  function handleFrame(
+    ws: WebSocket,
+    state: ConnectionState,
+    data: RawData,
+    isBinary: boolean,
+  ): void {
     const bytes = toBuffer(data);
     if (bytes.byteLength > MAX_MESSAGE_BYTES) {
       ws.close(1009, "message too large");
@@ -251,7 +309,11 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
       return;
     }
     if (isBinary) {
-      rejectMessage(ws, state, "binary frames are not accepted, signaling is JSON text");
+      rejectMessage(
+        ws,
+        state,
+        "binary frames are not accepted, signaling is JSON text",
+      );
       return;
     }
     let raw: unknown;
@@ -283,7 +345,12 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
     }
   }
 
-  function dispatch(ws: WebSocket, state: ConnectionState, message: ClientMessage, code: string | null): void {
+  function dispatch(
+    ws: WebSocket,
+    state: ConnectionState,
+    message: ClientMessage,
+    code: string | null,
+  ): void {
     switch (message.type) {
       case "hello":
         // docs/02 §3.2: client capabilities arrive per join/create; the server keeps nothing.
@@ -317,14 +384,21 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
 
   // --- client message handlers ----------------------------------------------
 
-  function handleCreate(ws: WebSocket, state: ConnectionState, message: CreateMessage): void {
+  function handleCreate(
+    ws: WebSocket,
+    state: ConnectionState,
+    message: CreateMessage,
+  ): void {
     if (state.role !== null) {
       sendError(ws, "BAD_MESSAGE", "connection is already bound to a room");
       return;
     }
     const existing = rooms.get(message.roomId);
     if (existing) {
-      const hostOnline = existing.hostSocket !== null && existing.hostSocket !== ws && existing.hostSocket.readyState === WS_OPEN;
+      const hostOnline =
+        existing.hostSocket !== null &&
+        existing.hostSocket !== ws &&
+        existing.hostSocket.readyState === WS_OPEN;
       if (hostOnline) {
         sendError(ws, "ROOM_CLOSED", "room already has a connected host");
         return;
@@ -359,7 +433,12 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
     send(ws, createdMessage(room));
   }
 
-  function handleJoin(ws: WebSocket, state: ConnectionState, message: JoinMessage, code: string | null): void {
+  function handleJoin(
+    ws: WebSocket,
+    state: ConnectionState,
+    message: JoinMessage,
+    code: string | null,
+  ): void {
     if (state.role !== null) {
       sendError(ws, "BAD_MESSAGE", "connection is already bound to a room");
       return;
@@ -399,7 +478,11 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
     send(room.hostSocket, joinRequestMessage(guest));
   }
 
-  function handleApprove(ws: WebSocket, state: ConnectionState, message: ApproveMessage): void {
+  function handleApprove(
+    ws: WebSocket,
+    state: ConnectionState,
+    message: ApproveMessage,
+  ): void {
     const room = roomForHost(ws, state);
     if (!room) return;
     const guest = rooms.findGuest(room, message.guestId);
@@ -421,12 +504,20 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
    * error code. A known error code is passed through; otherwise we send ROOM_CLOSED and keep
    * the text as the human readable reason.
    */
-  function denyOutcome(reason: string | undefined): { code: ErrorCode; reason: string } {
-    if (reason && (ERROR_CODES as readonly string[]).includes(reason)) return { code: reason as ErrorCode, reason };
+  function denyOutcome(reason: string | undefined): {
+    code: ErrorCode;
+    reason: string;
+  } {
+    if (reason && (ERROR_CODES as readonly string[]).includes(reason))
+      return { code: reason as ErrorCode, reason };
     return { code: "ROOM_CLOSED", reason: reason ?? "denied by host" };
   }
 
-  function handleDeny(ws: WebSocket, state: ConnectionState, message: DenyMessage): void {
+  function handleDeny(
+    ws: WebSocket,
+    state: ConnectionState,
+    message: DenyMessage,
+  ): void {
     const room = roomForHost(ws, state);
     if (!room) return;
     const guest = rooms.findGuest(room, message.guestId);
@@ -435,13 +526,22 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
       return;
     }
     const outcome = denyOutcome(message.reason);
-    send(guest.socket, { v: 1, type: "join_rejected", code: outcome.code, reason: outcome.reason });
+    send(guest.socket, {
+      v: 1,
+      type: "join_rejected",
+      code: outcome.code,
+      reason: outcome.reason,
+    });
     detachGuest(room, guest);
     recomputeRoomState(room);
     room.lastActivity = Date.now();
   }
 
-  function handleRemove(ws: WebSocket, state: ConnectionState, message: RemoveMessage): void {
+  function handleRemove(
+    ws: WebSocket,
+    state: ConnectionState,
+    message: RemoveMessage,
+  ): void {
     const room = roomForHost(ws, state);
     if (!room) return;
     const guest = rooms.findGuest(room, message.guestId);
@@ -453,12 +553,20 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
     sendRoomClosed(socket, "error");
     detachGuest(room, guest);
     socket?.close(1000, "removed");
-    send(room.hostSocket, { v: 1, type: "peer_left", guestId: message.guestId });
+    send(room.hostSocket, {
+      v: 1,
+      type: "peer_left",
+      guestId: message.guestId,
+    });
     recomputeRoomState(room);
     room.lastActivity = Date.now();
   }
 
-  function handleSignal(ws: WebSocket, state: ConnectionState, message: SignalMessage): void {
+  function handleSignal(
+    ws: WebSocket,
+    state: ConnectionState,
+    message: SignalMessage,
+  ): void {
     if (!state.roomId || state.role === null) {
       sendError(ws, "ROOM_NOT_FOUND", "connection is not in a room");
       return;
@@ -471,16 +579,26 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
     // docs/02 §3.2: `payload` is forwarded with its three whitelisted fields only; zod has
     // already dropped anything else (offer.sdp / answer.sdp / candidate fields).
     if (state.role === "host") {
-      const guest = room.guests.find((candidate) => candidate.guestId === message.to && candidate.state === "joined");
+      const guest = room.guests.find(
+        (candidate) =>
+          candidate.guestId === message.to && candidate.state === "joined",
+      );
       if (!guest) {
         sendError(ws, "PEER_GONE", "no such peer in the room");
         return;
       }
       room.lastActivity = Date.now();
-      send(guest.socket, { v: 1, type: "signal", from: room.hostPeerId, payload: message.payload });
+      send(guest.socket, {
+        v: 1,
+        type: "signal",
+        from: room.hostPeerId,
+        payload: message.payload,
+      });
       return;
     }
-    const me = room.guests.find((candidate) => candidate.guestId === state.guestId);
+    const me = room.guests.find(
+      (candidate) => candidate.guestId === state.guestId,
+    );
     if (!me || me.state !== "joined") {
       sendError(ws, "PEER_GONE", "guest is not joined yet");
       return;
@@ -496,7 +614,12 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
       return;
     }
     room.lastActivity = Date.now();
-    send(room.hostSocket, { v: 1, type: "signal", from: me.guestId, payload: message.payload });
+    send(room.hostSocket, {
+      v: 1,
+      type: "signal",
+      from: me.guestId,
+      payload: message.payload,
+    });
   }
 
   function handleHeartbeat(ws: WebSocket, message: HeartbeatMessage): void {
@@ -505,7 +628,11 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
     if (room && room.hostSocket === ws) room.lastActivity = Date.now();
   }
 
-  function handleClose(ws: WebSocket, state: ConnectionState, message: CloseMessage): void {
+  function handleClose(
+    ws: WebSocket,
+    state: ConnectionState,
+    message: CloseMessage,
+  ): void {
     const room = rooms.get(message.roomId);
     if (!room) {
       sendError(ws, "ROOM_NOT_FOUND", "room not found");
@@ -550,7 +677,11 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
       const guest = rooms.findGuest(room, state.guestId);
       if (!guest) return;
       rooms.removeGuest(room, guest);
-      send(room.hostSocket, { v: 1, type: "peer_left", guestId: guest.guestId });
+      send(room.hostSocket, {
+        v: 1,
+        type: "peer_left",
+        guestId: guest.guestId,
+      });
       recomputeRoomState(room);
     }
   }
@@ -596,7 +727,10 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
     }
   }
 
-  function handleRequest(request: IncomingMessage, response: ServerResponse): void {
+  function handleRequest(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): void {
     // No access logging (docs/02 §7). With staticDir the same origin serves the app;
     // otherwise only /v1/ws exists and everything else is a quiet 404.
     if (staticHandler?.ready && staticHandler(request, response)) return;
@@ -604,7 +738,11 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
     response.end("not found");
   }
 
-  function handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void {
+  function handleUpgrade(
+    request: IncomingMessage,
+    socket: Duplex,
+    head: Buffer,
+  ): void {
     const path = (request.url ?? "").split("?")[0];
     const server = socketServer;
     if (path !== WS_PATH || !server) {
@@ -622,10 +760,14 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
     if (httpServer) return { port: activePort };
     if (options?.staticDir) {
       staticHandler = await createStaticHandler(options.staticDir);
-      if (!staticHandler.ready) logError("static", new Error(`no index.html in ${options.staticDir}`));
+      if (!staticHandler.ready)
+        logError("static", new Error(`no index.html in ${options.staticDir}`));
     }
     const server = createServer(handleRequest);
-    const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES });
+    const wss = new WebSocketServer({
+      noServer: true,
+      maxPayload: MAX_MESSAGE_BYTES,
+    });
     wss.on("connection", (ws: WebSocket, request: IncomingMessage) => {
       const state: ConnectionState = {
         ip: request.socket.remoteAddress ?? "unknown",
@@ -636,7 +778,9 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
         alive: true,
       };
       connections.set(ws, state);
-      ws.on("message", (data: RawData, isBinary: boolean) => handleFrame(ws, state, data, isBinary));
+      ws.on("message", (data: RawData, isBinary: boolean) =>
+        handleFrame(ws, state, data, isBinary),
+      );
       ws.on("pong", () => {
         state.alive = true;
       });
@@ -678,7 +822,10 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
       throw error;
     }
     const address = server.address();
-    activePort = typeof address === "object" && address !== null ? address.port : listenPort;
+    activePort =
+      typeof address === "object" && address !== null
+        ? address.port
+        : listenPort;
     sweepTimer = setInterval(sweep, sweepMs);
     keepAliveTimer = setInterval(keepAlive, heartbeatMs);
     sweepTimer.unref?.();

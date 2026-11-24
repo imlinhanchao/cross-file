@@ -7,7 +7,12 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     include: ["packages/**/src/**/*.test.ts", "apps/**/src/**/*.test.ts"],
-    exclude: ["**/node_modules/**", "tests/e2e/**", "test-results/**", "dist/**"],
+    exclude: [
+      "**/node_modules/**",
+      "tests/e2e/**",
+      "test-results/**",
+      "dist/**",
+    ],
     environment: "node",
     coverage: {
       provider: "v8",
@@ -16,7 +21,11 @@ export default defineConfig({
       // instead of a percentage target (much of it is I/O and timer wiring).
       include: ["packages/core/src/**/*.ts"],
       // rtc.ts is browser WebRTC glue exercised by the Playwright suite; index.ts is a barrel.
-      exclude: ["**/*.test.ts", "packages/core/src/index.ts", "packages/core/src/rtc.ts"],
+      exclude: [
+        "**/*.test.ts",
+        "packages/core/src/index.ts",
+        "packages/core/src/rtc.ts",
+      ],
       thresholds: { lines: 80, functions: 80, statements: 80, branches: 70 },
     },
   },

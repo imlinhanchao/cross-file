@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { bytesToArrayBuffer, randomBytes } from "./bytes.js";
-import { deriveFileKey, deriveSessionKey, importFileKey, sha256Hex } from "./crypto.js";
-import { ChunkReceiver, decodeBitmap, encodeBitmap, sendFile, type DataChannelLike } from "./transfer.js";
+import {
+  deriveFileKey,
+  deriveSessionKey,
+  importFileKey,
+  sha256Hex,
+} from "./crypto.js";
+import {
+  ChunkReceiver,
+  decodeBitmap,
+  encodeBitmap,
+  sendFile,
+  type DataChannelLike,
+} from "./transfer.js";
 import { decodeChunkFrame } from "./protocol.js";
 
 const roomKey = new Uint8Array(32).fill(5);
@@ -14,19 +25,25 @@ class FakeChannel implements DataChannelLike {
   readyState = "open";
   readonly frames: Uint8Array[] = [];
   send(data: ArrayBuffer | Uint8Array): void {
-    this.frames.push((data instanceof Uint8Array ? data : new Uint8Array(data)).slice());
+    this.frames.push(
+      (data instanceof Uint8Array ? data : new Uint8Array(data)).slice(),
+    );
   }
   addEventListener(): void {}
   removeEventListener(): void {}
 }
 
-async function makeFile(size: number): Promise<{ blob: Blob; bytes: Uint8Array }> {
+async function makeFile(
+  size: number,
+): Promise<{ blob: Blob; bytes: Uint8Array }> {
   const bytes = randomBytes(size);
   return { blob: new Blob([bytesToArrayBuffer(bytes)]), bytes };
 }
 
 async function keyFor(fileId: number): Promise<CryptoKey> {
-  return importFileKey(deriveFileKey(deriveSessionKey(roomKey, roomId), fileId));
+  return importFileKey(
+    deriveFileKey(deriveSessionKey(roomKey, roomId), fileId),
+  );
 }
 
 describe("sendFile + ChunkReceiver", () => {
@@ -34,12 +51,26 @@ describe("sendFile + ChunkReceiver", () => {
     const { blob, bytes } = await makeFile(300_000);
     const key = await keyFor(1);
     const channel = new FakeChannel();
-    const sent = await sendFile({ fileId: 1, file: blob, chunkSize: 65536, salt, key, channel });
+    const sent = await sendFile({
+      fileId: 1,
+      file: blob,
+      chunkSize: 65536,
+      salt,
+      key,
+      channel,
+    });
     expect(sent.chunkCount).toBe(5);
     expect(sent.sha256).toBe(sha256Hex(bytes));
 
-    const receiver = new ChunkReceiver({ fileId: 1, size: bytes.length, chunkSize: 65536, salt, key });
-    for (const raw of channel.frames) await receiver.handleFrame(decodeChunkFrame(raw));
+    const receiver = new ChunkReceiver({
+      fileId: 1,
+      size: bytes.length,
+      chunkSize: 65536,
+      salt,
+      key,
+    });
+    for (const raw of channel.frames)
+      await receiver.handleFrame(decodeChunkFrame(raw));
     const result = receiver.finish();
     expect(result.complete).toBe(true);
     expect(result.sha256).toBe(sha256Hex(bytes));
@@ -51,11 +82,25 @@ describe("sendFile + ChunkReceiver", () => {
     const { blob, bytes } = await makeFile(1024 * 1024);
     const key = await keyFor(4);
     const channel = new FakeChannel();
-    const sent = await sendFile({ fileId: 4, file: blob, chunkSize: 262_144, salt, key, channel });
+    const sent = await sendFile({
+      fileId: 4,
+      file: blob,
+      chunkSize: 262_144,
+      salt,
+      key,
+      channel,
+    });
     expect(sent.chunkSize).toBe(262_116);
     expect(sent.chunkCount).toBe(5);
-    const receiver = new ChunkReceiver({ fileId: 4, size: bytes.length, chunkSize: sent.chunkSize, salt, key });
-    for (const raw of channel.frames) await receiver.handleFrame(decodeChunkFrame(raw));
+    const receiver = new ChunkReceiver({
+      fileId: 4,
+      size: bytes.length,
+      chunkSize: sent.chunkSize,
+      salt,
+      key,
+    });
+    for (const raw of channel.frames)
+      await receiver.handleFrame(decodeChunkFrame(raw));
     expect(receiver.finish().sha256).toBe(sent.sha256);
   });
 
@@ -63,9 +108,23 @@ describe("sendFile + ChunkReceiver", () => {
     const { blob, bytes } = await makeFile(200_000);
     const key = await keyFor(2);
     const channel = new FakeChannel();
-    const sent = await sendFile({ fileId: 2, file: blob, chunkSize: 65536, salt, key, channel });
-    const receiver = new ChunkReceiver({ fileId: 2, size: bytes.length, chunkSize: 65536, salt, key });
-    for (const raw of [...channel.frames].reverse()) await receiver.handleFrame(decodeChunkFrame(raw));
+    const sent = await sendFile({
+      fileId: 2,
+      file: blob,
+      chunkSize: 65536,
+      salt,
+      key,
+      channel,
+    });
+    const receiver = new ChunkReceiver({
+      fileId: 2,
+      size: bytes.length,
+      chunkSize: 65536,
+      salt,
+      key,
+    });
+    for (const raw of [...channel.frames].reverse())
+      await receiver.handleFrame(decodeChunkFrame(raw));
     const result = receiver.finish();
     expect(result.complete).toBe(true);
     expect(result.sha256).toBe(sent.sha256);
@@ -75,8 +134,21 @@ describe("sendFile + ChunkReceiver", () => {
     const { blob, bytes } = await makeFile(300_000);
     const key = await keyFor(3);
     const channel = new FakeChannel();
-    await sendFile({ fileId: 3, file: blob, chunkSize: 65536, salt, key, channel });
-    const receiver = new ChunkReceiver({ fileId: 3, size: bytes.length, chunkSize: 65536, salt, key });
+    await sendFile({
+      fileId: 3,
+      file: blob,
+      chunkSize: 65536,
+      salt,
+      key,
+      channel,
+    });
+    const receiver = new ChunkReceiver({
+      fileId: 3,
+      size: bytes.length,
+      chunkSize: 65536,
+      salt,
+      key,
+    });
     await receiver.handleFrame(decodeChunkFrame(channel.frames[0]!));
     await receiver.handleFrame(decodeChunkFrame(channel.frames[0]!));
     await receiver.handleFrame(decodeChunkFrame(channel.frames[2]!));
@@ -89,10 +161,25 @@ describe("sendFile + ChunkReceiver", () => {
     const { blob, bytes } = await makeFile(70_000);
     const key = await keyFor(5);
     const channel = new FakeChannel();
-    await sendFile({ fileId: 5, file: blob, chunkSize: 65536, salt, key, channel });
-    const receiver = new ChunkReceiver({ fileId: 5, size: bytes.length, chunkSize: 65536, salt, key });
+    await sendFile({
+      fileId: 5,
+      file: blob,
+      chunkSize: 65536,
+      salt,
+      key,
+      channel,
+    });
+    const receiver = new ChunkReceiver({
+      fileId: 5,
+      size: bytes.length,
+      chunkSize: 65536,
+      salt,
+      key,
+    });
     const frame = decodeChunkFrame(channel.frames[0]!);
-    await expect(receiver.handleFrame({ ...frame, fileId: 6 })).rejects.toThrow();
+    await expect(
+      receiver.handleFrame({ ...frame, fileId: 6 }),
+    ).rejects.toThrow();
     await expect(receiver.handleFrame({ ...frame, seq: 99 })).rejects.toThrow();
   });
 
@@ -103,7 +190,15 @@ describe("sendFile + ChunkReceiver", () => {
     const controller = new AbortController();
     controller.abort();
     await expect(
-      sendFile({ fileId: 7, file: blob, chunkSize: 65536, salt, key, channel, signal: controller.signal }),
+      sendFile({
+        fileId: 7,
+        file: blob,
+        chunkSize: 65536,
+        salt,
+        key,
+        channel,
+        signal: controller.signal,
+      }),
     ).rejects.toThrow(/aborted/);
   });
 });
@@ -113,9 +208,23 @@ describe("receiver helpers", () => {
     const { blob, bytes } = await makeFile(120_000);
     const key = await keyFor(6);
     const channel = new FakeChannel();
-    await sendFile({ fileId: 6, file: blob, chunkSize: 65536, salt, key, channel });
-    const receiver = new ChunkReceiver({ fileId: 6, size: bytes.length, chunkSize: 65536, salt, key });
-    for (const raw of channel.frames) await receiver.handleFrame(decodeChunkFrame(raw));
+    await sendFile({
+      fileId: 6,
+      file: blob,
+      chunkSize: 65536,
+      salt,
+      key,
+      channel,
+    });
+    const receiver = new ChunkReceiver({
+      fileId: 6,
+      size: bytes.length,
+      chunkSize: 65536,
+      salt,
+      key,
+    });
+    for (const raw of channel.frames)
+      await receiver.handleFrame(decodeChunkFrame(raw));
     expect(Array.from(receiver.collectBytes())).toEqual(Array.from(bytes));
     expect(receiver.sawLastFrame).toBe(true);
     expect(receiver.bitmap()).not.toBe("");
@@ -128,7 +237,9 @@ describe("bitmap", () => {
     const encoded = encodeBitmap(received, 8000);
     expect(encoded.length).toBeGreaterThan(1330); // ceil(8000/8)=1000 bytes base64
     expect(encoded.length).toBeLessThan(1340);
-    expect([...decodeBitmap(encoded, 8000)].sort((a, b) => a - b)).toEqual([...received].sort((a, b) => a - b));
+    expect([...decodeBitmap(encoded, 8000)].sort((a, b) => a - b)).toEqual(
+      [...received].sort((a, b) => a - b),
+    );
   });
 
   it("tolerates trailing zero bytes", () => {

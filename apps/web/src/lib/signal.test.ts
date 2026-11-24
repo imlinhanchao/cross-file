@@ -20,10 +20,18 @@ function stubRuntime(overrides: {
     ...(overrides.url ? { __CROSSFILE_SIGNALING_URL__: overrides.url } : {}),
     ...(overrides.native ? { __CROSSFILE_NATIVE__: true } : {}),
     ...(overrides.stored !== undefined
-      ? { localStorage: { getItem: (key: string) => (key === "crossfile.signalingUrl" ? overrides.stored! : null) } }
+      ? {
+          localStorage: {
+            getItem: (key: string) =>
+              key === "crossfile.signalingUrl" ? overrides.stored! : null,
+          },
+        }
       : {}),
   };
-  globals.location = { protocol: overrides.protocol ?? "https:", host: overrides.host ?? "room.example" };
+  globals.location = {
+    protocol: overrides.protocol ?? "https:",
+    host: overrides.host ?? "room.example",
+  };
 }
 
 describe("signalingUrl", () => {
@@ -53,7 +61,8 @@ describe("signalingUrl", () => {
 
   it("defaults to the local instance inside the desktop shell", async () => {
     stubRuntime({ native: true, protocol: "tauri:", host: "localhost" });
-    const { signalingUrl, NATIVE_DEFAULT_SIGNALING_URL } = await import("./signal.js");
+    const { signalingUrl, NATIVE_DEFAULT_SIGNALING_URL } =
+      await import("./signal.js");
     expect(signalingUrl()).toBe(NATIVE_DEFAULT_SIGNALING_URL);
     expect(NATIVE_DEFAULT_SIGNALING_URL).toBe("ws://127.0.0.1:8788/v1/ws");
   });
@@ -74,7 +83,9 @@ describe("deferred + withTimeout", () => {
     vi.useFakeTimers();
     const { withTimeout } = await import("./signal.js");
     const slow = new Promise<number>(() => undefined);
-    const assertion = expect(withTimeout(slow, 10, "too slow")).rejects.toThrow("too slow");
+    const assertion = expect(withTimeout(slow, 10, "too slow")).rejects.toThrow(
+      "too slow",
+    );
     await vi.advanceTimersByTimeAsync(11);
     await assertion;
     vi.useRealTimers();

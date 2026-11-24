@@ -24,7 +24,9 @@ export function randomBytes(length: number): Uint8Array {
   const out = new Uint8Array(length);
   // getRandomValues refuses buffers larger than 65536 bytes.
   for (let offset = 0; offset < out.length; offset += 65536) {
-    globalThis.crypto.getRandomValues(out.subarray(offset, Math.min(offset + 65536, out.length)));
+    globalThis.crypto.getRandomValues(
+      out.subarray(offset, Math.min(offset + 65536, out.length)),
+    );
   }
   return out;
 }
@@ -54,7 +56,11 @@ export function u64be(value: bigint): Uint8Array {
 }
 
 // --- little-endian readers/writers (wire frame, docs/02 §6.2) ---------------
-export function writeU16le(view: DataView, offset: number, value: number): void {
+export function writeU16le(
+  view: DataView,
+  offset: number,
+  value: number,
+): void {
   view.setUint16(offset, value, true);
 }
 
@@ -62,13 +68,21 @@ export function readU16le(bytes: Uint8Array, offset: number): number {
   return (bytes[offset]! | (bytes[offset + 1]! << 8)) >>> 0;
 }
 
-export function writeU32le(view: DataView, offset: number, value: number): void {
+export function writeU32le(
+  view: DataView,
+  offset: number,
+  value: number,
+): void {
   view.setUint32(offset, value, true);
 }
 
 export function readU32le(bytes: Uint8Array, offset: number): number {
   return (
-    (bytes[offset]! | (bytes[offset + 1]! << 8) | (bytes[offset + 2]! << 16) | (bytes[offset + 3]! << 24)) >>> 0
+    (bytes[offset]! |
+      (bytes[offset + 1]! << 8) |
+      (bytes[offset + 2]! << 16) |
+      (bytes[offset + 3]! << 24)) >>>
+    0
   );
 }
 
@@ -83,7 +97,8 @@ export function hexToBytes(hex: string): Uint8Array {
   const clean = hex.replace(/[^0-9a-fA-F]/g, "");
   if (clean.length % 2 !== 0) throw new Error("hex length must be even");
   const out = new Uint8Array(clean.length / 2);
-  for (let i = 0; i < out.length; i++) out[i] = Number.parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+  for (let i = 0; i < out.length; i++)
+    out[i] = Number.parseInt(clean.slice(i * 2, i * 2 + 2), 16);
   return out;
 }
 
@@ -109,7 +124,10 @@ export function base64Decode(text: string): Uint8Array {
 }
 
 export function base64urlEncode(bytes: Uint8Array): string {
-  return base64Encode(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return base64Encode(bytes)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
 }
 
 export function base64urlDecode(text: string): Uint8Array {
@@ -162,11 +180,17 @@ export function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
 }
 
 export function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  return bytes.buffer.slice(
+    bytes.byteOffset,
+    bytes.byteOffset + bytes.byteLength,
+  ) as ArrayBuffer;
 }
 
-export function coerceBytes(data: ArrayBuffer | ArrayBufferView | Uint8Array): Uint8Array {
+export function coerceBytes(
+  data: ArrayBuffer | ArrayBufferView | Uint8Array,
+): Uint8Array {
   if (data instanceof Uint8Array) return data;
-  if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  if (ArrayBuffer.isView(data))
+    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
   return new Uint8Array(data);
 }

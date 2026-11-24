@@ -6,7 +6,10 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 if (process.env.CROSSFILE_SIGNALING_URL) {
-  contextBridge.exposeInMainWorld("__CROSSFILE_SIGNALING_URL__", process.env.CROSSFILE_SIGNALING_URL);
+  contextBridge.exposeInMainWorld(
+    "__CROSSFILE_SIGNALING_URL__",
+    process.env.CROSSFILE_SIGNALING_URL,
+  );
 }
 contextBridge.exposeInMainWorld("__CROSSFILE_NATIVE__", true);
 

@@ -37,28 +37,62 @@ const snap = (page) =>
     };
   });
 
-for (const [name, page] of [["host", host], ["guest", guest]]) {
-  page.on("pageerror", (e) => console.log(`[${name}] PAGEERROR`, String(e).slice(0, 300)));
+for (const [name, page] of [
+  ["host", host],
+  ["guest", guest],
+]) {
+  page.on("pageerror", (e) =>
+    console.log(`[${name}] PAGEERROR`, String(e).slice(0, 300)),
+  );
   page.on("console", (m) => {
-    if (m.text().includes("[cf-")) console.log(`[${name}]`, m.text().slice(0, 200));
+    if (m.text().includes("[cf-"))
+      console.log(`[${name}]`, m.text().slice(0, 200));
   });
 }
 
-const dump = async (label) => console.log(label, "host=", JSON.stringify(await snap(host)), "guest=", JSON.stringify(await snap(guest)));
+const dump = async (label) =>
+  console.log(
+    label,
+    "host=",
+    JSON.stringify(await snap(host)),
+    "guest=",
+    JSON.stringify(await snap(guest)),
+  );
 
 await host.goto(BASE + "/");
-await host.waitForFunction(() => window.__crossfile?.snapshot?.().phase === "waiting", null, { timeout: 30000 });
+await host.waitForFunction(
+  () => window.__crossfile?.snapshot?.().phase === "waiting",
+  null,
+  { timeout: 30000 },
+);
 const link = await host.evaluate(() => window.__crossfile.snapshot().link);
 await guest.goto(link);
-await host.waitForFunction(() => window.__crossfile?.snapshot?.().guests?.length === 1, null, { timeout: 30000 });
+await host.waitForFunction(
+  () => window.__crossfile?.snapshot?.().guests?.length === 1,
+  null,
+  { timeout: 30000 },
+);
 await host.getByTestId("approve").click();
-await host.waitForFunction(() => window.__crossfile?.snapshot?.().guests?.[0]?.status === "joined", null, { timeout: 30000 });
+await host.waitForFunction(
+  () => window.__crossfile?.snapshot?.().guests?.[0]?.status === "joined",
+  null,
+  { timeout: 30000 },
+);
 await host.getByTestId("file-input").setInputFiles(filePath);
-await guest.waitForFunction(() => window.__crossfile?.snapshot?.().files?.length === 1, null, { timeout: 30000 });
+await guest.waitForFunction(
+  () => window.__crossfile?.snapshot?.().files?.length === 1,
+  null,
+  { timeout: 30000 },
+);
 await guest.getByTestId("accept").click();
 await dump("accepted");
 
-await host.waitForFunction((size) => (window.__crossfile?.snapshot?.().transfer?.sentBytes ?? 0) > 0.2 * size, SIZE, { timeout: 60000 });
+await host.waitForFunction(
+  (size) =>
+    (window.__crossfile?.snapshot?.().transfer?.sentBytes ?? 0) > 0.2 * size,
+  SIZE,
+  { timeout: 60000 },
+);
 await dump("before drop");
 console.log("--- forcing drop");
 await host.evaluate(() => window.__cfHost?.forceDrop());
@@ -68,7 +102,9 @@ for (;;) {
   await new Promise((r) => setTimeout(r, 1000));
   const h = await snap(host);
   const g = await snap(guest);
-  console.log(`[${((Date.now() - t0) / 1000).toFixed(1)}s] host=${h.phase} sent=${h.sent} | guest=${g.phase} sha=${g.sha?.slice(0, 10) ?? ""} err=${g.err ?? h.err ?? ""}`);
+  console.log(
+    `[${((Date.now() - t0) / 1000).toFixed(1)}s] host=${h.phase} sent=${h.sent} | guest=${g.phase} sha=${g.sha?.slice(0, 10) ?? ""} err=${g.err ?? h.err ?? ""}`,
+  );
   if (h.phase === "done" && g.phase === "done") break;
   if (h.phase === "error" || g.phase === "error") break;
   if (Date.now() - t0 > 60000) break;

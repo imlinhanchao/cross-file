@@ -32,29 +32,33 @@ export default defineConfig({
     // WebKit needs `pnpm exec playwright install webkit` + host deps (sudo).
     // Safari engine coverage runs on the mac-mini peer instead; enable locally
     // with E2E_WEBKIT=1 once the browser bundle is installed.
-    ...(process.env.E2E_WEBKIT ? [{ name: "webkit", use: { ...devices["Desktop Safari"] } }] : []),
+    ...(process.env.E2E_WEBKIT
+      ? [{ name: "webkit", use: { ...devices["Desktop Safari"] } }]
+      : []),
   ],
-  webServer: MANAGE_SERVERS ? [
-    {
-      command: `PORT=${SIGNALING_PORT} ./node_modules/.bin/tsx packages/signaling/src/dev.ts`,
-      env:
-        process.env.E2E_RELAY === "1"
-          ? {
-              TURN_URIS: process.env.TURN_URIS ?? "",
-              TURN_SECRET: process.env.TURN_SECRET ?? "",
-            }
-          : undefined,
-      port: SIGNALING_PORT,
-      reuseExistingServer: !process.env.CI,
-      gracefulShutdown: { signal: "SIGTERM", timeout: 5_000 },
-      timeout: 60_000,
-    },
-    {
-      command: `CROSSFILE_SIGNALING_URL=ws://127.0.0.1:${SIGNALING_PORT} ./node_modules/.bin/vite apps/web --host 0.0.0.0 --port ${APP_PORT} --strictPort`,
-      port: APP_PORT,
-      reuseExistingServer: !process.env.CI,
-      gracefulShutdown: { signal: "SIGTERM", timeout: 5_000 },
-      timeout: 90_000,
-    },
-  ] : undefined,
+  webServer: MANAGE_SERVERS
+    ? [
+        {
+          command: `PORT=${SIGNALING_PORT} ./node_modules/.bin/tsx packages/signaling/src/dev.ts`,
+          env:
+            process.env.E2E_RELAY === "1"
+              ? {
+                  TURN_URIS: process.env.TURN_URIS ?? "",
+                  TURN_SECRET: process.env.TURN_SECRET ?? "",
+                }
+              : undefined,
+          port: SIGNALING_PORT,
+          reuseExistingServer: !process.env.CI,
+          gracefulShutdown: { signal: "SIGTERM", timeout: 5_000 },
+          timeout: 60_000,
+        },
+        {
+          command: `CROSSFILE_SIGNALING_URL=ws://127.0.0.1:${SIGNALING_PORT} ./node_modules/.bin/vite apps/web --host 0.0.0.0 --port ${APP_PORT} --strictPort`,
+          port: APP_PORT,
+          reuseExistingServer: !process.env.CI,
+          gracefulShutdown: { signal: "SIGTERM", timeout: 5_000 },
+          timeout: 90_000,
+        },
+      ]
+    : undefined,
 });

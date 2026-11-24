@@ -12,7 +12,8 @@ export type Phase =
   | "done"
   | "error";
 
-export type ReceiverStatus = "pending" | "joined" | "transferring" | "done" | "removed" | "rejected";
+export type ReceiverStatus =
+  "pending" | "joined" | "transferring" | "done" | "removed" | "rejected";
 
 export interface ReceiverView {
   id: string;
@@ -66,7 +67,12 @@ export interface RoomView {
   notice?: string;
   roomClosed?: boolean;
   /** receiver-side capability risk before accepting a manifest (docs/01 §6, D16) */
-  risk?: { level: "ok" | "warn" | "reject"; message: string; softLimitMB: number; totalBytes: number };
+  risk?: {
+    level: "ok" | "warn" | "reject";
+    message: string;
+    softLimitMB: number;
+    totalBytes: number;
+  };
   /** 6-digit-code path: 4 emoji both sides must compare before the key is sent */
   sas?: string[];
   sasPending?: boolean;
@@ -108,17 +114,27 @@ export const useApp = create<AppStore>((set) => ({
   upsertGuest: (guest) =>
     set((state) => {
       const index = state.guests.findIndex((g) => g.id === guest.id);
-      const guests = index >= 0 ? state.guests.map((g) => (g.id === guest.id ? { ...g, ...guest } : g)) : [...state.guests, guest];
+      const guests =
+        index >= 0
+          ? state.guests.map((g) =>
+              g.id === guest.id ? { ...g, ...guest } : g,
+            )
+          : [...state.guests, guest];
       return { guests };
     }),
   patchGuest: (id, patch) =>
-    set((state) => ({ guests: state.guests.map((g) => (g.id === id ? { ...g, ...patch } : g)) })),
-  removeGuest: (id) => set((state) => ({ guests: state.guests.filter((g) => g.id !== id) })),
+    set((state) => ({
+      guests: state.guests.map((g) => (g.id === id ? { ...g, ...patch } : g)),
+    })),
+  removeGuest: (id) =>
+    set((state) => ({ guests: state.guests.filter((g) => g.id !== id) })),
   setAssignments: (next) => set({ assignments: next }),
   toggleAssignment: (fileId, guestId) =>
     set((state) => {
       const current = state.assignments[fileId] ?? [];
-      const next = current.includes(guestId) ? current.filter((id) => id !== guestId) : [...current, guestId];
+      const next = current.includes(guestId)
+        ? current.filter((id) => id !== guestId)
+        : [...current, guestId];
       return { assignments: { ...state.assignments, [fileId]: next } };
     }),
   setTransfer: (patch) =>

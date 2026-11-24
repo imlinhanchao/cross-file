@@ -42,7 +42,10 @@ export function sleep(ms: number): Promise<void> {
 type MessageType = ServerMessage["type"];
 
 /** The concrete server message for one type tag. */
-export type MessageOf<T extends MessageType> = Extract<ServerMessage, { type: T }>;
+export type MessageOf<T extends MessageType> = Extract<
+  ServerMessage,
+  { type: T }
+>;
 
 interface Waiter {
   types: MessageType[];
@@ -56,7 +59,9 @@ export class TestClient {
   private readonly queue: ServerMessage[] = [];
   private readonly waiters: Waiter[] = [];
   private closeInfo: { code: number; reason: string } | null = null;
-  private readonly closeResolvers: Array<(info: { code: number; reason: string }) => void> = [];
+  private readonly closeResolvers: Array<
+    (info: { code: number; reason: string }) => void
+  > = [];
 
   private constructor(socket: WebSocket) {
     this.socket = socket;
@@ -70,10 +75,15 @@ export class TestClient {
     });
     socket.on("close", (code: number, reason: Buffer) => {
       this.closeInfo = { code, reason: reason.toString() };
-      for (const resolve of this.closeResolvers.splice(0)) resolve(this.closeInfo);
+      for (const resolve of this.closeResolvers.splice(0))
+        resolve(this.closeInfo);
       for (const waiter of this.waiters.splice(0)) {
         clearTimeout(waiter.timer);
-        waiter.reject(new Error(`socket closed while waiting for ${waiter.types.join("|")}`));
+        waiter.reject(
+          new Error(
+            `socket closed while waiting for ${waiter.types.join("|")}`,
+          ),
+        );
       }
     });
     socket.on("error", () => {
@@ -87,7 +97,9 @@ export class TestClient {
       socket.once("open", () => resolve());
       socket.once("error", (error: Error) => reject(error));
       socket.once("unexpected-response", (_request, response) => {
-        reject(new Error(`websocket upgrade failed with ${response.statusCode}`));
+        reject(
+          new Error(`websocket upgrade failed with ${response.statusCode}`),
+        );
       });
     });
     return new TestClient(socket);
@@ -105,18 +117,25 @@ export class TestClient {
     this.socket.send(text);
   }
 
-  next<T extends MessageType>(type: T, timeoutMs = 2_000): Promise<MessageOf<T>> {
+  next<T extends MessageType>(
+    type: T,
+    timeoutMs = 2_000,
+  ): Promise<MessageOf<T>> {
     return this.nextAny([type], timeoutMs) as Promise<MessageOf<T>>;
   }
 
   nextAny(types: MessageType[], timeoutMs = 2_000): Promise<ServerMessage> {
-    const index = this.queue.findIndex((message) => types.includes(message.type));
+    const index = this.queue.findIndex((message) =>
+      types.includes(message.type),
+    );
     if (index >= 0) {
       const [message] = this.queue.splice(index, 1);
       return Promise.resolve(message!);
     }
     if (this.closeInfo) {
-      return Promise.reject(new Error(`socket already closed while waiting for ${types.join("|")}`));
+      return Promise.reject(
+        new Error(`socket already closed while waiting for ${types.join("|")}`),
+      );
     }
     return new Promise<ServerMessage>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -131,7 +150,10 @@ export class TestClient {
   closed(timeoutMs = 2_000): Promise<{ code: number; reason: string }> {
     if (this.closeInfo) return Promise.resolve(this.closeInfo);
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("timed out waiting for close")), timeoutMs);
+      const timer = setTimeout(
+        () => reject(new Error("timed out waiting for close")),
+        timeoutMs,
+      );
       this.closeResolvers.push((info) => {
         clearTimeout(timer);
         resolve(info);
@@ -147,7 +169,9 @@ export class TestClient {
   }
 
   private dispatch(message: ServerMessage): void {
-    const at = this.waiters.findIndex((waiter) => waiter.types.includes(message.type));
+    const at = this.waiters.findIndex((waiter) =>
+      waiter.types.includes(message.type),
+    );
     if (at >= 0) {
       const [waiter] = this.waiters.splice(at, 1);
       clearTimeout(waiter!.timer);

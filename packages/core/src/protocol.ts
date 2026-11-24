@@ -6,7 +6,15 @@
  * implementation note in docs/05-development-plan.md §7.
  */
 import { z } from "zod";
-import { concatBytes, readU16le, readU32le, u16be, u32be, writeU16le, writeU32le } from "./bytes.js";
+import {
+  concatBytes,
+  readU16le,
+  readU32le,
+  u16be,
+  u32be,
+  writeU16le,
+  writeU32le,
+} from "./bytes.js";
 
 export const PROTOCOL_VERSION = 1 as const;
 
@@ -22,11 +30,17 @@ export const GCM_TAG_BYTES = 16;
  * Plaintext chunk size that actually fits the channel: `sctp.maxMessageSize`
  * covers the whole frame (header + ciphertext + tag), docs/02 §4.3/§6.2.
  */
-export function effectiveChunkSize(requested: number, maxMessageSize = 262_144): number {
+export function effectiveChunkSize(
+  requested: number,
+  maxMessageSize = 262_144,
+): number {
   const capped = Math.min(requested, CHUNK_MAX);
   const byMessage = maxMessageSize - FRAME_HEADER_BYTES - GCM_TAG_BYTES;
   const size = Math.min(capped, byMessage);
-  if (size < 1024) throw new Error(`channel maxMessageSize ${maxMessageSize} leaves no room for a chunk`);
+  if (size < 1024)
+    throw new Error(
+      `channel maxMessageSize ${maxMessageSize} leaves no room for a chunk`,
+    );
   return size;
 }
 export const HWM = 8 * 1024 * 1024;
@@ -59,10 +73,25 @@ export type ErrorCode = (typeof ERROR_CODES)[number];
 export const SAVE_STRATEGIES = ["native", "fs", "sw", "blob"] as const;
 export type SaveStrategy = (typeof SAVE_STRATEGIES)[number];
 
-export const UAFamilies = ["chrome", "edge", "safari", "firefox", "arkweb", "unknown"] as const;
+export const UAFamilies = [
+  "chrome",
+  "edge",
+  "safari",
+  "firefox",
+  "arkweb",
+  "unknown",
+] as const;
 export type UAFamily = (typeof UAFamilies)[number];
 
-export const Platforms = ["win", "mac", "linux", "ios", "android", "harmony", "unknown"] as const;
+export const Platforms = [
+  "win",
+  "mac",
+  "linux",
+  "ios",
+  "android",
+  "harmony",
+  "unknown",
+] as const;
 export type Platform = (typeof Platforms)[number];
 
 export interface Caps {
@@ -116,7 +145,14 @@ export interface TurnCredential {
 export type ClientMessage =
   | { v: 1; type: "hello"; clientCaps?: Caps }
   | { v: 1; type: "create"; roomId: string; hostCaps: Caps }
-  | { v: 1; type: "join"; roomId: string; guestCaps: Caps; guestNonce: string; proof?: string }
+  | {
+      v: 1;
+      type: "join";
+      roomId: string;
+      guestCaps: Caps;
+      guestNonce: string;
+      proof?: string;
+    }
   | { v: 1; type: "approve"; guestId: string }
   | { v: 1; type: "deny"; guestId: string; reason?: string }
   | { v: 1; type: "remove"; guestId: string }
@@ -125,7 +161,13 @@ export type ClientMessage =
   | { v: 1; type: "close"; roomId: string; reason?: string };
 
 export type ServerMessage =
-  | { v: 1; type: "created"; roomId: string; /** 6 digit join code */ code: string; turn?: TurnCredential }
+  | {
+      v: 1;
+      type: "created";
+      roomId: string;
+      /** 6 digit join code */ code: string;
+      turn?: TurnCredential;
+    }
   | {
       v: 1;
       type: "join_request";
@@ -134,12 +176,25 @@ export type ServerMessage =
       guestNonce: string;
       proof?: string;
     }
-  | { v: 1; type: "join_ok"; guestId: string; peerCaps: Caps; turn?: TurnCredential }
+  | {
+      v: 1;
+      type: "join_ok";
+      guestId: string;
+      peerCaps: Caps;
+      turn?: TurnCredential;
+    }
   | { v: 1; type: "join_rejected"; code: ErrorCode; reason: string }
   | { v: 1; type: "signal"; from: string; payload: SignalPayload }
   | { v: 1; type: "peer_left"; guestId: string }
   | { v: 1; type: "room_closed"; reason: "host_close" | "ttl" | "error" }
-  | { v: 1; type: "turn"; uris: string[]; username: string; credential: string; ttl: number }
+  | {
+      v: 1;
+      type: "turn";
+      uris: string[];
+      username: string;
+      credential: string;
+      ttl: number;
+    }
   | { v: 1; type: "error"; code: ErrorCode; msg: string };
 
 const signalPayloadSchema = z.discriminatedUnion("k", [
@@ -158,24 +213,61 @@ const signalPayloadSchema = z.discriminatedUnion("k", [
 
 const base = { v: z.literal(1) } as const;
 
-export const clientMessageSchema: z.ZodType<ClientMessage> = z.discriminatedUnion("type", [
-  z.object({ ...base, type: z.literal("hello"), clientCaps: capsSchema.optional() }),
-  z.object({ ...base, type: z.literal("create"), roomId: z.string().regex(/^[a-z2-7]{26}$/), hostCaps: capsSchema }),
-  z.object({
-    ...base,
-    type: z.literal("join"),
-    roomId: z.string().regex(/^[a-z2-7]{26}$/),
-    guestCaps: capsSchema,
-    guestNonce: z.string().min(8).max(64),
-    proof: z.string().min(1).max(128).optional(),
-  }),
-  z.object({ ...base, type: z.literal("approve"), guestId: z.string().min(1) }),
-  z.object({ ...base, type: z.literal("deny"), guestId: z.string().min(1), reason: z.string().max(200).optional() }),
-  z.object({ ...base, type: z.literal("remove"), guestId: z.string().min(1) }),
-  z.object({ ...base, type: z.literal("signal"), to: z.string().min(1), payload: signalPayloadSchema }),
-  z.object({ ...base, type: z.literal("heartbeat"), roomId: z.string().min(1) }),
-  z.object({ ...base, type: z.literal("close"), roomId: z.string().min(1), reason: z.string().max(200).optional() }),
-]) as z.ZodType<ClientMessage>;
+export const clientMessageSchema: z.ZodType<ClientMessage> =
+  z.discriminatedUnion("type", [
+    z.object({
+      ...base,
+      type: z.literal("hello"),
+      clientCaps: capsSchema.optional(),
+    }),
+    z.object({
+      ...base,
+      type: z.literal("create"),
+      roomId: z.string().regex(/^[a-z2-7]{26}$/),
+      hostCaps: capsSchema,
+    }),
+    z.object({
+      ...base,
+      type: z.literal("join"),
+      roomId: z.string().regex(/^[a-z2-7]{26}$/),
+      guestCaps: capsSchema,
+      guestNonce: z.string().min(8).max(64),
+      proof: z.string().min(1).max(128).optional(),
+    }),
+    z.object({
+      ...base,
+      type: z.literal("approve"),
+      guestId: z.string().min(1),
+    }),
+    z.object({
+      ...base,
+      type: z.literal("deny"),
+      guestId: z.string().min(1),
+      reason: z.string().max(200).optional(),
+    }),
+    z.object({
+      ...base,
+      type: z.literal("remove"),
+      guestId: z.string().min(1),
+    }),
+    z.object({
+      ...base,
+      type: z.literal("signal"),
+      to: z.string().min(1),
+      payload: signalPayloadSchema,
+    }),
+    z.object({
+      ...base,
+      type: z.literal("heartbeat"),
+      roomId: z.string().min(1),
+    }),
+    z.object({
+      ...base,
+      type: z.literal("close"),
+      roomId: z.string().min(1),
+      reason: z.string().max(200).optional(),
+    }),
+  ]) as z.ZodType<ClientMessage>;
 
 export function parseClientMessage(raw: unknown): ClientMessage {
   return clientMessageSchema.parse(raw);
@@ -244,11 +336,29 @@ export const manifestSchema = z.object({
 });
 
 export const ctrlMessageSchema: z.ZodType<CtrlMessage> = z.union([
-  z.object({ v: z.literal(1), type: z.literal("hello"), guestCaps: capsSchema }),
+  z.object({
+    v: z.literal(1),
+    type: z.literal("hello"),
+    guestCaps: capsSchema,
+  }),
   manifestSchema as unknown as z.ZodType<Manifest>,
-  z.object({ v: z.literal(1), type: z.literal("accept"), fileIds: z.array(z.number().int()).max(256) }),
-  z.object({ v: z.literal(1), type: z.literal("bitmap"), fileId: z.number().int(), bits: z.string() }),
-  z.object({ v: z.literal(1), type: z.literal("progress"), fileId: z.number().int(), seq: z.number().int() }),
+  z.object({
+    v: z.literal(1),
+    type: z.literal("accept"),
+    fileIds: z.array(z.number().int()).max(256),
+  }),
+  z.object({
+    v: z.literal(1),
+    type: z.literal("bitmap"),
+    fileId: z.number().int(),
+    bits: z.string(),
+  }),
+  z.object({
+    v: z.literal(1),
+    type: z.literal("progress"),
+    fileId: z.number().int(),
+    seq: z.number().int(),
+  }),
   z.object({
     v: z.literal(1),
     type: z.literal("done"),
@@ -273,7 +383,12 @@ export const ctrlMessageSchema: z.ZodType<CtrlMessage> = z.union([
   z.object({ v: z.literal(1), type: z.literal("pause") }),
   z.object({ v: z.literal(1), type: z.literal("resume") }),
   z.object({ v: z.literal(1), type: z.literal("sas-confirm") }),
-  z.object({ v: z.literal(1), type: z.literal("room-key"), key: z.string().min(1).max(128), roomId: z.string().min(1).max(64) }),
+  z.object({
+    v: z.literal(1),
+    type: z.literal("room-key"),
+    key: z.string().min(1).max(128),
+    roomId: z.string().min(1).max(64),
+  }),
   z.object({ v: z.literal(1), type: z.literal("key-ok") }),
 ]) as z.ZodType<CtrlMessage>;
 
@@ -299,7 +414,8 @@ export const FRAME_FLAG_LAST = 1;
 
 export function encodeChunkFrame(frame: ChunkFrame): Uint8Array {
   const len = frame.ciphertext.length;
-  if (len > CHUNK_MAX_CIPHERTEXT) throw new Error(`chunk ciphertext too large: ${len}`);
+  if (len > CHUNK_MAX_CIPHERTEXT)
+    throw new Error(`chunk ciphertext too large: ${len}`);
   const out = new Uint8Array(FRAME_HEADER_BYTES + len);
   const view = new DataView(out.buffer);
   out[0] = FRAME_TYPE_CHUNK;
@@ -313,7 +429,8 @@ export function encodeChunkFrame(frame: ChunkFrame): Uint8Array {
 
 export function decodeChunkFrame(data: Uint8Array): ChunkFrame {
   if (data.length < FRAME_HEADER_BYTES) throw new Error("frame too short");
-  if (data.length > FRAME_MAX_BYTES) throw new Error(`frame too large: ${data.length}`);
+  if (data.length > FRAME_MAX_BYTES)
+    throw new Error(`frame too large: ${data.length}`);
   const type = data[0];
   if (type !== FRAME_TYPE_CHUNK) throw new Error(`unknown frame type: ${type}`);
   const fileId = readU16le(data, 1);
@@ -321,7 +438,8 @@ export function decodeChunkFrame(data: Uint8Array): ChunkFrame {
   const len = readU32le(data, 7);
   const flags = data[11]!;
   if (len > CHUNK_MAX_CIPHERTEXT) throw new Error(`bad length: ${len}`);
-  if (FRAME_HEADER_BYTES + len !== data.length) throw new Error("frame length mismatch");
+  if (FRAME_HEADER_BYTES + len !== data.length)
+    throw new Error("frame length mismatch");
   return {
     fileId,
     seq,
@@ -331,6 +449,10 @@ export function decodeChunkFrame(data: Uint8Array): ChunkFrame {
 }
 
 // --- helpers ----------------------------------------------------------------
-export function chunkAad(fileId: number, seq: number, ciphertextLen: number): Uint8Array {
+export function chunkAad(
+  fileId: number,
+  seq: number,
+  ciphertextLen: number,
+): Uint8Array {
   return concatBytes(u16be(fileId), u32be(seq), u32be(ciphertextLen));
 }

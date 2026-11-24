@@ -15,13 +15,18 @@ interface Snapshot {
 
 function snapshot(page: Page): Promise<Snapshot> {
   return page.evaluate(() => {
-    const hook = (window as unknown as { __crossfile?: { snapshot?: () => Snapshot } }).__crossfile;
+    const hook = (
+      window as unknown as { __crossfile?: { snapshot?: () => Snapshot } }
+    ).__crossfile;
     if (!hook?.snapshot) throw new Error("__crossfile hook missing");
     return hook.snapshot();
   });
 }
 
-function wsJoinExpect(roomId: string, caps: unknown): Promise<{ type: string; code?: string }> {
+function wsJoinExpect(
+  roomId: string,
+  caps: unknown,
+): Promise<{ type: string; code?: string }> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://127.0.0.1:${SIGNALING_PORT}/v1/ws`);
     const timer = setTimeout(() => {
@@ -41,8 +46,15 @@ function wsJoinExpect(roomId: string, caps: unknown): Promise<{ type: string; co
       );
     });
     ws.on("message", (data) => {
-      const message = JSON.parse(String(data)) as { type: string; code?: string };
-      if (message.type === "join_request" || message.type === "join_rejected" || message.type === "error") {
+      const message = JSON.parse(String(data)) as {
+        type: string;
+        code?: string;
+      };
+      if (
+        message.type === "join_request" ||
+        message.type === "join_rejected" ||
+        message.type === "error"
+      ) {
         clearTimeout(timer);
         ws.close();
         resolve(message);
@@ -64,24 +76,36 @@ const caps = {
   screen: "desktop",
 };
 
-test("AC7: ending the room tears it down and later joins are rejected", async ({ browser }) => {
+test("AC7: ending the room tears it down and later joins are rejected", async ({
+  browser,
+}) => {
   const hostContext = await browser.newContext();
   const guestContext = await browser.newContext();
   const host = await hostContext.newPage();
   const guest = await guestContext.newPage();
 
   await host.goto("/");
-  await expect.poll(async () => (await snapshot(host)).phase, { timeout: 30_000 }).toBe("waiting");
+  await expect
+    .poll(async () => (await snapshot(host)).phase, { timeout: 30_000 })
+    .toBe("waiting");
   const created = await snapshot(host);
   await guest.goto(created.link!);
-  await expect.poll(async () => (await snapshot(host)).guests.length, { timeout: 30_000 }).toBe(1);
+  await expect
+    .poll(async () => (await snapshot(host)).guests.length, { timeout: 30_000 })
+    .toBe(1);
   await host.getByTestId("approve").click();
-  await expect.poll(async () => (await snapshot(host)).guests[0]?.status, { timeout: 30_000 }).toBe("joined");
+  await expect
+    .poll(async () => (await snapshot(host)).guests[0]?.status, {
+      timeout: 30_000,
+    })
+    .toBe("joined");
 
   // "结束房间" destroys the room and the key, and the guest is told immediately.
   await host.getByRole("button", { name: "结束房间" }).click();
   await host.getByTestId("dialog-confirm").click(); // confirm the destructive action
-  await expect.poll(async () => (await snapshot(guest)).phase, { timeout: 30_000 }).toBe("error");
+  await expect
+    .poll(async () => (await snapshot(guest)).phase, { timeout: 30_000 })
+    .toBe("error");
   expect((await snapshot(guest)).error ?? "").toContain("房间已结束");
 
   // The room is gone from server memory: a late join cannot find it.

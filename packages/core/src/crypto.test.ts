@@ -28,12 +28,16 @@ describe("key derivation", () => {
 
   it("changes when the room changes", () => {
     const other = new Uint8Array(16).fill(8);
-    expect(bytesToHex(deriveSessionKey(roomKey, other))).not.toBe(bytesToHex(deriveSessionKey(roomKey, roomIdBytes)));
+    expect(bytesToHex(deriveSessionKey(roomKey, other))).not.toBe(
+      bytesToHex(deriveSessionKey(roomKey, roomIdBytes)),
+    );
   });
 
   it("derives a distinct key per file", () => {
     const session = deriveSessionKey(roomKey, roomIdBytes);
-    expect(bytesToHex(deriveFileKey(session, 1))).not.toBe(bytesToHex(deriveFileKey(session, 2)));
+    expect(bytesToHex(deriveFileKey(session, 1))).not.toBe(
+      bytesToHex(deriveFileKey(session, 2)),
+    );
   });
 });
 
@@ -41,15 +45,29 @@ describe("chunk AEAD", () => {
   const salt = new Uint8Array([1, 2, 3, 4]);
 
   async function keyFor(fileId: number): Promise<CryptoKey> {
-    return importFileKey(deriveFileKey(deriveSessionKey(roomKey, roomIdBytes), fileId));
+    return importFileKey(
+      deriveFileKey(deriveSessionKey(roomKey, roomIdBytes), fileId),
+    );
   }
 
   it("round-trips a chunk", async () => {
     const key = await keyFor(1);
     const plaintext = utf8("hello crossfile");
-    const ciphertext = await sealChunk({ key, fileId: 1, seq: 0, salt, plaintext });
+    const ciphertext = await sealChunk({
+      key,
+      fileId: 1,
+      seq: 0,
+      salt,
+      plaintext,
+    });
     expect(ciphertext.length).toBe(plaintext.length + 16);
-    const opened = await openChunk({ key, fileId: 1, seq: 0, salt, ciphertext });
+    const opened = await openChunk({
+      key,
+      fileId: 1,
+      seq: 0,
+      salt,
+      ciphertext,
+    });
     expect(bytesToHex(opened)).toBe(bytesToHex(plaintext));
   });
 
@@ -63,21 +81,45 @@ describe("chunk AEAD", () => {
 
   it("rejects tampered ciphertext", async () => {
     const key = await keyFor(1);
-    const ciphertext = await sealChunk({ key, fileId: 1, seq: 3, salt, plaintext: utf8("payload") });
+    const ciphertext = await sealChunk({
+      key,
+      fileId: 1,
+      seq: 3,
+      salt,
+      plaintext: utf8("payload"),
+    });
     ciphertext[0]! ^= 0xff;
-    await expect(openChunk({ key, fileId: 1, seq: 3, salt, ciphertext })).rejects.toThrow();
+    await expect(
+      openChunk({ key, fileId: 1, seq: 3, salt, ciphertext }),
+    ).rejects.toThrow();
   });
 
   it("rejects a replayed chunk under another sequence number (aad binds seq)", async () => {
     const key = await keyFor(1);
-    const ciphertext = await sealChunk({ key, fileId: 1, seq: 5, salt, plaintext: utf8("payload") });
-    await expect(openChunk({ key, fileId: 1, seq: 6, salt, ciphertext })).rejects.toThrow();
+    const ciphertext = await sealChunk({
+      key,
+      fileId: 1,
+      seq: 5,
+      salt,
+      plaintext: utf8("payload"),
+    });
+    await expect(
+      openChunk({ key, fileId: 1, seq: 6, salt, ciphertext }),
+    ).rejects.toThrow();
   });
 
   it("rejects a chunk moved to another file (aad binds fileId)", async () => {
     const key = await keyFor(1);
-    const ciphertext = await sealChunk({ key, fileId: 1, seq: 0, salt, plaintext: utf8("payload") });
-    await expect(openChunk({ key, fileId: 2, seq: 0, salt, ciphertext })).rejects.toThrow();
+    const ciphertext = await sealChunk({
+      key,
+      fileId: 1,
+      seq: 0,
+      salt,
+      plaintext: utf8("payload"),
+    });
+    await expect(
+      openChunk({ key, fileId: 2, seq: 0, salt, ciphertext }),
+    ).rejects.toThrow();
   });
 });
 
@@ -87,29 +129,46 @@ describe("join proof", () => {
 
   it("accepts the host-computed proof", () => {
     const proof = computeJoinProof(room.roomKey, room.roomIdBytes, guestNonce);
-    expect(verifyJoinProof(room.roomKey, room.roomIdBytes, guestNonce, proof)).toBe(true);
+    expect(
+      verifyJoinProof(room.roomKey, room.roomIdBytes, guestNonce, proof),
+    ).toBe(true);
   });
 
   it("rejects a proof made with another room key (fake guest injection)", () => {
     const attackerKey = randomBytes(32);
     const proof = computeJoinProof(attackerKey, room.roomIdBytes, guestNonce);
-    expect(verifyJoinProof(room.roomKey, room.roomIdBytes, guestNonce, proof)).toBe(false);
+    expect(
+      verifyJoinProof(room.roomKey, room.roomIdBytes, guestNonce, proof),
+    ).toBe(false);
   });
 
   it("rejects a proof bound to another nonce", () => {
     const proof = computeJoinProof(room.roomKey, room.roomIdBytes, guestNonce);
-    expect(verifyJoinProof(room.roomKey, room.roomIdBytes, "other-nonce", proof)).toBe(false);
+    expect(
+      verifyJoinProof(room.roomKey, room.roomIdBytes, "other-nonce", proof),
+    ).toBe(false);
   });
 
   it("rejects missing or garbage proofs", () => {
-    expect(verifyJoinProof(room.roomKey, room.roomIdBytes, guestNonce, undefined)).toBe(false);
-    expect(verifyJoinProof(room.roomKey, room.roomIdBytes, guestNonce, "**not base64**")).toBe(false);
+    expect(
+      verifyJoinProof(room.roomKey, room.roomIdBytes, guestNonce, undefined),
+    ).toBe(false);
+    expect(
+      verifyJoinProof(
+        room.roomKey,
+        room.roomIdBytes,
+        guestNonce,
+        "**not base64**",
+      ),
+    ).toBe(false);
   });
 });
 
 describe("SAS", () => {
-  const fpA = "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89";
-  const fpB = "11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00";
+  const fpA =
+    "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89";
+  const fpB =
+    "11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00";
 
   it("is symmetric: both sides show the same four emoji", () => {
     expect(computeSas(fpA, fpB)).toEqual(computeSas(fpB, fpA));
@@ -122,7 +181,9 @@ describe("SAS", () => {
   });
 
   it("changes when either fingerprint is replaced (MITM detection)", () => {
-    expect(computeSas(fpA, fpB)).not.toEqual(computeSas(fpA, fpB.replace("11:", "12:")));
+    expect(computeSas(fpA, fpB)).not.toEqual(
+      computeSas(fpA, fpB.replace("11:", "12:")),
+    );
   });
 
   it("reads the fingerprint out of SDP", () => {

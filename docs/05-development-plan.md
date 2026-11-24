@@ -8,7 +8,7 @@
 
 | # | 判据 | 状态 |
 |---|---|---|
-| U1 | `docker compose -f infra/docker-compose.yml up -d` + `pnpm dev` 可起，`https://room.net.time-pack.com` 可访问 | 进行中（infra-dev） |
+| U1 | `docker compose -f infra/docker-compose.yml up -d` + `pnpm dev` 可起，`https://room.net.time-pack.com` 可访问 | ✅ 开发链路已通：域名 → nginx → Vite:5173 → `/v1/ws` → signaling:8788（curl 得 101；Playwright 经该 https 源跑通 10 MB 传输）；compose 由 infra-dev 收尾 |
 | U2 | 双端 100 MB 传完且 SHA-256 一致（主判据） | ✅ 本机双上下文 9.1 s，哈希一致 |
 | U3 | 500 MB 走通，UI 显示真实路径标签 | ⚠️ 本机 500 MB 28 s、路径「局域网直连」（尚需跨机/TURN 验证） |
 | U4 | 断流续传（50% 断开、60 s 内重连、只补缺片、哈希一致） | ✅ 本机 20 MB：传输中强断通道 → 重连 → 只补 295 片 → 哈希一致（Playwright AC3） |
@@ -94,7 +94,17 @@
 | 2026-11-24 | ctrl 通道新增 `sas-confirm` / `room-key {key, roomId}` / `key-ok` | docs/02 §3.5 只写了"人工比对后 H 通过 ctrl 发送 roomKey"，字段未定义 |
 | 2026-11-24 | 发送前按接收方能力给软/硬上限提示（`judgeFile`），超硬上限禁用发送 | docs/01 D16 要求发送方提前看到限制提示 |
 
-## 7.1 实测数据（本机 Chromium↔Chromium，loopback WebRTC，路径=局域网直连）
+## 7.1 开发链路（已实测）
+
+```
+https://room.net.time-pack.com  --TLS-->  nginx (既有反代)  -->  Vite :5173
+                                                                  └── /v1/ws  --ws--> signaling :8788
+```
+- `curl -k --http1.1 -H 'Upgrade: websocket' https://room.net.time-pack.com/v1/ws` → **101 Switching Protocols**
+- `E2E_NO_WS=1 E2E_BASE_URL=https://room.net.time-pack.com E2E_IGNORE_TLS=1 pnpm exec playwright test tests/e2e/m0-transfer.spec.ts` → 1 passed（10 MB，哈希一致）
+- 本机 8787 被一个无关服务占用（返回 `{"error":{"code":"not_found"…}}`），故 signaling 默认端口改为 **8788**；`pnpm dev` 与 Vite 代理都已指向 8788。
+
+## 7.2 实测数据（本机 Chromium↔Chromium，loopback WebRTC，路径=局域网直连）
 
 | 文件 | 用时 | 平均吞吐 | 哈希 |
 |---|---|---|---|

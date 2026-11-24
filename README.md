@@ -7,11 +7,16 @@
 
 ```bash
 pnpm install
-pnpm dev:signal            # 信令：ws://127.0.0.1:8788/v1/ws（零存储、无数据库）
+pnpm dev                   # 信令 :8788 + Web :5173（一起起）
+pnpm dev:signal            # 只起信令：ws://127.0.0.1:8788/v1/ws（零存储、无数据库）
 pnpm dev:web               # Web：http://127.0.0.1:5173
 pnpm gate                  # typecheck + 单测 + 对比度 24/24 + 零硬编码色值
 pnpm e2e                   # Playwright 双浏览器真实传输（默认 10 MB）
 E2E_FILE_MB=500 pnpm e2e   # 500 MB 用例
+
+# 经开发域名跑（需 Vite 5173 在跑，反代已把域名指到 5173）
+E2E_NO_WS=1 E2E_BASE_URL=https://room.net.time-pack.com E2E_IGNORE_TLS=1 \
+  pnpm exec playwright test tests/e2e/m0-transfer.spec.ts
 ```
 开发期 HTTPS 由既有反代提供：`https://room.net.time-pack.com` → `127.0.0.1:5173`（`allowedHosts` 已开，`/v1/ws` 走 Vite 代理）。
 

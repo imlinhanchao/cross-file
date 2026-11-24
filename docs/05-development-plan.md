@@ -93,6 +93,7 @@
 | 2026-11-24 | 续传：发送方在发 manifest 前先算一次全文件 SHA-256，续传只重发缺失分片、`seq`/nonce 不变 | 发送方哈希必须覆盖整个文件；边发边哈希在乱序补片时无法接续 |
 | 2026-11-24 | ctrl 通道新增 `sas-confirm` / `room-key {key, roomId}` / `key-ok` | docs/02 §3.5 只写了"人工比对后 H 通过 ctrl 发送 roomKey"，字段未定义 |
 | 2026-11-24 | 发送前按接收方能力给软/硬上限提示（`judgeFile`），超硬上限禁用发送 | docs/01 D16 要求发送方提前看到限制提示 |
+| 2026-11-24 | 桌面壳用配置声明窗口（保留 `dragDropEnabled:false`），信令地址经 `localStorage`/注入覆盖；根 `build` 只构建 Web，桌面用 `build:desktop` | Tauri 2 的 `WebviewWindowBuilder` 在本版本无 `drag_drop_enabled`；CI 不应默认打包 Tauri |
 
 ## 7.0 AC2 / AC8 证据（本地，已实测）
 
@@ -103,6 +104,16 @@
 - 复现：`E2E_RELAY=1 TURN_SECRET=... TURN_URIS='turn:127.0.0.1:3478?transport=udp' pnpm exec playwright test tests/e2e/ac2-relay.spec.ts`
 
 **AC8（零存储）**：`bash tests/audit/zero-storage.sh` → local 模式 RESULT PASS（strace：无 O_WRONLY/O_CREAT、无文件 write、无 DB 路径、stdout 仅 1 行、cwd 为空）；`SKIP_BUILD=1 bash tests/audit/zero-storage.sh --container` → 容器模式 RESULT PASS（read-only rootfs、非 root、0 mount、CapDrop ALL、no-new-privileges、EROFS 写入失败、down -v 干净）。
+
+## 7.0.1 桌面壳（Tauri 2）实测
+
+- `cargo check` ✅、`cargo test` ✅ 2/2（文件名穿越清洗、同名去重）
+- `tauri build --no-bundle` ✅ release 二进制 5.47 MB；`--bundles deb` ✅ `CrossFile_0.1.0_amd64.deb`
+- `dev:attach` 窗口创建（Wayland: title=CrossFile、configure 1200×857）无 panic
+- IPC 端到端 ✅：`save_open` → 两段 offset `save_write` → `save_close` 内容逐字节正确；路径穿越清洗为单段文件名；`set_transfer_active` / `confirm_close` 正常
+- Web 侧接线：`window.__CROSSFILE_NATIVE__` 标记能力包 → `native` sink 直写（`onChunk` 按 offset 调用 `save_write`，不再攒内存 Blob）；`close-requested` → 确认框 → `confirm_close`；菜单 `menu-action` 接「新建/结束房间」；传输期间 `set_transfer_active` 开关
+- 信令地址解析顺序：`window.__CROSSFILE_SIGNALING_URL__` → `localStorage["crossfile.signalingUrl"]` → 桌面默认 `ws://127.0.0.1:8788/v1/ws` → 同源；生产自托管改地址用设置页/该 key（M4 待办）
+- 未验证：GUI 内 500 MB 实跑（本机无 xvfb/截图能力，需人工或 tauri-driver）、AppImage 打包、macOS/Windows 构建
 
 ## 7.1 开发链路（已实测）
 

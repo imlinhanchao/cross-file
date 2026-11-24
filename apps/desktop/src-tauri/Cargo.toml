@@ -1,0 +1,24 @@
+[package]
+name = "crossfile-desktop"
+version = "0.1.0"
+description = "CrossFile desktop shell (Tauri 2)"
+authors = ["CrossFile"]
+edition = "2021"
+license = "MIT"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# The shell only needs the core runtime; native save/menu/close logic is hand-written.
+tauri = { version = "2", features = [] }
+# External links from the native help menu open in the system browser.
+tauri-plugin-opener = "2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

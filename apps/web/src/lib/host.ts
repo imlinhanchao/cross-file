@@ -26,6 +26,7 @@ import {
   type TurnCredential,
 } from "@crossfile/core";
 import { copy, formatBytes } from "@crossfile/ui";
+import { installNativeShellHooks, setTransferActive } from "./native.js";
 import { SignalingSocket, deferred, withTimeout } from "./signal.js";
 import { useApp } from "../store.js";
 
@@ -67,6 +68,7 @@ export class HostController {
   private fileList: File[] = [];
   private heartbeat?: ReturnType<typeof setInterval>;
   private pathTimer?: ReturnType<typeof setTimeout>;
+  private cleanupNative?: () => void;
 
   get roomLink(): string {
     return buildRoomLink(location.origin, this.identity.roomId, this.identity.roomKey);
@@ -81,6 +83,11 @@ export class HostController {
       useApp.getState().patch({ phase: "error", error: copy.connectionLost });
     });
     await this.socket.connect();
+    this.cleanupNative = installNativeShellHooks({
+      isTransferActive: () => ["transferring", "paused"].includes(useApp.getState().phase),
+      onEndRoom: () => this.close(),
+      onNewRoom: () => location.assign("/"),
+    });
     this.socket.send({ v: 1, type: "hello", clientCaps: this.caps });
     this.socket.send({ v: 1, type: "create", roomId: this.identity.roomId, hostCaps: this.caps });
   }
@@ -127,6 +134,8 @@ export class HostController {
   }
 
   close(): void {
+    this.cleanupNative?.();
+    void setTransferActive(false);
     this.socket.send({ v: 1, type: "close", roomId: this.identity.roomId });
     for (const guest of this.peers.values()) guest.peer.close();
     this.peers.clear();
@@ -412,6 +421,7 @@ export class HostController {
     const totalBytes = accepted.reduce((sum, file) => sum + file.file.size, 0);
 
     if ((guest.nextFileIndex ?? 0) === 0) {
+      void setTransferActive(true);
       store.patch({ phase: "transferring", notice: undefined });
       store.patchGuest(guestId, { status: "transferring" });
       store.setTransfer({
@@ -424,7 +434,7 @@ export class HostController {
 
     for (let index = guest.nextFileIndex ?? 0; index < accepted.length; index++) {
       if (!guest.handles) {
-        // Channel dropped: wait for the bitmap-driven resume.
+        // Channel dropped: wait for the bitmap-driven resume (close guard stays on).
         store.patch({ phase: "paused", notice: copy.resumeHint });
         return;
       }
@@ -441,6 +451,7 @@ export class HostController {
     }
 
     const last = accepted[accepted.length - 1];
+    void setTransferActive(false);
     store.patch({ phase: "done", result: { ok: true, sha256: last?.sha256, bytes: totalBytes } });
     store.patchGuest(guestId, { status: "done", progress: { sentBytes: totalBytes, totalBytes } });
     store.patch({ notice: `${copy.done} · ${formatBytes(totalBytes)}` });

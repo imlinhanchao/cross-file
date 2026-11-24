@@ -42,6 +42,8 @@ export interface ResultView {
   sha256?: string;
   expected?: string;
   url?: string;
+  /** native shell only: where the file was written */
+  path?: string;
   fileName?: string;
   bytes?: number;
 }

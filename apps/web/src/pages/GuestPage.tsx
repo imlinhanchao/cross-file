@@ -167,6 +167,11 @@ export function GuestPage({ code }: { code?: string }) {
               <p className="code-block small mono" style={{ wordBreak: "break-all", marginTop: 8 }}>
                 {state.result.sha256}
               </p>
+              {state.result.path ? (
+                <p className="small muted mt-4">
+                  已保存到 <span className="mono">{state.result.path}</span>
+                </p>
+              ) : null}
               {state.result.url ? (
                 <a
                   className="btn btn--primary btn--lg btn--block mt-4"

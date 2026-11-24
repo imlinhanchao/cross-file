@@ -1,0 +1,5 @@
+# Rust build output (cargo target dir lives inside src-tauri)
+/src-tauri/target/
+# Generated capability schemas + platform projects
+/src-tauri/gen/
+node_modules/

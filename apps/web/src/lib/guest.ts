@@ -23,6 +23,7 @@ import {
   type ServerMessage,
 } from "@crossfile/core";
 import { copy } from "@crossfile/ui";
+import { createNativeSink, installNativeShellHooks, isNativeShell, setTransferActive, type SaveSink } from "./native.js";
 import { SignalingSocket, withTimeout } from "./signal.js";
 import { useApp } from "../store.js";
 
@@ -46,6 +47,9 @@ export class GuestController {
   private peerDead = false;
   private manifest?: Manifest;
   private receivers = new Map<number, FileReceiver>();
+  private readonly nativeSinks = new Map<number, SaveSink>();
+  private readonly native = isNativeShell();
+  private cleanupNative?: () => void;
   private roomId = "";
   private roomKey: Uint8Array = new Uint8Array(0);
   private roomIdBytes: Uint8Array = new Uint8Array(0);
@@ -80,6 +84,14 @@ export class GuestController {
       store.patch({ hasKey: true });
     }
 
+    this.cleanupNative = installNativeShellHooks({
+      isTransferActive: () => ["transferring", "paused"].includes(useApp.getState().phase),
+      onEndRoom: () => {
+        this.close();
+        location.assign("/");
+      },
+      onNewRoom: () => location.assign("/"),
+    });
     this.socket.onMessage((message) => void this.onMessage(message));
     this.socket.onClose(() => {
       const phase = useApp.getState().phase;
@@ -113,6 +125,7 @@ export class GuestController {
 
   accept(): void {
     if (!this.manifest || !this.handles) return;
+    void setTransferActive(true);
     const store = useApp.getState();
     const totalBytes = this.manifest.files.reduce((sum, file) => sum + file.size, 0);
     this.handles.ctrl.send(
@@ -123,8 +136,16 @@ export class GuestController {
   }
 
   close(): void {
+    this.cleanupNative?.();
+    void setTransferActive(false);
+    void this.abortSinks();
     this.peer?.close();
     this.socket.close();
+  }
+
+  private async abortSinks(): Promise<void> {
+    for (const sink of this.nativeSinks.values()) await sink.abort().catch(() => undefined);
+    this.nativeSinks.clear();
   }
 
   private async onMessage(message: ServerMessage): Promise<void> {
@@ -287,6 +308,12 @@ export class GuestController {
     this.handles.ctrl.send(JSON.stringify({ v: 1, type: "ack", fileId: message.fileId, ok }));
 
     if (!ok) {
+      const failedSink = this.nativeSinks.get(message.fileId);
+      if (failedSink) {
+        await failedSink.abort().catch(() => undefined);
+        this.nativeSinks.delete(message.fileId);
+      }
+      void setTransferActive(false);
       exposeTestState({ sha256: result.sha256, expected: message.sha256, size: result.size, complete: result.complete });
       store.patch({
         phase: "error",
@@ -296,10 +323,28 @@ export class GuestController {
       return;
     }
 
+    const byteLength = result.size;
+    const totalBytes = this.manifest?.files.reduce((sum, entry) => sum + entry.size, 0) ?? byteLength;
+    void setTransferActive(false);
+
+    const nativeSink = this.nativeSinks.get(message.fileId);
+    if (nativeSink) {
+      // Desktop shell: bytes went straight to disk by offset; no in-memory Blob.
+      const savedPath = await nativeSink.close();
+      this.nativeSinks.delete(message.fileId);
+      store.patch({
+        phase: "done",
+        notice: copy.done,
+        result: { ok: true, sha256: result.sha256, path: savedPath, fileName: file.entry.name, bytes: byteLength },
+      });
+      store.setTransfer({ sentBytes: totalBytes, totalBytes, speedBps: 0 });
+      exposeTestState({ sha256: result.sha256, expected: message.sha256, size: byteLength, complete: true });
+      return;
+    }
+
     const bytes = file.receiver.collectBytes();
     const blob = new Blob([bytes.buffer as ArrayBuffer], { type: file.entry.mime });
     const url = URL.createObjectURL(blob);
-    const totalBytes = this.manifest?.files.reduce((sum, entry) => sum + entry.size, 0) ?? bytes.length;
     store.patch({
       phase: "done",
       notice: copy.done,
@@ -320,6 +365,13 @@ export class GuestController {
       const salt = base64ToBytes(entry.salt);
       const key = await importFileKey(deriveFileKey(this.sessionKey, entry.id));
       const store = useApp.getState();
+      let sink: SaveSink | null = null;
+      if (this.native) {
+        sink = createNativeSink();
+        await sink.open(entry.name);
+        this.nativeSinks.set(entry.id, sink);
+      }
+      const sinkRef = sink;
       const receiver = new ChunkReceiver({
         fileId: entry.id,
         size: entry.size,
@@ -328,6 +380,7 @@ export class GuestController {
         salt,
         key,
         progressEveryChunks: 10,
+        ...(sinkRef ? { onChunk: (offset: number, plaintext: Uint8Array) => sinkRef.write(offset, plaintext) } : {}),
         onProgress: (receivedBytes) => {
           const startedAt = store.transfer?.startedAt ?? Date.now();
           const elapsed = (Date.now() - startedAt) / 1000;

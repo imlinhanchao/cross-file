@@ -1,6 +1,27 @@
 import type { ClientMessage, ServerMessage, SignalPayload } from "@crossfile/core";
+import { isNativeShell } from "./native.js";
 
+/** Desktop shell default: the dev/self-host instance runs on this machine. */
+export const NATIVE_DEFAULT_SIGNALING_URL = "ws://127.0.0.1:8788/v1/ws";
+
+/**
+ * Resolution order:
+ *   1. window.__CROSSFILE_SIGNALING_URL__ (injected by the shell)
+ *   2. localStorage["crossfile.signalingUrl"] (user/self-host setting)
+ *   3. native shell without either -> ws://127.0.0.1:8788/v1/ws
+ *   4. same origin (web)
+ */
 export function signalingUrl(): string {
+  if (typeof window === "undefined") return NATIVE_DEFAULT_SIGNALING_URL;
+  const injected = window.__CROSSFILE_SIGNALING_URL__;
+  if (injected) return injected;
+  try {
+    const stored = window.localStorage?.getItem("crossfile.signalingUrl");
+    if (stored) return stored;
+  } catch {
+    // private mode / storage disabled
+  }
+  if (isNativeShell()) return NATIVE_DEFAULT_SIGNALING_URL;
   const scheme = location.protocol === "https:" ? "wss" : "ws";
   return `${scheme}://${location.host}/v1/ws`;
 }

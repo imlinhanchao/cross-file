@@ -1,0 +1,16 @@
+{
+  "name": "@crossfile/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "CrossFile desktop shell (Tauri 2)",
+  "scripts": {
+    "dev": "tauri dev",
+    "dev:attach": "tauri dev --config tauri.dev-attach.conf.json",
+    "build": "pnpm --filter @crossfile/web build && tauri build",
+    "build:nobundle": "tauri build --no-bundle",
+    "check": "cargo check --manifest-path src-tauri/Cargo.toml",
+    "test": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "tauri": "tauri"
+  }
+}

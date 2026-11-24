@@ -22,6 +22,12 @@ SKIP_BUILD=1 bash tests/audit/zero-storage.sh --container   # 容器只读审计
 E2E_RELAY=1 TURN_SECRET=... TURN_URIS='turn:127.0.0.1:3478?transport=udp' \
   pnpm exec playwright test tests/e2e/ac2-relay.spec.ts       # 仅中继路径
 
+# 桌面壳（Tauri 2，Linux 需 webkit2gtk-4.1-dev）
+pnpm --filter @crossfile/web build
+pnpm --filter @crossfile/desktop build:nobundle   # 只出二进制
+pnpm --filter @crossfile/desktop build            # deb/rpm 等安装包
+pnpm --filter @crossfile/desktop dev              # 开发模式（自带 Web dev server）
+
 # 经开发域名跑（需 Vite 5173 在跑，反代已把域名指到 5173）
 E2E_NO_WS=1 E2E_BASE_URL=https://room.net.time-pack.com E2E_IGNORE_TLS=1 \
   pnpm exec playwright test tests/e2e/m0-transfer.spec.ts
@@ -36,6 +42,7 @@ E2E_NO_WS=1 E2E_BASE_URL=https://room.net.time-pack.com E2E_IGNORE_TLS=1 \
 | [docs/02-protocol.md](docs/02-protocol.md) | 信令协议、密钥与加密、分片帧格式、续传状态机、ICE 路径、零存储约束 |
 | [docs/03-roadmap.md](docs/03-roadmap.md) | 仓库结构、技术栈、M0–M4 里程碑、测试矩阵、风险清单 |
 | [docs/04-design-system.md](docs/04-design-system.md) | 设计系统：设计意图、OKLCH token、排版、组件与状态、无障碍、平台适配、文案 |
+| [docs/desktop.md](docs/desktop.md) | Tauri 2 桌面壳：依赖、开发/打包命令、原生写盘 IPC、关窗保护、菜单 |
 | [design/](design/README.md) | 设计稿与出图流水线：5 个画面、token、对比度校验、截图脚本 |
 | [docs/FACT-SHEET-web-large-file-transfer.md](docs/FACT-SHEET-web-large-file-transfer.md) | 附录 A：浏览器/平台能力的实测事实（Chrome 157、Safari 27） |
 | [docs/prior-art-ephemeral-file-sharing.md](docs/prior-art-ephemeral-file-sharing.md) | 附录 B：14 个竞品的拓扑、存储、上限、许可、活跃度 |

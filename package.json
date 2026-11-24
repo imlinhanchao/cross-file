@@ -11,7 +11,7 @@
     "dev": "PORT=8788 CROSSFILE_SIGNALING_URL=ws://127.0.0.1:8788 pnpm -r --parallel --filter @crossfile/signaling --filter @crossfile/web dev",
     "dev:web": "pnpm --filter @crossfile/web dev",
     "dev:signal": "PORT=8788 pnpm --filter @crossfile/signaling dev",
-    "build": "pnpm -r build",
+    "build": "pnpm --filter @crossfile/web build",
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -21,7 +21,8 @@
     "format": "prettier --write .",
     "gate:contrast": "node design/tools/check-contrast.mjs",
     "gate:colors": "bash scripts/check-hardcoded-colors.sh",
-    "gate": "pnpm typecheck && pnpm test && pnpm gate:contrast && pnpm gate:colors"
+    "gate": "pnpm typecheck && pnpm test && pnpm gate:contrast && pnpm gate:colors",
+    "build:desktop": "pnpm --filter @crossfile/desktop build"
   },
   "devDependencies": {
     "@noble/hashes": "^2.0.1",

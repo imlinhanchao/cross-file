@@ -93,8 +93,16 @@ async function listen(
   handler: (payload: unknown) => void,
 ): Promise<() => void> {
   const api = window.__TAURI__?.event;
-  if (!api) return () => undefined;
-  return api.listen(event, (nativeEvent) => handler(nativeEvent.payload));
+  if (!api) return () => {};
+  try {
+    return await api.listen(event, (nativeEvent) =>
+      handler(nativeEvent.payload),
+    );
+  } catch {
+    // Remote dev origins are only allowed IPC when a capability grants it; the close
+    // guard is best-effort, so a denied listen must never break the transfer loop.
+    return () => {};
+  }
 }
 
 export interface SaveSink {

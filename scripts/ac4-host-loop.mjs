@@ -50,7 +50,39 @@ function clearPublished() {
 }
 
 console.log(`expected sha256: ${expected} (${SIZE} bytes)`);
-const browser = await chromium.launch({ channel: "chrome" });
+
+// Cross-machine ICE needs a real LAN host candidate: Chrome otherwise obfuscates
+// local IPs as mDNS "*.local", which a guest on another machine cannot resolve
+// (no TURN / same public IP => no srflx fallback). Opt out of that obfuscation.
+// Playwright (1.65.1) already injects its own --disable-features list; Chromium
+// keeps only the last occurrence, so replay Playwright's entries here and append
+// ours instead of silently dropping them.
+const CHROME_DISABLED_FEATURES = [
+  // @playwright/test 1.65.1 defaults (playwright-core chromiumSwitches).
+  "AvoidUnnecessaryBeforeUnloadCheckSync",
+  "DestroyProfileOnBrowserClose",
+  "HttpsUpgrades",
+  "HttpsFirstBalancedModeAutoEnable",
+  "LensOverlay",
+  "MediaRouter",
+  "PaintHolding",
+  "ThirdPartyStoragePartitioning",
+  "AvoidCorsURLLoaderRestartOnRedirect",
+  "TcpPortRandomizationWin",
+  "OptimizationHints",
+  "NetworkTimeServiceQuerying",
+  "AimEnabled",
+  "PreconnectToSearch",
+  "msForceBrowserSignIn",
+  "msEdgeUpdateLaunchServicesPreferredVersion",
+  // AC4: expose 192.168.50.200:port as a host candidate for the iOS guest.
+  "WebRtcHideLocalIpsWithMdns",
+];
+
+const browser = await chromium.launch({
+  channel: "chrome",
+  args: [`--disable-features=${CHROME_DISABLED_FEATURES.join(",")}`],
+});
 
 for (let round = 1; round <= 20; round++) {
   const context = await browser.newContext({ ignoreHTTPSErrors: true });

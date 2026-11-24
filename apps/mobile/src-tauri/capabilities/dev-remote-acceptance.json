@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "dev-remote-acceptance",
+  "description": "Debug acceptance runs navigate the webview to the dev domain; allow the shell's core IPC (save commands, close events) on that origin only.",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["https://room.net.time-pack.com/*"]
+  },
+  "permissions": ["core:default"]
+}

@@ -368,11 +368,18 @@ fn shell_init_script() -> String {
 /// Runs on every page load (including a WebView reload): re-assert the shell
 /// globals because a reload recreates the JS global scope.
 fn on_page_load(_webview: &Webview, payload: &PageLoadPayload<'_>) {
-    if let PageLoadEvent::Finished = payload.event() {
-        let _ = _webview.eval(&shell_init_script());
-        #[cfg(debug_assertions)]
-        if let Some(script) = dev_join_script() {
-            let _ = _webview.eval(&script);
+    match payload.event() {
+        // Inject as early as possible: after navigating to a remote page (auto-join
+        // harness) the web app must still see the shell globals before it connects.
+        PageLoadEvent::Started => {
+            let _ = _webview.eval(&shell_init_script());
+        }
+        PageLoadEvent::Finished => {
+            let _ = _webview.eval(&shell_init_script());
+            #[cfg(debug_assertions)]
+            if let Some(script) = dev_join_script() {
+                let _ = _webview.eval(&script);
+            }
         }
     }
 }

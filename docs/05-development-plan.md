@@ -238,6 +238,19 @@ docs/02 §4.5 的 60 秒未确认超时落地：guest 收到 4 emoji 后计时�
 模拟器上尝试「构建 → 安装 → simctl launch（带环境变量）→ 自动加入 → 原生落盘」全链路。
 手机壳新增 Rust 单测（文件名穿越防护、重名去重、init script 注入信令地址，3 个全过）。
 
+**iOS 模拟器实测进展（2026-11-25）**：在 mac-mini 上打通了 iOS 壳构建链——
+`rustup target add aarch64-apple-ios-sim`、`tauri ios init`（自动安装 libimobiledevice 等 brew 依赖）、
+`tauri ios build --debug --target aarch64-sim` 均成功（需要在 `gen/apple/tauri` 放一个转调 Tauri CLI 的
+shim，因为 Xcode 的 "Build Rust Code" phase 会执行 `node tauri ...`；仓库不生成该文件，属 Tauri 生成工程的
+本地注意事项）。装进 iPhone 17 模拟器并用 `simctl launch` + `SIMCTL_CHILD_CROSSFILE_DEV_JOIN/AUTOACCEPT`
+启动后，**iOS 壳成功加入房间**（host 侧看到 guest joined / manifest 已发送），WKWebView 能建 RTCPeerConnection
+（日志里 `peer-connection` 存在，`dataChannelsOpened=0`）。
+但**数据通道未打开、传输没有开始**：目前判断是模拟器 ↔ Linux 的 ICE 候选/中继问题（已临时拉起 coturn 仍未
+打通）；另外远程 dev 页面下 Tauri 2 默认拒绝 IPC（`event.listen not allowed on window "main"`），已加
+`capabilities/dev-remote-acceptance.json`（仅允许 dev 域）并让前端 listen 失败时优雅降级。
+结论：iOS 壳「构建 + 安装 + 加入房间 + WebRTC 栈可用」已验证，**100 MB 落盘仍待解决 ICE/中继**；
+Android 壳仍受本机无 KVM、AVD 只读锁、arm64 APK 限制。
+
 ## 7.1 开发链路（已实测）
 
 ```

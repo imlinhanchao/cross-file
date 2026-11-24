@@ -248,7 +248,11 @@ shim，因为 Xcode 的 "Build Rust Code" phase 会执行 `node tauri ...`；仓
 但**数据通道未打开、传输没有开始**：目前判断是模拟器 ↔ Linux 的 ICE 候选/中继问题（已临时拉起 coturn 仍未
 打通）；另外远程 dev 页面下 Tauri 2 默认拒绝 IPC（`event.listen not allowed on window "main"`），已加
 `capabilities/dev-remote-acceptance.json`（仅允许 dev 域）并让前端 listen 失败时优雅降级。
-结论：iOS 壳「构建 + 安装 + 加入房间 + WebRTC 栈可用」已验证，**100 MB 落盘仍待解决 ICE/中继**；
+**后续（同日）**：把两端都强制 `?relay=1` 后 iOS 壳与 Linux 的 ICE 打通（host `connected`、路径「中继」）——
+**100 MB 接收成功**：文件落在模拟器 App 沙盒 `Library/Application Support/com.crossfile.mobile/downloads/`，
+sha256 `0e9ae831…` 与发送方完全一致。**500 MB 跑到 498/524 MB 时 App 进程被系统终止**（无 crash report，
+疑似 WKWebView/IPC 内存 jetsam；100 MB 正常），下一步用 Instruments 看内存曲线，或分块落盘后及时释放。
+结论：iOS 壳「构建 + 安装 + 加入房间 + 中继传输 100 MB 落盘」已验证，**500 MB 稳定性待解决**；
 Android 壳仍受本机无 KVM、AVD 只读锁、arm64 APK 限制。
 
 ## 7.1 开发链路（已实测）

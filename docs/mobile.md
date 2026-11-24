@@ -449,5 +449,9 @@ SIMCTL_CHILD_CROSSFILE_DEV_AUTOACCEPT=1 \
 xcrun simctl get_app_container booted <bundle-id> data
 ```
 
+已实测（mac-mini + iPhone 17 模拟器 + Linux 主机）：强制两端 `?relay=1` 时，iOS 壳经 TURN 收下 100 MB，
+落盘 sha256 与发送方一致；500 MB 在约 95% 时进程被系统终止（待查内存）。模拟器 ↔ Linux 的直连 ICE 不通，
+验收脚本请带 `relay=1`。
+
 安全说明：`CROSSFILE_DEV_AUTOACCEPT` 只在 `cfg!(debug_assertions)` 下生效，且必须链接里带 `autoaccept=1`；
 release 包即使设置该变量也不会绕过接收方的同意步骤。

@@ -11,6 +11,7 @@ import {
   detectCaps,
   iceServersFromTurn,
   importFileKey,
+  judgeFile,
   parseCtrlMessage,
   sasFromPeerConnection,
   type Caps,
@@ -149,6 +150,14 @@ export class GuestController {
     this.socket.close();
   }
 
+  private riskMessage(totalBytes: number, softLimitMB: number): string {
+    const mb = Math.round(totalBytes / (1024 * 1024));
+    if (this.caps.platform === "ios") {
+      return `这台 iPhone 接收 ${mb} MB 风险较高。浏览器最多稳定保存约 ${softLimitMB} MB。建议改用电脑接收，或安装 CrossFile App。`;
+    }
+    return `这台设备接收 ${mb} MB 可能无法保存（稳定上限约 ${softLimitMB} MB）。可以继续，但建议改用电脑接收或安装 App。`;
+  }
+
   private report(tag: string, data: Record<string, unknown>): void {
     if (!this.reportUrl) return;
     const url = `${this.reportUrl}?tag=${encodeURIComponent(tag)}&data=${encodeURIComponent(JSON.stringify(data))}`;
@@ -275,10 +284,37 @@ export class GuestController {
     console.debug("[cf-guest] ctrl", message.type);
     switch (message.type) {
       case "manifest": {
+        const totalBytes = message.files.reduce((sum, file) => sum + file.size, 0);
+        const verdict = judgeFile(totalBytes, this.caps);
+        if (verdict.level === "reject") {
+          // docs/01 §6: above the hard limit the receiver refuses outright.
+          this.handles?.ctrl.send(
+            JSON.stringify({
+              v: 1,
+              type: "error",
+              code: "TOO_LARGE",
+              msg: `receiver hard limit ${verdict.hardLimitMB} MB`,
+            }),
+          );
+          store.patch({
+            phase: "error",
+            error: `超过这台设备能接收的上限（约 ${verdict.hardLimitMB} MB）。请让对方改用电脑接收，或安装 App。`,
+          });
+          break;
+        }
         this.manifest = message;
         store.patch({
           phase: "joined",
           files: message.files.map((file) => ({ id: file.id, name: file.name, size: file.size, mime: file.mime })),
+          risk:
+            verdict.level === "warn"
+              ? {
+                  level: "warn",
+                  message: this.riskMessage(totalBytes, verdict.softLimitMB),
+                  softLimitMB: verdict.softLimitMB,
+                  totalBytes,
+                }
+              : undefined,
         });
         if (this.autoAccept) setTimeout(() => this.accept(), 300);
         break;

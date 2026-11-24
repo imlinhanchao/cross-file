@@ -65,6 +65,8 @@ export interface RoomView {
   error?: string;
   notice?: string;
   roomClosed?: boolean;
+  /** receiver-side capability risk before accepting a manifest (docs/01 §6, D16) */
+  risk?: { level: "ok" | "warn" | "reject"; message: string; softLimitMB: number; totalBytes: number };
   /** 6-digit-code path: 4 emoji both sides must compare before the key is sent */
   sas?: string[];
   sasPending?: boolean;

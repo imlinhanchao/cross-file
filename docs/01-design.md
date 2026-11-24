@@ -101,7 +101,7 @@
 
 规则：超过软上限 → 发送方界面弹提示「该接收方为 iPhone Safari，超过 100MB 可能无法保存」，可选「仍要发送 / 换一个接收方 / 建议对方装 App」；超过硬上限 → 拒绝。接收方确认页同样展示风险。
 
-> 2026-11-24 更新：Safari 桌面（macOS 27.0.1 Safari 27）经 TURN 中继接收 100 MB 实测通过，双方 SHA-256 一致；保存点击与 iOS 仍待验，故上限不放宽。
+> 2026-11-24 更新：Safari 桌面（macOS 27）与 iOS 27.2 模拟器 Safari 均经 TURN 接收 100 MB，双方 SHA-256 一致；接收端超软上限的风险提示由能力门禁实现。保存点击（Safari 需用户手势）与 iOS 落盘仍待人工，故上限暂不放宽。
 > 阈值初值依据见附录 A / 附录 C。Safari 15.4+ 的 Service Worker 流式下载已确认存在（WebKit bug 202142），但 StreamSaver.js 在 Safari 不可用、需自研；M1/M2 实测通过后把 Safari/iOS 软上限放宽到 500MB。接收端保存层按能力在 `native / fs / sw / blob` 四种策略里选（见 `02-protocol.md` §6.8）。
 
 ---

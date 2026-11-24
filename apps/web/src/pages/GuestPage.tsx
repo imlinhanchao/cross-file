@@ -120,6 +120,11 @@ export function GuestPage({ code }: { code?: string }) {
                   </li>
                 ))}
               </ul>
+              {state.risk?.level === "warn" ? (
+                <div className="mt-4">
+                  <WarningCard title="这台设备保存大文件有风险" body={state.risk.message} />
+                </div>
+              ) : null}
               {canAccept ? (
                 <div className="row gap-3 mt-4">
                   <button
@@ -129,7 +134,7 @@ export function GuestPage({ code }: { code?: string }) {
                     onClick={() => controller.current?.accept()}
                   >
                     <Icon name="arrow-right" size="sm" />
-                    {copy.accept}
+                    {state.risk?.level === "warn" ? "仍要接收" : copy.accept}
                   </button>
                 </div>
               ) : null}

@@ -145,6 +145,13 @@
 **剩余**：Safari 内的「保存」点击与磁盘落盘（需用户手势，未自动化）、iOS 模拟器/真机、500 MB 分级提示的端到端、直连（非中继）路径的 Safari 表现。
 **测试辅助**：`?autoaccept=1` 与 `?report=<url>` 仅在 `import.meta.env.DEV`（dev server）下生效，生产构建会被剥离；dev server 的 `/__report` 端点只在 `vite serve` 时注册。
 
+## 7.0.5 接收端能力门禁（docs/01 §6 / D16）
+
+- 接收方收到 manifest 后用自身能力包 `judgeFile(totalBytes, caps)` 判定：超**硬上限**直接回 `error TOO_LARGE` 并拒绝；超**软上限**在确认页显示风险卡（含具体 MB 与建议），按钮改为「仍要接收」。
+- 文案按平台区分：iOS 用 `docs/04` §15 的 iPhone 文案，其余用通用保守文案。
+- 自动化：`tests/e2e/capability-warn.spec.ts` 把 guest 伪装成 iPhone（UA + touch + 无 FSA），发送 150 MB → 断言 `risk.level=warn`、软上限 100 MB、按钮「仍要接收」，接收后哈希一致（21 s）。
+- Safari 桌面 100 MB 实测与 iOS 模拟器 100 MB 实测见 §7.0.4；「保存到磁盘」仍需人工点击（Safari 要求用户手势）。
+
 ## 7.1 开发链路（已实测）
 
 ```

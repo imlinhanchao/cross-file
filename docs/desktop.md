@@ -326,7 +326,9 @@ pnpm --filter @crossfile/desktop-electron exec electron-builder --linux AppImage
 # 产物：apps/desktop-electron/dist-electron/CrossFile-0.1.0-x86_64.AppImage（约 120 MB）
 ```
 
-已验证：构建成功、`--appimage-extract` 可解出 `app.asar` 与 `crossfile-desktop` 可执行文件。
+已验证：构建成功、`--appimage-extract` 可解出 `app.asar` 与启动器；并**用解包后的 AppImage 实跑接收 100 MB**：
+路径「局域网直连」，host `HASH MATCHES EXPECTED: true`（sha256 `4feb8ba7…`），落盘文件 104 857 600 B、
+sha256 完全一致，同名文件自动去重为 `ac4-100mb (1).bin`。
 注意：AppImage 运行需要 FUSE（或 `--appimage-extract-and-run`）；当前未设置自定义图标（Electron 默认图标），
 需要品牌图标时放 `build/icon.png`（512×512）再打包。
 

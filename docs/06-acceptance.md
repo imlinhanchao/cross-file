@@ -23,7 +23,7 @@
 | AC6 | 2 接收方顺序、文件×人矩阵、不并发 | ✅ | `tests/e2e/ac6-multi.spec.ts`：矩阵默认全员、guest1 完成前 guest2 不开始、两人哈希一致 |
 | AC7 | 房间结束即销毁；强杀 ≤30 min 清理 | ✅ | `tests/e2e/ac7-room-close.spec.ts`：guest 立即收 room_closed、内存房间删除、迟到 join 被拒 |
 | AC8 | 零存储审计 | ✅ | `bash tests/audit/zero-storage.sh` → RESULT PASS（strace：0 写文件、0 DB、stdout 仅 1 行）；`SKIP_BUILD=1 … --container` → PASS（只读/非 root/无 mount/EROFS/down -v 干净） |
-| AC9 | 桌面/手机壳各跑 500 MB | 🟡 壳与原生写盘已验证 / GUI 实跑待人工 | 桌面：`cargo check/test`、deb 2.49 MiB、IPC 端到端比特级正确；手机：Android target 构建 + APK 116 MB 产出；GUI 内 500 MB 需显示注入（`webkit2gtk-driver`/人工），手机需 KVM 或真机 |
+| AC9 | 桌面/手机壳各跑 500 MB | 🟡 壳与原生写盘已验证 / GUI 实跑待人工 | 桌面：`cargo check/test`、deb 2.49 MiB、IPC 端到端比特级正确；手机：Android target 构建 + APK 116 MB 产出。**GUI 实跑在 agent 沙箱内不可行**：Tauri 窗口创建后 MESA/ZINK 报错、Wayland socket 不可用（需要真实桌面会话或 `webkit2gtk-driver`+sudo）；已提供 debug-only `CROSSFILE_DEV_JOIN` 导航钩子，人工跑时设该环境变量即可自动进入房间 |
 
 ## U1–U8
 

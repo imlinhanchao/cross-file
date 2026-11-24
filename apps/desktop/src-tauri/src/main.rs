@@ -326,8 +326,25 @@ fn on_menu_event(app: &tauri::AppHandle, event: MenuEvent) {
 // Entry point
 // ---------------------------------------------------------------------------
 
+/// Debug-only acceptance harness: with CROSSFILE_DEV_JOIN set, the shell navigates
+/// the webview to that room link after load so an automated run can drive the real
+/// GUI + native save sink without input injection. Compiled out of release builds.
+#[cfg(debug_assertions)]
+fn navigation_harness(app: tauri::AppHandle) {
+    let Ok(link) = std::env::var("CROSSFILE_DEV_JOIN") else {
+        return;
+    };
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(2500));
+        if let Some(window) = app.get_webview_window("main") {
+            let script = format!("window.location.href = {link:?};");
+            let _ = window.eval(&script);
+        }
+    });
+}
+
 fn main() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::default())
         .menu(build_menu)
@@ -341,6 +358,13 @@ fn main() {
             save_close,
             save_abort,
         ])
+        ;
+    #[cfg(debug_assertions)]
+    let builder = builder.setup(|app| {
+        navigation_harness(app.handle().clone());
+        Ok(())
+    });
+    builder
         .run(tauri::generate_context!())
         .expect("CrossFile desktop shell failed to start");
 }

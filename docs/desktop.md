@@ -290,7 +290,21 @@ xvfb-run -a pnpm --filter @crossfile/desktop dev:attach   # 5 秒后 Ctrl-C
 
 ---
 
-## 5. Web 侧集成（Lead 已接线，2026-11-24）
+## 5. 自动化验收钩子（debug-only）
+
+`src/main.rs` 里有一个用 `#[cfg(debug_assertions)]` 包起来的导航钩子：设置环境变量
+`CROSSFILE_DEV_JOIN=<房间链接>` 后，应用启动约 2.5 s 会 `eval` 跳转到该链接，配合 dev server 的
+`?autoaccept=1` 即可在无人点击的情况下跑完「接收 → 原生写盘」。release 构建不包含这段代码。
+
+```bash
+cd apps/desktop
+CROSSFILE_DEV_JOIN='https://room.net.time-pack.com/r/<id>?autoaccept=1#<key>' \
+  pnpm tauri dev --config tauri.dev-attach.conf.json
+```
+
+agent 沙箱内窗口无法创建（MESA/ZINK + Wayland socket 受限），这条路径需要在真实桌面会话里跑。
+
+## 6. Web 侧集成（Lead 已接线，2026-11-24）
 
 - 能力包：`apps/web/src/lib/native.ts` 在 React 挂载前检查 `__TAURI_INTERNALS__` 并设 `window.__CROSSFILE_NATIVE__ = true`，`detectCaps()` 因此上报 `nativeShell: true` / `saveStrategies: ["native","blob"]`。
 - 保存：`createNativeSink()` 把每片明文按 offset 调 `save_write`，`save_close` 返回路径；接收完成页展示「已保存到 …」，不再生成内存 Blob。

@@ -136,6 +136,7 @@
 - 房间链接在 Safari 中打开 → 信令 join → 房主批准 → 100 MB 传输（双方 `?relay=1`，本机 coturn `turn:192.168.50.200:3478`）
 - 传输完成，路径标签「中继」；**Chrome 侧 SHA-256 与 Safari 页面上报的 SHA-256 完全一致**（`e291f56a…`，104857600 bytes），吞吐约 74 Mbps
 - 证据：宿主 `HOST DONE/HASH MATCHES EXPECTED: true`；Safari 通过 dev-only `?report=` 把自身计算结果回传（`[cf-report] tag=guest-done sha=e291f56a… path=relay`）
+- iOS 27.2 模拟器 Safari 同样通过：宿主与 iOS 端 SHA-256 均为 `a5dd4376…`，100 MB、路径 relay
 
 **为什么之前 Playwright WebKit 一直失败（已排除）**
 - Playwright 的 WebKit 二进制**不会向局域网发 UDP**：用 `stun:192.168.50.200:9999` 指向我们自己的 UDP 监听器，监听器一包都没收到；同一台机器的 Node 进程发 STUN 却能收到 coturn 响应。
@@ -172,14 +173,16 @@ https://room.net.time-pack.com  --TLS-->  nginx (既有反代)  -->  Vite :5173
 
 > 单文件 64 KiB 分片、HWM 8 MiB；加密在浏览器主线程，后续可评估 Worker 化。
 
-## 7.3 剩余工作（按优先级）
+## 7.3 剩余工作（按优先级，2026-11-24 更新）
 
-1. **AC9 补完**：桌面壳 GUI 内真实跑一次 500 MB（需有显示环境/人工，或接 tauri-driver WebDriver 自动化）；手机壳（Android AVD / iOS 模拟器）。
-2. **AC4**：Safari 接收端——macOS Safari 27（mac-mini）跑 100 MB；iOS 模拟器 Safari；自研 SW 流式下载并把 Safari/iOS 软上限从 250/100 MB 放宽到 500 MB。
-3. **M4**：官方实例部署（域名/TLS/限流/TURN 配额、`TURN_EXTERNAL_IP` 必填公网 IP）、Caddy 反代实装、隐私页已就位。
-4. **M3 收尾**：对话框组件（批准/结束/风险确认统一）、无障碍 axe 扫描与键盘走查、错误/空态文案全覆盖。
-5. **真实网络验收**：跨机同 LAN ≥60 Mbps、跨网打洞、仅中继 10 Mbps 下 500 MB <10 分钟；弱网 netem 用例。
-6. 手机壳原生保存（Android MediaStore / iOS Files）与分享面板接入。
+1. **AC9 运行态验证（阻塞于环境）**
+   - 桌面壳：GUI 内真实 500 MB 传输与写盘。本机 Wayland 有显示但没有输入注入工具；可用 `tauri-driver`（需 `sudo apt install webkit2gtk-driver`）或人工点一次。
+   - 手机壳：模拟器安装/启动/500 MB。本机无 `/dev/kvm`，需真机或带 KVM 的机器；APK 与等价 Gradle 流程已通过。
+2. **AC4 收尾（需人工手势/真机）**：Safari 内点「保存」落盘（Safari 要求用户手势，自动化会被拦）、iOS 真机保存、500 MB 分级提示在真机上的端到端。
+3. **M4 上线（需你的基础设施）**：官方实例域名/TLS/限流/TURN 配额；`TURN_EXTERNAL_IP` 必须是公网 IPv4；`infra/deploy/Caddyfile.example` 已就绪；本机 compose 已验证。
+4. **M3 打磨**：统一 Dialog（结束房间/风险确认/踢人）、axe 无障碍扫描与键盘走查、错误态文案全覆盖。
+5. **真实网络验收**：跨机同 LAN 500 MB ≥60 Mbps、仅中继 10 Mbps 下 500 MB <10 分钟、netem 弱网用例。
+6. **手机壳后续**：MediaStore 导出、分享 intent 的 JS 桥、iOS 壳（需 macOS/Xcode 构建）。
 
 ## 8. 待办（需外部输入）
 

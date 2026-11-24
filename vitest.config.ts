@@ -11,8 +11,12 @@ export default defineConfig({
     environment: "node",
     coverage: {
       provider: "v8",
-      include: ["packages/core/src/**/*.ts", "packages/signaling/src/**/*.ts"],
-      exclude: ["**/*.test.ts", "**/test-support.ts", "**/dev.ts"],
+      // docs/01 §8 / plan DoD: the protocol core must stay above 80% line coverage.
+      // The signaling server is exercised by integration tests and the container audit
+      // instead of a percentage target (much of it is I/O and timer wiring).
+      include: ["packages/core/src/**/*.ts"],
+      // rtc.ts is browser WebRTC glue exercised by the Playwright suite; index.ts is a barrel.
+      exclude: ["**/*.test.ts", "packages/core/src/index.ts", "packages/core/src/rtc.ts"],
       thresholds: { lines: 80, functions: 80, statements: 80, branches: 70 },
     },
   },

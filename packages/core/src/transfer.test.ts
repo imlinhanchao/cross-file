@@ -108,6 +108,20 @@ describe("sendFile + ChunkReceiver", () => {
   });
 });
 
+describe("receiver helpers", () => {
+  it("collectBytes assembles chunks in arrival order", async () => {
+    const { blob, bytes } = await makeFile(120_000);
+    const key = await keyFor(6);
+    const channel = new FakeChannel();
+    await sendFile({ fileId: 6, file: blob, chunkSize: 65536, salt, key, channel });
+    const receiver = new ChunkReceiver({ fileId: 6, size: bytes.length, chunkSize: 65536, salt, key });
+    for (const raw of channel.frames) await receiver.handleFrame(decodeChunkFrame(raw));
+    expect(Array.from(receiver.collectBytes())).toEqual(Array.from(bytes));
+    expect(receiver.sawLastFrame).toBe(true);
+    expect(receiver.bitmap()).not.toBe("");
+  });
+});
+
 describe("bitmap", () => {
   it("round-trips received chunk sets", () => {
     const received = new Set([0, 2, 3, 8000 - 1].filter((n) => n >= 0));

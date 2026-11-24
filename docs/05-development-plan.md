@@ -103,6 +103,8 @@
 - **500 MB：PASS，路径「中继」，SHA-256 一致**（本机回环；真实 10 Mbps 网络 <10 分钟待实网验证）
 - 复现：`E2E_RELAY=1 TURN_SECRET=... TURN_URIS='turn:127.0.0.1:3478?transport=udp' pnpm exec playwright test tests/e2e/ac2-relay.spec.ts`
 
+**覆盖率门禁**：`pnpm test:coverage` 只统计 `packages/core`（协议核心），门槛 lines/functions/statements ≥80%、branches ≥70%，当前 **91.78% / 89.74% / 91.78% / 86.01%**（`rtc.ts` 浏览器 WebRTC 胶水由 Playwright 覆盖、`index.ts` 是 barrel，二者排除并注明原因）；已接入 `pnpm gate` 与 CI。
+
 **AC8（零存储）**：`bash tests/audit/zero-storage.sh` → local 模式 RESULT PASS（strace：无 O_WRONLY/O_CREAT、无文件 write、无 DB 路径、stdout 仅 1 行、cwd 为空）；`SKIP_BUILD=1 bash tests/audit/zero-storage.sh --container` → 容器模式 RESULT PASS（read-only rootfs、非 root、0 mount、CapDrop ALL、no-new-privileges、EROFS 写入失败、down -v 干净）。
 
 ## 7.0.1 桌面壳（Tauri 2）实测

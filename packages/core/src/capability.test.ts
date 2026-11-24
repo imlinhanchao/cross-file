@@ -95,6 +95,27 @@ describe("limits table (docs/01 §6)", () => {
   });
 });
 
+describe("detectCaps defaults", () => {
+  it("detectCaps() works with no arguments in a bare Node process", () => {
+    const caps = detectCaps();
+    expect(caps.saveStrategies).toContain("blob");
+    expect(typeof caps.secureContext).toBe("boolean");
+  });
+
+  it("falls back safely when no browser globals are available", () => {
+    const caps = detectCaps({});
+    expect(caps.uaFamily).toBe("unknown");
+    expect(caps.secureContext).toBe(false);
+    expect(caps.saveStrategies).toEqual(["blob"]);
+    expect(caps.screen).toBe("desktop");
+  });
+
+  it("marks a touch device with a narrow screen as phone", () => {
+    const caps = detectCaps({ userAgent: UA.androidChrome, maxTouchPoints: 5, screenWidth: 390 });
+    expect(caps.screen).toBe("phone");
+  });
+});
+
 describe("judgeFile", () => {
   const iphone = detectCaps({
     userAgent: UA.iphoneSafari,

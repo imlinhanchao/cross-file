@@ -17,7 +17,7 @@ jobs:
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
-      - run: pnpm test
+      - run: pnpm test:coverage
       - run: pnpm gate:contrast
       - run: pnpm gate:colors
       - run: pnpm --filter @crossfile/web build

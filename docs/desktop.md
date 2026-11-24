@@ -300,6 +300,22 @@ Ubuntu 24.04 的 `webkit2gtk-4.1` 构建默认关闭 WebRTC，所以 **Linux 桌
 - Linux 用户请用 Chrome/Edge/Safari 打开自托管单源地址（`http://<host>:8788`），或使用 Windows/macOS 桌面壳；
 - 细节与后续可选项见 `docs/adr/0008-linux-webkitgtk-without-webrtc.md`。
 
+### 5.1 Linux 可用方案：Electron 壳（ADR 0009）
+
+`apps/desktop-electron/` 用 Electron（自带 Chromium，含 WebRTC）作为 Linux 桌面壳；preload 暴露与 Tauri
+相同的 `__TAURI__` 桥，所以 Web 代码无需分支。IPC 与本文 §4 命令完全一致，保存目录为系统「下载」目录。
+
+```bash
+# 作为接收方（示例：带开发钩子的房间链接）
+CROSSFILE_URL='http://127.0.0.1:5173/r/<id>?debug=1&autoaccept=1#<key>' \
+  HOME=$PWD/.cache/app-home ./node_modules/.bin/electron apps/desktop-electron --no-sandbox
+
+# 正常使用：指向自托管单源地址
+CROSSFILE_URL='http://127.0.0.1:8788' ./node_modules/.bin/electron apps/desktop-electron
+```
+
+实测：100 MB 与 **500 MB** 均通过，落盘文件 sha256 与发送方一致（AC9 Linux 侧）。
+
 ## 6. 自动化验收钩子（debug-only）
 
 `src/main.rs` 里有一个用 `#[cfg(debug_assertions)]` 包起来的导航钩子：设置环境变量

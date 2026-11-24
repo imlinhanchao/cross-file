@@ -28,6 +28,9 @@ pnpm --filter @crossfile/desktop build:nobundle   # 只出二进制
 pnpm --filter @crossfile/desktop build            # deb/rpm 等安装包
 pnpm --filter @crossfile/desktop dev              # 开发模式（自带 Web dev server）
 
+# Linux 桌面壳（Tauri 的 WebKitGTK 无 WebRTC，改用 Electron；见 docs/desktop.md §5.1）
+CROSSFILE_URL='http://127.0.0.1:8788' ./node_modules/.bin/electron apps/desktop-electron
+
 # 手机壳（Android；需 JDK+SDK+NDK，见 docs/mobile.md）
 source scripts/dev-env.sh
 pnpm --filter @crossfile/mobile android:init       # 首次生成 android 工程

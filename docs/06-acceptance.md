@@ -23,7 +23,7 @@
 | AC6 | 2 接收方顺序、文件×人矩阵、不并发 | ✅ | `tests/e2e/ac6-multi.spec.ts`：矩阵默认全员、guest1 完成前 guest2 不开始、两人哈希一致 |
 | AC7 | 房间结束即销毁；强杀 ≤30 min 清理 | ✅ | `tests/e2e/ac7-room-close.spec.ts`：guest 立即收 room_closed、内存房间删除、迟到 join 被拒 |
 | AC8 | 零存储审计 | ✅ | `bash tests/audit/zero-storage.sh` → RESULT PASS（strace：0 写文件、0 DB、stdout 仅 1 行）；`SKIP_BUILD=1 … --container` → PASS（只读/非 root/无 mount/EROFS/down -v 干净） |
-| AC9 | 桌面/手机壳各跑 500 MB | 🟡 壳与原生写盘已验证；**Linux 桌面壳无法做 WebRTC**（见 ADR 0008）/ 手机缺真机 | 桌面：`cargo check/test`、deb 2.49 MiB、IPC 端到端比特级正确；实测 Tauri 2 在 Ubuntu 的 WebKitGTK **没有 `RTCPeerConnection`**，所以 Linux 桌面壳不能传输——Web 端已加诚实预检（e2e 固化），文档建议 Linux 用 Chrome/Edge/Safari；Windows/macOS 壳待真机验证。手机：Android target 构建 + APK 116 MB 产出，运行需真机或 KVM |
+| AC9 | 桌面/手机壳各跑 500 MB | ✅ Linux 桌面（Electron）/ 🟡 Windows·macOS（Tauri）与手机待真机 | **Linux 桌面壳：Electron（Chromium）500 MB 通过**——路径「局域网直连」、host SHA-256 `ccd606e7…`、落盘文件 524 288 000 B 且 sha256 完全一致（ADR 0009）。Tauri 2 在 Ubuntu 的 WebKitGTK **没有 `RTCPeerConnection`**（ADR 0008），Web 端已加诚实预检；Windows/macOS 用 Tauri 壳但未实机验证。手机：Android APK 116 MB 产出，运行需真机/KVM |
 
 ## U1–U8
 

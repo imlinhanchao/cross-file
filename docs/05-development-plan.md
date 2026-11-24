@@ -179,6 +179,15 @@
   Linux 桌面壳文档改为「用浏览器打开单源地址」，Windows/macOS 壳待真机复验。
 - AC9 在 Linux 上的 500 MB GUI 实跑因此**不可达**，除非改用 Electron/CEF 或自带 WebRTC 的 WebKit；列入 v2 评估。
 
+## 7.0.9 Linux 桌面壳：Electron 方案（AC9 达成）
+
+ADR 0009：`apps/desktop-electron/` 用 Electron（Chromium）替代 WebKitGTK 壳，preload emulates Tauri 的
+`window.__TAURI__` 桥，前端零改动。实测：
+- 100 MB：host `HASH MATCHES EXPECTED: true`，落盘文件 sha256 一致；
+- **500 MB：路径「局域网直连（lan）」，host `sha256=ccd606e7…`，落盘 524 288 000 B、sha256 完全一致**；
+- 复现：`CROSSFILE_URL=<link> HOME=<writable dir> electron apps/desktop-electron --no-sandbox`。
+剩余：Windows/macOS 的 Tauri 壳真机验证；Linux Electron 打包产物（AppImage）与签名。
+
 ## 7.1 开发链路（已实测）
 
 ```

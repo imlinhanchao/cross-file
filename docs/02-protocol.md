@@ -406,4 +406,5 @@ offset  size  field
   `judgeFile` 在平台阈值之外还会用配额判断（超配额的 80% 警告、超配额拒绝），避免承诺存不下的文件；
 - §2.3「H 校验 proof」已落地：proof 无效时 host 直接 `deny(PROOF_INVALID)`；
 - 能力阈值按 `docs/01` §6 表执行（iOS 先于 Safari 判断），规则在 `packages/core/src/capability.ts` 有单测；
-- SAS 的 60 s 未确认超时由 UI 层计时器承担（v1 尚未实现计时，关闭页面即中止）。
+- SAS 的 60 s 未确认超时已实现：guest 与 host 各自计时，超时置 `error`、关闭数据通道/房间并提示重新配对；
+  e2e 用 dev-only `?sasTimeoutMs=` 覆盖缩短等待（默认仍 60 s）。

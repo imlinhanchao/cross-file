@@ -28,6 +28,7 @@ import {
 import { copy, errorText, formatBytes } from "@crossfile/ui";
 import { installNativeShellHooks, setTransferActive } from "./native.js";
 import { probeCaps } from "./caps.js";
+import { sasTimeoutMs, startTimeout, type TimeoutGuard } from "./timeout.js";
 import { SignalingSocket, deferred, withTimeout } from "./signal.js";
 import { useApp } from "../store.js";
 
@@ -57,10 +58,13 @@ interface GuestPeer {
   hasKey: boolean;
   sasGuestConfirmed: boolean;
   sasHostConfirmed: boolean;
+  sasTimer: TimeoutGuard | null;
   keySent: boolean;
 }
 
 export class HostController {
+  /** Set when an unrecoverable condition ends this room; later events must not revive it. */
+  private aborted = false;
   private readonly identity = createRoomIdentity();
   private readonly sessionKey = deriveSessionKey(
     this.identity.roomKey,
@@ -213,6 +217,7 @@ export class HostController {
   }
 
   private async onMessage(message: ServerMessage): Promise<void> {
+    if (this.aborted) return;
     const store = useApp.getState();
     switch (message.type) {
       case "created": {
@@ -332,6 +337,7 @@ export class HostController {
       hasKey,
       sasGuestConfirmed: false,
       sasHostConfirmed: false,
+      sasTimer: null,
       keySent: false,
     };
     this.peers.set(guestId, guest);
@@ -382,6 +388,7 @@ export class HostController {
           if (this.fileList.length > 0) void this.sendManifest(guestId, guest);
         } else {
           const sas = sasFromPeerConnection(handles.pc);
+          this.armGuestSasTimeout(guestId, guest);
           useApp.getState().patch({
             sas: sas ?? ["❓", "❓", "❓", "❓"],
             sasPending: true,
@@ -461,6 +468,7 @@ export class HostController {
   }
 
   private onCtrl(guestId: string, raw: unknown): void {
+    if (this.aborted) return;
     let message: CtrlMessage;
     try {
       message = parseCtrlMessage(
@@ -512,6 +520,8 @@ export class HostController {
       }
       case "sas-confirm":
         guest.sasGuestConfirmed = true;
+        guest.sasTimer?.cancel();
+        guest.sasTimer = null;
         this.maybeSendRoomKey(guestId, guest);
         break;
       case "key-ok":
@@ -526,10 +536,7 @@ export class HostController {
         break;
       case "error":
         // A receiver-side refusal (TOO_LARGE / CAPABILITY_RISK_DECLINED) ends the transfer.
-        useApp.getState().patch({
-          phase: "error",
-          error: errorText(message.code, message.msg),
-        });
+        this.abortTransfer(errorText(message.code, message.msg));
         break;
       default:
         break;
@@ -691,6 +698,28 @@ export class HostController {
         .patch({ phase: "error", error: outcome.error ?? copy.verifyFailed });
       throw new Error(outcome.error ?? copy.verifyFailed);
     }
+  }
+
+  /** docs/02 §4.5: an unconfirmed SAS pair is abandoned after 60 s. */
+  private armGuestSasTimeout(guestId: string, guest: GuestPeer): void {
+    guest.sasTimer?.cancel();
+    guest.sasTimer = startTimeout(sasTimeoutMs(), () => {
+      guest.sasTimer = null;
+      if (this.aborted) return;
+      this.aborted = true;
+      useApp.getState().patch({
+        phase: "error",
+        error: "安全码确认超时（60 秒），已中止这次连接。请重新创建房间。",
+      });
+      this.remove(guestId);
+    });
+  }
+
+  /** A receiver refusal is also terminal for this room. */
+  private abortTransfer(error: string): void {
+    if (this.aborted) return;
+    this.aborted = true;
+    useApp.getState().patch({ phase: "error", error });
   }
 }
 

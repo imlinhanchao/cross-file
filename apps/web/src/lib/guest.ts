@@ -32,6 +32,7 @@ import {
   type SaveSink,
 } from "./native.js";
 import { probeCaps } from "./caps.js";
+import { sasTimeoutMs, startTimeout, type TimeoutGuard } from "./timeout.js";
 import { SignalingSocket, withTimeout } from "./signal.js";
 import { useApp } from "../store.js";
 
@@ -49,6 +50,7 @@ export class GuestController {
   private readonly joinCode?: string;
   private codeMode = false;
   private sasConfirmedByMe = false;
+  private sasTimer: TimeoutGuard | null = null;
   private readonly socket = new SignalingSocket();
   private peer?: Peer;
   private handles?: PeerHandles;
@@ -164,9 +166,31 @@ export class GuestController {
   }
 
   /** Guest side of the 4-emoji check; unlocks the roomKey hand-over. */
+  private armSasTimeout(): void {
+    this.sasTimer?.cancel();
+    this.sasTimer = startTimeout(sasTimeoutMs(), () => this.failSasTimeout());
+  }
+
+  private failSasTimeout(): void {
+    this.sasTimer?.cancel();
+    this.sasTimer = null;
+    const state = useApp.getState();
+    if (state.phase === "done" || state.phase === "error") return;
+    state.patch({
+      phase: "error",
+      error:
+        "安全码确认超时（60 秒），已中止这次连接。请重新扫码，或让对方重新发一次。",
+    });
+    this.handles?.pc.close();
+    this.handles?.ctrl.close();
+    this.socket?.close();
+  }
+
   confirmSas(): void {
     if (this.sasConfirmedByMe || !this.handles) return;
     this.sasConfirmedByMe = true;
+    this.sasTimer?.cancel();
+    this.sasTimer = null;
     this.handles.ctrl.send(JSON.stringify({ v: 1, type: "sas-confirm" }));
     useApp.getState().patch({ sasConfirmedByMe: true });
   }
@@ -244,10 +268,14 @@ export class GuestController {
         break;
       }
       case "room_closed": {
+        // A more specific error (SAS timeout, host removal) already explains the end.
+        if (useApp.getState().phase === "error") break;
         store.patch({
           phase: "error",
           roomClosed: true,
-          error: copy.roomClosed,
+          error: useApp.getState().sasPending
+            ? "安全码没有确认，房间已结束。请重新扫码加入。"
+            : copy.roomClosed,
         });
         break;
       }
@@ -304,6 +332,7 @@ export class GuestController {
 
         if (this.codeMode && this.sessionKey.length === 0) {
           const sas = sasFromPeerConnection(handles.pc);
+          this.armSasTimeout();
           useApp.getState().patch({
             sas: sas ?? ["❓", "❓", "❓", "❓"],
             sasPending: true,
@@ -419,6 +448,8 @@ export class GuestController {
         useApp
           .getState()
           .patch({ sas: undefined, sasPending: false, hasKey: true });
+        this.sasTimer?.cancel();
+        this.sasTimer = null;
         break;
       }
       case "done": {

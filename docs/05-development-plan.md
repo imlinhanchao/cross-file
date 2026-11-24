@@ -209,6 +209,12 @@ ADR 0009：`apps/desktop-electron/` 用 Electron（Chromium）替代 WebKitGTK �
   接收端在写入任何字节前拒绝（提示约 5 MB），发送端同步进入 error；`m0` 断言 caps 里带真实 quota。
 - 无障碍：axe 扫描新增**暗色主题**一轮（host 房间 light + dark 均 0 serious/critical）。
 
+## 7.0.11 SAS 确认超时（已完成）
+
+docs/02 §4.5 的 60 秒未确认超时落地：guest 收到 4 emoji 后计时，host 在发出 SAS 后也计时；
+超时即 `error` 状态、关闭连接（host 同时移除 guest），文案给下一步；e2e `sas-timeout.spec.ts`
+用 `?sasTimeoutMs=800` 在 6 秒内验证「双方都中止且都有可行动提示」。新增 `timeout.test.ts` 2 个单测。
+
 ## 7.1 开发链路（已实测）
 
 ```

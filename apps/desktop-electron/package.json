@@ -7,5 +7,8 @@
   "scripts": {
     "start": "electron .",
     "start:no-sandbox": "electron . --no-sandbox"
+  },
+  "devDependencies": {
+    "electron": "^45.4.1"
   }
 }

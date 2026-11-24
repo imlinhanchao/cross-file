@@ -25,7 +25,7 @@ import {
   type ServerMessage,
   type TurnCredential,
 } from "@crossfile/core";
-import { copy, formatBytes } from "@crossfile/ui";
+import { copy, errorText, formatBytes } from "@crossfile/ui";
 import { installNativeShellHooks, setTransferActive } from "./native.js";
 import { SignalingSocket, deferred, withTimeout } from "./signal.js";
 import { useApp } from "../store.js";
@@ -236,7 +236,7 @@ export class HostController {
         break;
       }
       case "error": {
-        store.patch({ phase: "error", error: `${message.code}: ${message.msg}` });
+        store.patch({ phase: "error", error: errorText(message.code, message.msg) });
         break;
       }
       default:
@@ -429,7 +429,7 @@ export class HostController {
         this.startTransferOnce(guestId, guest);
         break;
       case "error":
-        useApp.getState().patch({ error: `${message.code}: ${message.msg}` });
+        useApp.getState().patch({ error: errorText(message.code, message.msg) });
         break;
       default:
         break;

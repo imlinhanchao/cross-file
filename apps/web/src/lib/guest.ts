@@ -23,7 +23,7 @@ import {
   type ClientMessage,
   type ServerMessage,
 } from "@crossfile/core";
-import { copy } from "@crossfile/ui";
+import { copy, errorText } from "@crossfile/ui";
 import { createNativeSink, installNativeShellHooks, isNativeShell, setTransferActive, type SaveSink } from "./native.js";
 import { SignalingSocket, withTimeout } from "./signal.js";
 import { useApp } from "../store.js";
@@ -179,7 +179,7 @@ export class GuestController {
         break;
       }
       case "join_rejected": {
-        store.patch({ phase: "error", error: `${message.code}: ${message.reason}` });
+        store.patch({ phase: "error", error: errorText(message.code, message.reason) });
         break;
       }
       case "signal": {
@@ -196,7 +196,7 @@ export class GuestController {
         break;
       }
       case "error": {
-        store.patch({ phase: "error", error: `${message.code}: ${message.msg}` });
+        store.patch({ phase: "error", error: errorText(message.code, message.msg) });
         break;
       }
       default:
@@ -333,7 +333,7 @@ export class GuestController {
         break;
       }
       case "error": {
-        store.patch({ phase: "error", error: `${message.code}: ${message.msg}` });
+        store.patch({ phase: "error", error: errorText(message.code, message.msg) });
         break;
       }
       default:

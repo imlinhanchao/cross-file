@@ -59,6 +59,30 @@ export const copy = {
 
 export type CopyKey = keyof typeof copy;
 
+/**
+ * Protocol error codes (docs/02 §3.6) translated into user-facing copy that always
+ * says what to do next (docs/04 §15: 不夸张、给下一步).
+ */
+const ERROR_COPY: Record<string, string> = {
+  ROOM_NOT_FOUND: "房间不存在或已过期。请重新扫码，或让对方重新建一个房间。",
+  ROOM_CLOSED: "房间已结束。请让对方重新建一个房间，再扫码加入。",
+  ROOM_FULL: "房间的接收方已经满了。请让对方移除一个接收方，或稍后再试。",
+  PROOF_INVALID: "这次加入的凭证无效，可能有人在冒充。已拒绝，请重新扫描对方的二维码。",
+  SAS_MISMATCH: "安全码不一致，连接可能被中间人劫持。已中止传输，请重新建房。",
+  TOO_LARGE: "这个文件超过对方设备能接收的上限。请让对方改用电脑接收，或安装 App。",
+  CAPABILITY_RISK_DECLINED: "对方设备无法可靠保存这么大的文件，接收方拒绝了这次传输。请改用电脑接收，或让对方安装 App。",
+  HASH_MISMATCH: "校验没通过，文件可能损坏。已停止保存，请让对方重发一次。",
+  TIMEOUT: "连接超时。请检查网络后重试，或让对方重新加入。",
+  PEER_GONE: "对方已经断开了。请重新扫码加入，或让对方重新发一次。",
+  RATE_LIMITED: "操作太频繁了，请稍等一会儿再试。",
+  BAD_MESSAGE: "通信协议出错。请刷新页面重试；如果一直失败，请报告这个问题。",
+};
+
+export function errorText(code: string | undefined, fallback?: string): string {
+  if (!code) return fallback ?? copy.errorGeneric;
+  return ERROR_COPY[code] ?? fallback ?? copy.errorGeneric;
+}
+
 export function pathLabel(path: "lan" | "direct" | "relay"): string {
   return path === "lan" ? copy.pathLan : path === "direct" ? copy.pathDirect : copy.pathRelay;
 }

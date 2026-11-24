@@ -347,3 +347,61 @@ offset  size  field
 | 续传窗口 | 60 s | 移动端锁屏/切后台实测 |
 | 能力阈值 | §5 表 | 各平台 500MB 实测成功/失败边界 |
 | 心跳间隔 | 20 s | 移动网络省电与房间存活平衡 |
+
+---
+
+## 10. 实现注记（v1 落地时补的定义，与上文同为事实源）
+
+上文未定义的字段/行为在实现时按下列约定补全；代码位置一并给出，改动需同步本表。
+
+### 10.1 信令消息
+
+| 位置 | 补全 | 代码 |
+|---|---|---|
+| `created` | 增加 `code`（6 位数字字符串，加入用短码，10 min、单次） | `packages/signaling/src/rooms.ts` / `shortcode.ts` |
+| `join.roomId` | 允许直接传 6 位数字码；服务端在 schema 校验前映射为 roomId | `packages/signaling/src/server.ts` |
+| `join_ok` | `peerCaps` 表示**对端**能力（host 收 guestCaps，guest 收 hostCaps）；`turn` 在未配置 coturn 时可缺省 | `packages/signaling/src/server.ts` / `packages/core/src/protocol.ts` |
+| `signal.to` | guest→host 可用哨兵 `"host"`（guest 不知道 hostPeerId）；host→guest 用 `guestId` | 同上 |
+| host 重连 | 同 roomId 且原 host socket 已断时，`create` 视为重连：沿用房间/guest/短码 | `packages/signaling/src/server.ts` |
+| 房间清理 | host socket 断开不立即销毁（保留 60 s 续传窗口），由 ≤30 min 空闲 TTL 统一清理 | 同上 |
+
+### 10.2 控制通道（ctrl，JSON 文本帧）
+
+统一形如 `{ "v": 1, "type": "<name>", ... }`：
+
+| type | 字段 | 说明 |
+|---|---|---|
+| `hello` | `guestCaps` | 通道建立后 guest 先发 |
+| `manifest` | `files[{id,name,size,mime,chunk,chunkCount,salt}], totalSize, chunkNegotiation` | `salt` 为 4 B base64；只含该接收方被勾选的文件 |
+| `accept` | `fileIds[]` | 接收方确认接收的文件 |
+| `bitmap` | `fileId, bits` | base64，1 bit/片，1=已收到；用于续传补片 |
+| `progress` | `fileId, seq` | 发送侧每 100 片一次（仅 UI） |
+| `done` | `fileId, sha256, chunkCount` | 发送完毕，附全文件摘要 |
+| `ack` | `fileId, ok, error?` | 接收方校验结果 |
+| `error` | `code, msg, fileId?` | 见 §3.6 错误码 |
+| `pause` / `resume` | — | 预留（v1 UI 未暴露） |
+| `sas-confirm` | — | 6 位码路径：接收方确认 4 emoji 一致 |
+| `room-key` | `key, roomId` | 双方都确认后 host 经 ctrl 下发 roomKey（base64url，32 B）与 roomId |
+| `key-ok` | — | 接收方收到密钥并派生 sessionKey 后回执 |
+
+### 10.3 分片与续传
+
+- 实际分片大小 = `min(chunk, sctp.maxMessageSize - 12 - 16)`（`effectiveChunkSize`），manifest 必须宣告该值；
+- 发送方在发 manifest 前对每个文件**预先计算**全文件 SHA-256（续传时复用），发送循环本身不维护哈希；
+- 续传：接收方发 `bitmap`，发送方只重发缺失片，`fileId`/`seq`/nonce 不变（密文可逐字节相同），随后重新发 `done`；
+- 发送方在 60 s 窗口内以同 roomId 重新建连（host 重连），接收方保留 receiver 状态。
+
+### 10.4 保存层实现状态
+
+| 策略 | 状态 |
+|---|---|
+| `blob` | ✅ 已实现（默认兜底） |
+| `native` | ✅ 已实现：Tauri 桌面/手机壳 `save_open/save_write(offset)/save_close/save_abort`，按偏移随机写 |
+| `fs` | ✅ 已实现：`showSaveFilePicker` + 按偏移写（Chromium 桌面） |
+| `sw` | ⏳ 未实现（M2 待做，见 ADR 0002；Safari/iOS 大文件保存依赖它） |
+
+### 10.5 与上文的其他差异
+
+- §2.3「H 校验 proof」已落地：proof 无效时 host 直接 `deny(PROOF_INVALID)`；
+- 能力阈值按 `docs/01` §6 表执行（iOS 先于 Safari 判断），规则在 `packages/core/src/capability.ts` 有单测；
+- SAS 的 60 s 未确认超时由 UI 层计时器承担（v1 尚未实现计时，关闭页面即中止）。

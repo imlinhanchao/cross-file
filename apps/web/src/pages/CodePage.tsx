@@ -46,7 +46,7 @@ export function CodePage() {
               className="input code-digits"
               inputMode="numeric"
               autoComplete="one-time-code"
-              maxLength={7}
+              maxLength={12}
               value={digits}
               data-testid="code-input"
               onChange={(event) => {

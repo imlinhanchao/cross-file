@@ -13,6 +13,7 @@ import { resolve } from "node:path";
 const SIZE_MB = Number(process.argv[2] ?? 10);
 const BASE = process.env.DEBUG_BASE_URL ?? "http://127.0.0.1:5175";
 const RELAY = process.env.DEBUG_RELAY === "1";
+const MAX_WAIT_MS = Number(process.env.DEBUG_MAX_SECONDS ?? 120) * 1000;
 const bytes = randomBytes(SIZE_MB * 1024 * 1024);
 const expected = createHash("sha256").update(bytes).digest("hex");
 console.log("expected sha256:", expected, "size:", bytes.length);
@@ -99,7 +100,7 @@ for (;;) {
     last = line;
   }
   if (state.phase === "done" || state.phase === "error") break;
-  if (Date.now() - started > 120_000) {
+  if (Date.now() - started > MAX_WAIT_MS) {
     console.log("TIMEOUT");
     break;
   }

@@ -1,0 +1,4 @@
+/* CrossFile web shell — token + component styles come from the design system. */
+@import "../../../../design/tokens/tokens.css";
+@import "../../../../design/base.css";
+@import "./app.css";

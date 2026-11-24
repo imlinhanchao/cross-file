@@ -1,0 +1,23 @@
+# dependencies / build output
+node_modules/
+dist/
+.target/
+build/
+*.tsbuildinfo
+
+# tooling caches
+.hvigor/
+.hvigor-cache/
+.DS_Store
+
+# secrets / local config
+.env
+.env.local
+
+# playwright browsers (installed into the workspace, see scripts/dev-env.sh)
+.cache/
+
+# test artefacts
+test-results/
+playwright-report/
+playwright/.cache/

@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CrossFile · 发送方房间（浅色）</title>
+<link rel="stylesheet" href="../tokens/tokens.css">
+<link rel="stylesheet" href="../base.css">
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <span class="brand">
+      <span class="brand-mark" aria-hidden="true">{{ICON:send}}</span>
+      CrossFile
+    </span>
+    <span class="pill pill--secure">{{ICON:shield-check}}<span>端到端加密</span></span>
+    <span class="topbar__spacer"></span>
+    <button class="icon-btn" type="button" aria-label="复制房间链接">{{ICON:link}}</button>
+    <button class="btn btn--ghost" type="button">结束房间</button>
+  </header>
+
+  <main class="shell">
+    <div class="room-grid">
+
+      <!-- left: files to send ------------------------------------------- -->
+      <section class="stack gap-5" aria-labelledby="room-title">
+        <div class="stack gap-2">
+          <p class="eyebrow">房间已创建 · 剩余 12:34</p>
+          <h1 id="room-title" class="display">把文件发给谁？</h1>
+          <p class="lead">对方扫码或打开链接即可接收，无需安装任何东西。文件直接在你的设备和对方设备之间传输。</p>
+        </div>
+
+        <div class="dropzone" role="button" tabindex="0">
+          <span class="dropzone__icon">{{ICON:upload}}</span>
+          <span style="font-weight:600; color:var(--text-primary)">拖入文件，或点击选择</span>
+          <span class="small muted">单个文件 ≤ 500 MB · 单次总计 ≤ 2 GB</span>
+        </div>
+
+        <div class="card">
+          <div class="card__head">
+            <span class="card__title">已选 2 个文件</span>
+            <span class="card__hint">共 498.6 MB</span>
+            <span class="spacer"></span>
+            <button class="btn btn--ghost btn--sm" type="button">清空</button>
+          </div>
+
+          <ul class="file-list">
+            <li class="file-row">
+              <span class="file-tile">{{ICON:file-video}}</span>
+              <span class="stack" style="gap:2px; min-width:0">
+                <span class="file-name">product-demo-4k.mp4</span>
+                <span class="file-meta">486.2 MB · 视频</span>
+              </span>
+              <span class="row gap-1 wrap" aria-label="发送给">
+                <span class="chip-toggle" data-checked="true">{{ICON:check}}Mira 的 MacBook</span>
+                <span class="chip-toggle" data-disabled="true">Mira 的 iPhone（待批准）</span>
+              </span>
+            </li>
+            <li class="file-row">
+              <span class="file-tile">{{ICON:file-text}}</span>
+              <span class="stack" style="gap:2px; min-width:0">
+                <span class="file-name">brief-final.pdf</span>
+                <span class="file-meta">12.4 MB · PDF</span>
+              </span>
+              <span class="row gap-1 wrap" aria-label="发送给">
+                <span class="chip-toggle" data-checked="true">{{ICON:check}}Mira 的 MacBook</span>
+                <span class="chip-toggle" data-disabled="true">Mira 的 iPhone（待批准）</span>
+              </span>
+            </li>
+          </ul>
+
+          <p class="note mt-4">{{ICON:lock}}<span>文件不经过服务器存储，房间结束后不留下任何副本</span></p>
+        </div>
+
+        <div class="signal-rule" aria-hidden="true"></div>
+        <p class="small muted">按 <span class="kbd">⌘</span> <span class="kbd">⏎</span> 开始发送 · 对方需保持页面打开</p>
+      </section>
+
+      <!-- right: join + receivers --------------------------------------- -->
+      <aside class="stack gap-4">
+        <section class="card qr-card" aria-labelledby="qr-title">
+          <div class="card__head" style="margin-bottom:0">
+            <span class="card__title" id="qr-title">扫码加入</span>
+            <span class="spacer"></span>
+            <span class="pill">{{ICON:wifi}}<span>局域网优先</span></span>
+          </div>
+
+          <div class="qr-frame">{{QR}}</div>
+
+          <div class="join-line">
+            {{ICON:link}}
+            <span class="url">crossfile.app/r/7QK2M9</span>
+            <span class="spacer"></span>
+            <button class="icon-btn" type="button" aria-label="复制链接" style="width:36px;height:36px">{{ICON:copy}}</button>
+          </div>
+
+          <div class="code-block">
+            <span class="code-digits" aria-label="6 位房间码 482913">482 913</span>
+            <span class="code-label">
+              <span class="eyebrow">或输入 6 位码</span>
+              <span class="small muted">10 分钟内有效</span>
+            </span>
+          </div>
+
+          <p class="note">{{ICON:shield-check}}<span>密钥只在这张码里，服务器看不到</span></p>
+        </section>
+
+        <section class="card" aria-labelledby="recv-title">
+          <div class="card__head">
+            <span class="card__title" id="recv-title">接收方 1/4</span>
+            <span class="spacer"></span>
+            <span class="card__hint">加入需你批准</span>
+          </div>
+
+          <ul class="receiver-list">
+            <li class="receiver">
+              <span class="receiver__tile">{{ICON:laptop}}</span>
+              <span class="stack" style="gap:1px; min-width:0">
+                <span class="receiver__name">Mira 的 MacBook</span>
+                <span class="receiver__meta">Safari · 已加入 · 等待发送</span>
+              </span>
+              <span class="path-badge path-badge--lan"><span class="dot"></span>局域网</span>
+            </li>
+
+            <li class="receiver receiver--pending">
+              <span class="receiver__tile">{{ICON:smartphone}}</span>
+              <span class="stack" style="gap:1px; min-width:0">
+                <span class="receiver__name">Mira 的 iPhone</span>
+                <span class="receiver__meta">Safari · 请求加入</span>
+              </span>
+              <span class="receiver__actions">
+                <button class="btn btn--primary btn--sm" type="button">批准</button>
+                <button class="btn btn--ghost btn--sm" type="button">拒绝</button>
+              </span>
+            </li>
+          </ul>
+        </section>
+      </aside>
+    </div>
+  </main>
+
+  <div class="sticky-bar">
+    <span class="small secondary">发给 1 个接收方 · 共 498.6 MB</span>
+    <span class="spacer"></span>
+    <button class="btn btn--secondary" type="button">{{ICON:plus}}添加文件</button>
+    <button class="btn btn--primary btn--lg" type="button">{{ICON:arrow-right}}开始发送</button>
+  </div>
+</div>
+</body>
+</html>

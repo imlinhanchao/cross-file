@@ -1,0 +1,76 @@
+/* App-local glue only. Colors must come from tokens (docs/04 §16). */
+
+.icon-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* spacing helpers referenced by pages (design/base.css ships 1/4/6 only) */
+.gap-2 { gap: var(--space-2); }
+.gap-3 { gap: var(--space-3); }
+.gap-5 { gap: var(--space-5); }
+
+.dropzone--active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.qr-frame svg.qr-svg {
+  width: 184px;
+  height: 184px;
+  display: block;
+}
+
+.qr-frame svg.qr-svg path {
+  fill: var(--qr-fg);
+}
+
+.qr-frame > div {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mini-track {
+  display: inline-block;
+  width: 72px;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--bg-inset);
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.mini-bar {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+  transition: width var(--dur-base) var(--ease-out);
+}
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 96px;
+  transform: translateX(-50%);
+  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-full);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-2);
+  font-size: var(--text-small);
+  color: var(--text-primary);
+  z-index: 40;
+}
+
+.receiver__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+@media (max-width: 960px) {
+  .room-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

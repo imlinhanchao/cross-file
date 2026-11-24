@@ -192,7 +192,12 @@ ADR 0009：`apps/desktop-electron/` 用 Electron（Chromium）替代 WebKitGTK �
 - 在 mac-mini 上从 LAN 拉取仓库：`pnpm install --frozen-lockfile` ✅（修掉 Electron 壳缺 importer 的锁文件缺陷后）、`pnpm --filter @crossfile/web build` ✅、`cargo build --no-default-features` ✅、`tauri dev` 窗口启动 ✅；
 - 新增 shell 日志 `[shell] page load start/false url=…` 证明 WKWebView 已加载房间页；
 - 端到端 100 MB 未跑完：非交互 shell 启动 GUI 需要经 Terminal（已用 `open -a Terminal` 绕过），但房间链接每 600 s 轮换与 GUI 冷启动存在时序竞争；下一步可用「先用 blank 页预热、再固定房间 15 分钟」的编排重试。
-- 结论：macOS Tauri 壳的构建链已打通，传输验证待补（Linux 已由 Electron 达成 AC9）。
+- 深挖（debug 探针，macOS WKWebView 内取证）：页面加载完成、**React 已挂载**（#root 1885 字符）、
+  `window.__crossfile` 存在、`error` 事件列表为空、**wss:// 连接可以建立**（探针 open）；`CROSSFILE_DEV_JOIN`
+  harness 导航后 URL 的 `#fragment` 也保留。但接收页的 Controller 没有发起房间加入（host 端零 guest、
+  也没有周期诊断上报），原因未定——下一步用 Safari 远程检查器看 WebKit 控制台，或改用生产单源构建
+  （`tauri build` + 内嵌 dist）再验。
+- 结论：macOS Tauri 壳「构建 + 窗口 + 页面 + 网络」已证明，**传输链路仍未打通**；Linux 已由 Electron 达成 AC9。
 
 ## 7.1 开发链路（已实测）
 

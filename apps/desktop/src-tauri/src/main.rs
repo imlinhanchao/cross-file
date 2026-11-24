@@ -349,9 +349,21 @@ fn main() {
         .manage(AppState::default())
         .menu(build_menu)
         .on_menu_event(on_menu_event)
-        .on_page_load(|_webview, payload| {
+        .on_page_load(|webview, payload| {
             // Debug aid for headless acceptance runs: prove what the webview actually loaded.
-            println!("[shell] page load start={} url={}", payload.event() == tauri::webview::PageLoadEvent::Started, payload.url());
+            let started = payload.event() == tauri::webview::PageLoadEvent::Started;
+            println!("[shell] page load start={} url={}", started, payload.url());
+            if started {
+                // Install an error recorder before the page scripts run.
+                let _ = webview.eval(
+                    "window.__cfErrors=[];window.addEventListener('error',function(e){window.__cfErrors.push(String(e.message))});window.addEventListener('unhandledrejection',function(e){window.__cfErrors.push('rej:'+String(e.reason))});",
+                );
+            } else {
+                // After load: prove JS/network work, expose mount state, and test WSS separately.
+                let _ = webview.eval(
+                    "setTimeout(function(){var s={title:document.title,root:(document.getElementById('root')||{}).innerHTML?document.getElementById('root').innerHTML.length:0,hook:typeof window.__crossfile,errors:(window.__cfErrors||[]).slice(-4)};fetch('https://room.net.time-pack.com/__report?tag=shell-probe&data='+encodeURIComponent(JSON.stringify(s))).catch(function(){});try{var ws=new WebSocket('wss://room.net.time-pack.com/v1/ws');ws.onopen=function(){fetch('https://room.net.time-pack.com/__report?tag=shell-ws&data=open').catch(function(){})};ws.onerror=function(){fetch('https://room.net.time-pack.com/__report?tag=shell-ws&data=error').catch(function(){})}}catch(e){fetch('https://room.net.time-pack.com/__report?tag=shell-ws&data=throw').catch(function(){})}},2500);",
+                );
+            }
         })
         .on_window_event(on_window_event)
         .invoke_handler(tauri::generate_handler![

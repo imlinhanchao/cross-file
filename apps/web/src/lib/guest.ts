@@ -34,6 +34,7 @@ interface FileReceiver {
 
 export class GuestController {
   private readonly caps: Caps = detectCaps();
+  private readonly relayOnly = new URLSearchParams(location.search).get("relay") === "1";
   private readonly nonce = createGuestNonce();
   private readonly joinCode?: string;
   private codeMode = false;
@@ -166,6 +167,7 @@ export class GuestController {
     this.hostTurn = turn;
     this.peer = createGuestPeer({
       iceServers: iceServersFromTurn(turn),
+      relayOnly: this.relayOnly,
       sendSignal: (payload) => this.socket.signal("host", payload),
       onError: (error) => {
         console.debug("[cf-guest] peer error", String(error));

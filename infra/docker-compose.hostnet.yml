@@ -4,6 +4,8 @@
 # which a browser on the host cannot reach. Putting coturn on the host network makes relay
 # candidates carry the host's IP, so a browser on this machine can exercise the relay path.
 # Only the coturn service changes; signaling keeps its bridge publishing and read-only rootfs.
+# When testing from another device (phone on the same Wi-Fi), also set TURN_EXTERNAL_IP to this
+# host's LAN IPv4; for two browsers on this machine 127.0.0.1 is fine.
 #
 #   docker compose -f infra/docker-compose.yml -f infra/docker-compose.hostnet.yml up -d --build
 #

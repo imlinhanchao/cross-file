@@ -34,8 +34,9 @@ $EDITOR infra/.env
 TURN_SECRET=<openssl rand -hex 32 的输出>
 TURN_URIS=turn:turn.example.com:3478?transport=udp,turn:turn.example.com:3478?transport=tcp
 PUBLIC_HOST=room.example.com
+TURN_EXTERNAL_IP=203.0.113.10
 
-SIGNAL_PORT=8787
+SIGNAL_PORT=8788
 COTURN_MIN_PORT=49160
 COTURN_MAX_PORT=49200
 ```
@@ -44,6 +45,8 @@ COTURN_MAX_PORT=49200
 
 - `TURN_SECRET` 必填。signaling 用它按 `HMAC-SHA1(secret, "<expiry>:<peerId>")` 签发临时凭据，coturn 用 `static-auth-secret` 校验；两边必须一致，`compose` 不会替你生成。
 - `TURN_URIS` 是**下发给浏览器**的地址，写公网域名/IP，不要写 `127.0.0.1`（除非浏览器也在同一台机器上做本地联调）。
+- `TURN_EXTERNAL_IP` 是 **coturn 通告给浏览器的 relay candidate 地址**。Docker 桥接网络里 coturn 看到的是容器内网 IP（172.x），必须显式告诉它宿主机地址：公网 VPS 填公网 IPv4；本机两个浏览器联调填 `127.0.0.1`；手机连同 Wi-Fi 联调填宿主机局域网 IP。
+- `SIGNAL_PORT` 是**宿主机**发布端口（默认 8788，与仓库开发默认 `pnpm dev:signal`/Vite 代理一致），容器内固定监听 8787；只改这里不需要动健康检查。
 - 端口段 `COTURN_MIN/MAX_PORT` 同时控制 coturn 的 `--min-port/--max-port` 和 compose 的端口映射，改一处即可，但要和防火墙同步。
 - `.env` 已被根 `.gitignore` 忽略，不会误提交；不要把它放进镜像（`Dockerfile.dockerignore` 也排除了）。
 
@@ -52,7 +55,7 @@ COTURN_MAX_PORT=49200
 ## 3. 起停
 
 ```bash
-# 构建 + 启动（首次构建会 pnpm install 并 esbuild 打包，约 1–3 分钟）
+# 构建 + 启动（首次构建会联网装依赖并 esbuild 打包，视网络约 2–5 分钟；之后走缓存）
 docker compose -f infra/docker-compose.yml up -d --build
 
 # 状态 / 日志
@@ -71,9 +74,12 @@ docker compose -f infra/docker-compose.yml down -v
 docker compose -f infra/docker-compose.yml logs signaling
 
 # 2. 用仓库里的真实会话客户端连一次（create → join → approve → signal → close）
-node --import tsx tests/audit/signal-client.mts ws://127.0.0.1:8787/v1/ws
+node --import tsx tests/audit/signal-client.mts ws://127.0.0.1:8788/v1/ws
 # 期望最后一行：CLIENT PASS
 ```
+
+> 若宿主机 8788 已被 `pnpm dev:signal` 占用，用 `SIGNAL_PORT=18788` 只改宿主机映射端口，容器内始终监听 8787；下面验收命令里的端口要同步改。本次验收就在 18787 上跑（见 §9）。
+> coturn 镜像固定在 `coturn/coturn:4.19.2-alpine`，与老文档的差异（`--no-cli`/`--no-dtls` 已删除）见 §4.3。
 
 如果你想在**本机**验证中继路径（浏览器和 coturn 在同一台机器），叠加 host 网络 override：
 
@@ -81,7 +87,7 @@ node --import tsx tests/audit/signal-client.mts ws://127.0.0.1:8787/v1/ws
 docker compose -f infra/docker-compose.yml -f infra/docker-compose.hostnet.yml up -d --build
 ```
 
-原因：桥接网络下 coturn 下发的 relay candidate 是容器内网地址，宿主机浏览器连不上；host 网络让 candidate 带宿主机地址。仅在 Linux 上需要，生产公网服务器用默认 compose 即可。
+原因：桥接网络下 coturn 下发的 relay candidate 是容器内网地址，宿主机浏览器连不上；host 网络让 candidate 带宿主机地址。仅在 Linux 上需要，生产公网服务器用默认 compose 即可（默认 compose 要靠 `TURN_EXTERNAL_IP` 得到同样效果）。若用手机连接，把 `TURN_EXTERNAL_IP` 设成宿主机的局域网 IP。
 
 ### 镜像里为什么不是 `tsx` 直接跑 `dev.ts`
 
@@ -125,30 +131,51 @@ window.RTCPeerConnection = function (config = {}) {
 
 此时若传输能完成且 webrtc-internals 里 candidate 类型是 `relay`，说明 coturn、凭据和时间戳都对。
 
-### 4.3 凭据自检（不用浏览器）
+### 4.3 中继链路自检（不用浏览器，已实测通过）
+
+分两步：先确认 signaling 下发的凭据格式与 coturn 的 `static-auth-secret` 一致，再让 coturn 自带的
+`turnutils_uclient` 用这份凭据做一次真实的 TURN 分配与中继收发。
 
 ```bash
-# coturn 分配测试：用 TURN REST API 凭据，用户名格式 <expiryEpoch>:<peerId>
+# 1) 按 signaling 的公式（packages/signaling/src/turn.ts）生成一份同格式凭据
 SECRET=$(grep '^TURN_SECRET=' infra/.env | cut -d= -f2)
 EXPIRY=$(( $(date +%s) + 3600 ))
 USER_NAME="$EXPIRY:selftest"
 PASSWORD=$(printf '%s' "$USER_NAME" | openssl dgst -sha1 -hmac "$SECRET" -binary | base64)
-docker run --rm coturn/coturn:4.19.2-alpine turnutils_uclient -u "$USER_NAME" -w "$PASSWORD" -p 3478 -y "$PUBLIC_HOST"
+
+# 2) 与 coturn 同机跑 TURN 客户端：-y 客户端互连，-c 不建 RTCP
+docker run --rm --network host coturn/coturn:4.19.2-alpine \
+  turnutils_uclient -u "$USER_NAME" -w "$PASSWORD" -p 3478 -y -c -n 3 \
+  "${TURN_EXTERNAL_IP:-127.0.0.1}"
 ```
 
-`turnutils_uclient` 输出 `allocate`/`relay` 相关成功行即 TURN 可用。
+期望输出包含：
+
+```text
+INFO allocate response received:
+INFO IPv4. Received relay addr: <TURN_EXTERNAL_IP>:49xxx
+INFO start_mclient: tot_send_msgs=10, tot_recv_msgs=10
+INFO Total lost packets 0 (0.000000%)
+```
+
+`relay addr` 的端口必须落在 `COTURN_MIN_PORT`–`COTURN_MAX_PORT` 段内（默认 49160–49200），且地址等于
+`TURN_EXTERNAL_IP`。仓库实测还把 signaling 真实下发的 `created.turn` 凭据直接交给同一条命令跑通（见 §9.3），
+所以“signaling 签名 == coturn 校验”这条链路已经验证过。
+
+> coturn 4.19 与老文档的两处差异（compose 已适配）：`--no-cli` 已废弃（CLI 默认关闭），`--no-dtls` 已不存在
+> （DTLS 默认关闭），继续传会打印 `unrecognized option` 并退出。
 
 ---
 
 ## 5. 端口与防火墙
 
-| 端口        | 协议      | 用途                                                     | 对外             |
-| ----------- | --------- | -------------------------------------------------------- | ---------------- |
-| 443         | tcp       | 反代（静态站 + `wss://…/v1/ws`）                         | 必须             |
-| 8787        | tcp       | signaling（默认只在反代后面，可不暴露公网）              | 建议只对反代开放 |
-| 3478        | udp + tcp | TURN 监听                                                | 必须             |
-| 49160–49200 | udp       | TURN relay 分配段（`COTURN_MIN_PORT`–`COTURN_MAX_PORT`） | 必须             |
-| 5173        | tcp       | 仅开发：Vite dev server                                  | 不要暴露公网     |
+| 端口        | 协议      | 用途                                                      | 对外             |
+| ----------- | --------- | --------------------------------------------------------- | ---------------- |
+| 443         | tcp       | 反代（静态站 + `wss://…/v1/ws`）                          | 必须             |
+| 8788        | tcp       | signaling 宿主机发布端口（容器内 8787；默认只在反代后面） | 建议只对反代开放 |
+| 3478        | udp + tcp | TURN 监听                                                 | 必须             |
+| 49160–49200 | udp       | TURN relay 分配段（`COTURN_MIN_PORT`–`COTURN_MAX_PORT`）  | 必须             |
+| 5173        | tcp       | 仅开发：Vite dev server                                   | 不要暴露公网     |
 
 防火墙示例（ufw）：
 
@@ -159,7 +186,7 @@ sudo ufw allow 3478/udp
 sudo ufw allow 49160:49200/udp
 ```
 
-云厂商安全组同理。`SIGNAL_BIND=127.0.0.1` 时 8787 不对外，只有本机反代能连；若 signaling 跑在另一台机器，改成内网地址并在反代里指过去。
+云厂商安全组同理。`SIGNAL_BIND=127.0.0.1` 时宿主机 8788 不对外，只有本机反代能连；若 signaling 跑在另一台机器，改成内网地址并在反代里指过去。
 
 ---
 
@@ -169,13 +196,13 @@ sudo ufw allow 49160:49200/udp
 
 生产：示例见 `infra/deploy/Caddyfile.example`。核心是三件事：
 
-1. `/v1/ws` 反代到 `127.0.0.1:8787`（Caddy 的 `reverse_proxy` 自动处理 WebSocket Upgrade）；
+1. `/v1/ws` 反代到 `127.0.0.1:8788`（Caddy 的 `reverse_proxy` 自动处理 WebSocket Upgrade；对应 compose 的 `SIGNAL_PORT`）；
 2. 其余路径返回 `apps/web/dist` 静态文件（`pnpm --filter @crossfile/web build` 的产物），SPA 用 `try_files {path} /index.html`；
 3. 安全响应头：HSTS、`Referrer-Policy: no-referrer`、CSP `default-src 'self'`、`X-Content-Type-Options: nosniff`、`X-Frame-Options: SAMEORIGIN`。
 
 ```bash
 # 本机开发：已有的反代把 https://room.net.time-pack.com -> 127.0.0.1:5173，
-# Vite 自己再把 /v1/ws 代理到 ws://127.0.0.1:8787（见 apps/web/vite.config.ts）。
+# Vite 自己再把 /v1/ws 代理到 ws://127.0.0.1:8788（见 apps/web/vite.config.ts）。
 # 因此开发时只需要：
 pnpm dev:signal     # 或 docker compose -f infra/docker-compose.yml up -d signaling
 pnpm dev:web
@@ -197,7 +224,7 @@ pnpm dev:web
 | 经 TURN 中继的流量字节数（coturn 转发密文，无法解密）        | 聊天记录、历史、账号（没有这些概念）                                |
 | 连接时的 TLS/WS 元信息（反代层）                             | 访问日志、分析埋点（signaling 只输出一行启动日志）                  |
 
-实现层面（`docs/02-protocol.md` §7）：房间/peer/限频计数全在进程内存，无数据库、无 Redis、无写文件；日志只允许 error 级且不含 IP/UA/roomId；无 cookie、无指纹、无第三方统计；容器只读根文件系统、非 root、无 volume；崩溃重启即丢全部房间（设计如此）。TURN 是仅有的“能看到流量大小”的组件，`--no-multicast-peers` 等限制已在 compose 中开启，且没有 `no-loopback-peers`（本机联调需要 loopback）。
+实现层面（`docs/02-protocol.md` §7）：房间/peer/限频计数全在进程内存，无数据库、无 Redis、无写文件；日志只允许 error 级且不含 IP/UA/roomId；无 cookie、无指纹、无第三方统计；signaling 容器只读根文件系统、非 root、无 volume；coturn 不挂持久卷、日志只进 stdout；崩溃重启即丢全部房间（设计如此）。TURN 是仅有的“能看到流量大小”的组件，`--no-multicast-peers` 等限制已在 compose 中开启，且没有 `no-loopback-peers`（本机联调需要 loopback）。
 
 > 诚实说明：中继流量经过你的服务器，运营商/云厂商仍能看到加密流量的存在与大小；TURN 的合法合规责任（docs/03 R8）由自托管者承担，请自备 ToS 与关停机制。
 
@@ -250,7 +277,8 @@ FAIL 都带 `[EVIDENCE]` 证据行并以退出码 1 结束。
 
 ## 9. 验收记录（本机实跑）
 
-> 以下输出为实际运行结果；命令与输出保持原文，便于复现。
+> 以下输出为实际运行结果（本机 Docker 29 / Compose v5 / coturn 4.19.2-alpine / node:22-alpine）。
+> 本机 8788 被 `pnpm dev` 的信令占用、8787 被一个无关服务占用，所以 compose 验收把宿主机映射端口改成 18787；容器内仍是 8787。
 
 ### 9.1 本机零存储审计
 
@@ -258,43 +286,113 @@ FAIL 都带 `[EVIDENCE]` 证据行并以退出码 1 结束。
 $ tests/audit/zero-storage.sh
 == Zero-storage audit (local process, strace) ==
 [PASS] production bundle built (infra/signaling/build/server.cjs)
-[EVIDENCE] server pid=44 (child of strace pid=37), port=18787
+[EVIDENCE] server pid=42 (child of strace pid=35), port=18787
 [EVIDENCE] server stdout: [crossfile-signaling] listening on ws://127.0.0.1:18787/v1/ws
 [EVIDENCE] CLIENT OK connected ws://127.0.0.1:18787/v1/ws
-[EVIDENCE] CLIENT OK created roomId=… code=529304
+[EVIDENCE] CLIENT OK created roomId=… code=275630
+[EVIDENCE] CLIENT OK no turn credential (TURN_URIS unset on this server)
 [EVIDENCE] CLIENT OK join_request guestId=…
 [EVIDENCE] CLIENT OK join_ok host↔guest peerCaps=Object/chrome
 [EVIDENCE] CLIENT OK signaled host→guest and guest→host (3 each)
 [EVIDENCE] CLIENT OK room_closed reason=host_close
-[EVIDENCE] trace: /tmp/crossfile-audit.3DDVjj/trace.txt (40 strace lines), server log: /tmp/crossfile-audit.3DDVjj/server.log
+[EVIDENCE] trace: /tmp/crossfile-audit.JVFpIY/trace.txt (40 strace lines), server log: /tmp/crossfile-audit.JVFpIY/server.log
 [PASS] signaling process opened no writable file (no O_WRONLY/O_RDWR/O_CREAT/O_TRUNC/O_APPEND/O_TMPFILE)
 [PASS] no write(2) reached a file opened for writing (1 write(s) to stdout/stderr, 11 to sockets/pipes)
 [PASS] no database file path was opened (no *.db / sqlite / leveldb / redis / postgres artefacts)
 [PASS] server stdout has exactly 1 line, the startup line: [crossfile-signaling] listening on ws://127.0.0.1:18787/v1/ws
 [PASS] no HTTP/access-log lines on stdout
-[PASS] real signaling session completed through the audited process (6 steps, CLIENT PASS)
-[PASS] process working directory stayed empty (/tmp/crossfile-audit.3DDVjj/cwd)
+[PASS] real signaling session completed through the audited process (7 steps, CLIENT PASS)
+[PASS] process working directory stayed empty (/tmp/crossfile-audit.JVFpIY/cwd)
 RESULT PASS
+RESULT PASS (zero-storage audit, local)
 ```
 
-### 9.2 容器模式
+### 9.2 容器模式（只读根文件系统 + 真实会话）
 
-见下方“容器验收输出”（在本机 Docker 可用时运行 `tests/audit/zero-storage.sh --container` 后粘贴原始输出）。
+```console
+$ AUDIT_PORT=18888 tests/audit/zero-storage.sh --container
+== Zero-storage audit (container, read-only rootfs) ==
+[EVIDENCE] compose project=crossfile-audit, published signaling port=18888, TURN_SECRET=(generated/supplied, not printed)
+-- docker compose build signaling
+[PASS] signaling image built
+[PASS] container rootfs is read-only (HostConfig.ReadonlyRootfs=true)
+[PASS] container runs as non-root user (1000:1000)
+[PASS] container has no volumes or bind mounts (Mounts=0, Binds=null)
+[PASS] all Linux capabilities dropped (CapDrop=["ALL"])
+[PASS] no-new-privileges is set
+[PASS] container healthcheck reports healthy (node ws probe on /v1/ws)
+[EVIDENCE] CLIENT OK connected ws://127.0.0.1:18888/v1/ws
+[EVIDENCE] CLIENT OK created roomId=… code=649534
+[EVIDENCE] CLIENT OK no turn credential (TURN_URIS unset on this server)
+[EVIDENCE] CLIENT OK join_request guestId=…
+[EVIDENCE] CLIENT OK join_ok host↔guest peerCaps=Object/chrome
+[EVIDENCE] CLIENT OK signaled host→guest and guest→host (3 each)
+[EVIDENCE] CLIENT OK room_closed reason=host_close
+[PASS] real signaling session completed against the container
+[PASS] container stdout has exactly the startup line: [crossfile-signaling] listening on ws://0.0.0.0:8787/v1/ws
+[PASS] writes inside the container fail as expected (app=EROFS tmp=EROFS)
+[PASS] docker compose down -v completed (container and volumes removed)
+RESULT PASS (zero-storage audit, container)
+```
 
----
+`docker compose up -d --build` 之后的状态与日志（同一套 compose）：
+
+```console
+$ docker compose -f infra/docker-compose.yml ps
+NAME                    IMAGE                         SERVICE     STATUS                            PORTS
+crossfile-coturn-1      coturn/coturn:4.19.2-alpine   coturn      Up ...                            0.0.0.0:3478->3478/udp, 0.0.0.0:3478->3478/tcp, 0.0.0.0:49160-49200->49160-49200/udp
+crossfile-signaling-1   crossfile/signaling:local     signaling   Up ... (healthy)                   0.0.0.0:18787->8787/tcp
+
+$ docker compose -f infra/docker-compose.yml logs signaling
+crossfile-signaling-1  | [crossfile-signaling] listening on ws://0.0.0.0:8787/v1/ws
+```
+
+### 9.3 TURN 凭据与中继链路（signaling → coturn）
+
+`docker compose up` 起好 coturn + signaling 后，真实会话客户端能拿到 TURN 凭据：
+
+```console
+$ node --import tsx tests/audit/signal-client.mts ws://127.0.0.1:18787/v1/ws
+CLIENT OK connected ws://127.0.0.1:18787/v1/ws
+CLIENT OK created roomId=64xhaj67dyogqc7arofatvijfu code=925275
+CLIENT OK turn credential issued (username=1795506164:3S40hJTxgW4, ttl=3600, uris=turn:127.0.0.1:3478?transport=udp,turn:127.0.0.1:3478?transport=tcp)
+CLIENT OK join_request guestId=YPrk2sgxJZc
+CLIENT OK join_ok host↔guest peerCaps=Object/chrome
+CLIENT OK signaled host→guest and guest→host (3 each)
+CLIENT OK room_closed reason=host_close
+CLIENT PASS
+```
+
+signaling 真实下发的 `created.turn`（TTL 1h，HMAC 与 `packages/signaling/src/turn.ts` 完全一致）：
+
+```text
+created: {"roomId":"nculqode46rqoa3emzdkyx6irq","code":"618714","turn":{"uris":["turn:127.0.0.1:3478?transport=udp","turn:127.0.0.1:3478?transport=tcp"],"username":"1795505925:ax9Wa6ZGo1Y","credential":"3l1sXhMWbgimaQy8zqt5QWNoHiU=","ttl":3600}}
+username: 1795505925:ax9Wa6ZGo1Y expires in 3600 s
+hmac match: true | ttl: 3600
+```
+
+把这份凭据交给 coturn 自带的 TURN 客户端：
+
+```text
+INFO IPv4. Received relay addr: 127.0.0.1:49163
+INFO start_mclient: tot_send_msgs=10, tot_recv_msgs=10
+INFO Total lost packets 0 (0.000000%), total send dropped 2 (16.666667%)
+```
+
+即：signaling 签发的临时凭据被 coturn 接受、relay 端口落在配置区间、中继收发成功（AC2 的 TURN 链路前置条件）。
 
 ## 10. 常见故障
 
-| 现象                                         | 原因 / 处理                                                                                                                                                                 |
-| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `TURN_SECRET is required` / compose 直接退出 | 没复制 `infra/.env`。`cp infra/.env.example infra/.env` 并填 `TURN_SECRET`。                                                                                                |
-| signaling 健康检查一直 `unhealthy`           | 端口被占（`SIGNAL_PORT` 改了但对不上），或容器启动失败；`docker compose logs signaling` 看启动那一行。健康检查固定探容器内 `127.0.0.1:8787`，不要在 `.env` 里改容器内端口。 |
-| 页面能连信令但传输极慢/总是失败              | TURN 不可达。检查 3478/udp+tcp、49160–49200/udp 的安全组；`TURN_URIS` 的域名解析到公网 IP；浏览器 webrtc-internals 看 candidate 是否只有 host/srflx。                       |
-| 中继 candidate 是 `relay` 但连不上           | 典型是 NAT：本机联调用 `docker-compose.hostnet.yml`；公网主机确认 `TURN_URIS` 用的是公网域名而非内网 IP，且 relay 端口段全部放行。                                          |
-| webrtc-internals 里 ICE 一直 `checking`      | 凭据过期（TTL 1h，`TURN_TTL_SEC`）或 secret 与 signaling 不一致；核对 `.env` 的 `TURN_SECRET` 两边同源。                                                                    |
-| `docker compose build` 卡在 `pnpm install`   | 主机访问 npm registry 慢/被墙。给 Docker daemon 配代理（`/etc/docker/daemon.json` 的 `proxies`）或 `docker build --build-arg` 注入；镜像构建需要能访问 npm 与基础镜像仓库。 |
-| `permission denied` 写文件/挂载              | 设计如此：只读根文件系统 + 非 root + 无 volume。别加 `volumes`，需要持久化的东西不应该存在于这套部署里。                                                                    |
-| 审计本机模式报 `strace is not installed`     | `apt install strace`；或改用 `--container`。                                                                                                                                |
-| 审计 `--container` 报端口占用                | `AUDIT_PORT=18888 tests/audit/zero-storage.sh --container`。                                                                                                                |
-| 反代 502 / WebSocket 连不上                  | 反代没有转发 Upgrade 头，或 `/v1/ws` 指到了错误端口；Caddy 的 `reverse_proxy` 默认支持 Upgrade，Nginx 需要手写 `proxy_set_header Upgrade $http_upgrade` 等。                |
-| HTTPS 证书问题（TURN over TLS 未启用）       | 本方案 TURN 用明文 3478；若要求 TURN over TLS（5349），需要给 coturn 配证书并开放 5349/tcp+udp，自行在 compose 里加参数，signaling 下发的 `TURN_URIS` 改成 `turns:`。       |
+| 现象                                         | 原因 / 处理                                                                                                                                                                                                             |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TURN_SECRET is required` / compose 直接退出 | 没复制 `infra/.env`。`cp infra/.env.example infra/.env` 并填 `TURN_SECRET`。                                                                                                                                            |
+| signaling 健康检查一直 `unhealthy`           | 端口被占（`SIGNAL_PORT` 与宿主机其他进程冲突，例如 `pnpm dev:signal` 已占用 8788），或容器启动失败；`docker compose logs signaling` 看启动那一行。健康检查固定探容器内 `127.0.0.1:8787`，不要在 `.env` 里改容器内端口。 |
+| 页面能连信令但传输极慢/总是失败              | TURN 不可达。检查 3478/udp+tcp、49160–49200/udp 的安全组；`TURN_URIS` 的域名解析到公网 IP；浏览器 webrtc-internals 看 candidate 是否只有 host/srflx。                                                                   |
+| 中继 candidate 是 `relay` 但连不上           | 典型是 NAT：本机联调用 `docker-compose.hostnet.yml`；公网主机确认 `TURN_URIS` 用的是公网域名而非内网 IP，且 relay 端口段全部放行。                                                                                      |
+| webrtc-internals 里 ICE 一直 `checking`      | 凭据过期（TTL 1h，`TURN_TTL_SEC`）或 secret 与 signaling 不一致；核对 `.env` 的 `TURN_SECRET` 两边同源。                                                                                                                |
+| `docker compose build` 卡在 `pnpm install`   | 主机访问 npm registry 慢/被墙。给 Docker daemon 配代理（`/etc/docker/daemon.json` 的 `proxies`）或 `docker build --build-arg` 注入；镜像构建需要能访问 npm 与基础镜像仓库。                                             |
+| `permission denied` 写文件/挂载              | 设计如此：只读根文件系统 + 非 root + 无 volume。别加 `volumes`，需要持久化的东西不应该存在于这套部署里。                                                                                                                |
+| 审计本机模式报 `strace is not installed`     | `apt install strace`；或改用 `--container`。                                                                                                                                                                            |
+| 审计 `--container` 报端口占用                | `AUDIT_PORT=18888 tests/audit/zero-storage.sh --container`。                                                                                                                                                            |
+| 反代 502 / WebSocket 连不上                  | 反代没有转发 Upgrade 头，或 `/v1/ws` 指到了错误端口；Caddy 的 `reverse_proxy` 默认支持 Upgrade，Nginx 需要手写 `proxy_set_header Upgrade $http_upgrade` 等。                                                            |
+| HTTPS 证书问题（TURN over TLS 未启用）       | 本方案 TURN 用明文 3478；若要求 TURN over TLS（5349），需要给 coturn 配证书并开放 5349/tcp+udp，自行在 compose 里加参数，signaling 下发的 `TURN_URIS` 改成 `turns:`。                                                   |

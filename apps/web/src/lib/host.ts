@@ -59,6 +59,7 @@ export class HostController {
   private readonly identity = createRoomIdentity();
   private readonly sessionKey = deriveSessionKey(this.identity.roomKey, this.identity.roomIdBytes);
   private readonly caps: Caps = detectCaps();
+  private readonly relayOnly = new URLSearchParams(location.search).get("relay") === "1";
   private socket = new SignalingSocket();
   private readonly peers = new Map<string, GuestPeer>();
   private readonly guestNonces = new Map<string, string>();
@@ -211,6 +212,7 @@ export class HostController {
   private attachPeer(guestId: string, guest: GuestPeer, resume: boolean): void {
     const peer = createHostPeer({
       iceServers: iceServersFromTurn(guest.turn),
+      relayOnly: this.relayOnly,
       sendSignal: (payload) => this.socket.signal(guestId, payload),
       onError: (error) => {
         console.debug("[cf-host] peer error", String(error));

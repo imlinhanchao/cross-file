@@ -232,7 +232,7 @@ export function HostPage() {
 
             <div className="signal-rule" aria-hidden="true" />
             <p className="small muted">
-              对方需保持页面打开 · 服务器不保存任何内容
+              对方需保持页面打开 · 服务器不保存任何内容 · <a href="/privacy">隐私说明</a>
             </p>
           </section>
 

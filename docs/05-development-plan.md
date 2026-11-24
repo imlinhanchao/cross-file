@@ -8,14 +8,14 @@
 
 | # | 判据 | 状态 |
 |---|---|---|
-| U1 | `docker compose -f infra/docker-compose.yml up -d` + `pnpm dev` 可起，`https://room.net.time-pack.com` 可访问 | ✅ 开发链路已通：域名 → nginx → Vite:5173 → `/v1/ws` → signaling:8788（curl 得 101；Playwright 经该 https 源跑通 10 MB 传输）；compose 由 infra-dev 收尾 |
+| U1 | `docker compose -f infra/docker-compose.yml up -d` + `pnpm dev` 可起，`https://room.net.time-pack.com` 可访问 | ✅ 两条链路都实测：dev 域名 → nginx → Vite:5173 → `/v1/ws` → signaling:8788（curl 101、Playwright 10 MB 通过）；compose 起 signaling+coturn（healthy、日志恰 1 行、CLIENT PASS、down -v 干净） |
 | U2 | 双端 100 MB 传完且 SHA-256 一致（主判据） | ✅ 本机双上下文 9.1 s，哈希一致 |
-| U3 | 500 MB 走通，UI 显示真实路径标签 | ⚠️ 本机 500 MB 28 s、路径「局域网直连」（尚需跨机/TURN 验证） |
+| U3 | 500 MB 走通，UI 显示真实路径标签 | ✅ 本机 500 MB 28 s（路径「局域网直连」）+ **500 MB 经 TURN 中继通过（路径「中继」、哈希一致）**；跨机真实网络待补 |
 | U4 | 断流续传（50% 断开、60 s 内重连、只补缺片、哈希一致） | ✅ 本机 20 MB：传输中强断通道 → 重连 → 只补 295 片 → 哈希一致（Playwright AC3） |
 | U5 | 6 位码 + 4 emoji SAS；结束房间即销毁 | ✅ 6 位码 + SAS 后经 ctrl 通道下发 roomKey（哈希一致）；结束房间后 guest 立即收 room_closed、房间从内存删除、迟到 join 被拒（Playwright AC7） |
-| U6 | 零存储审计（无 DB / 无写盘 / 无访问日志） | 进行中（infra-dev：strace 审计脚本） |
-| U7 | 门禁全绿（typecheck / 单测 core ≥80% / 对比度 24/24 / 零硬编码色值 / e2e） | ⚠️ typecheck / 82 单测 / 对比度 24/24 / 零硬编码色值 / 4 个 e2e 全绿；`--coverage` 阈值已配置待核对 |
-| U8 | 文档齐（README 可照做、自托管、隐私页、LICENSE） | ☐ |
+| U6 | 零存储审计（无 DB / 无写盘 / 无访问日志） | ✅ `tests/audit/zero-storage.sh` 两种模式 RESULT PASS（本机 strace：0 写文件、0 DB、stdout 仅启动行；容器：read-only/非 root/无 mount/healthy/EROFS 写入失败） |
+| U7 | 门禁全绿（typecheck / 单测 core ≥80% / 对比度 24/24 / 零硬编码色值 / e2e） | ✅ typecheck / 82 单测 / 对比度 24/24 / 零硬编码色值 / 默认 e2e 4 个通过（AC2 relay 用例按 `E2E_RELAY=1` 单独跑，已通过）；覆盖率阈值待核对 |
+| U8 | 文档齐（README 可照做、自托管、隐私页、LICENSE） | ⚠️ README 命令可照做、`docs/self-host.md` 已由 infra-dev 交付并含实跑输出；隐私说明页与 LICENSE 文件待补 |
 
 ## 2. 已采纳决策（不再逐项确认）
 
@@ -93,6 +93,16 @@
 | 2026-11-24 | 续传：发送方在发 manifest 前先算一次全文件 SHA-256，续传只重发缺失分片、`seq`/nonce 不变 | 发送方哈希必须覆盖整个文件；边发边哈希在乱序补片时无法接续 |
 | 2026-11-24 | ctrl 通道新增 `sas-confirm` / `room-key {key, roomId}` / `key-ok` | docs/02 §3.5 只写了"人工比对后 H 通过 ctrl 发送 roomKey"，字段未定义 |
 | 2026-11-24 | 发送前按接收方能力给软/硬上限提示（`judgeFile`），超硬上限禁用发送 | docs/01 D16 要求发送方提前看到限制提示 |
+
+## 7.0 AC2 / AC8 证据（本地，已实测）
+
+**AC2（仅 TURN）**：`docker compose up -d`（signaling + coturn）→ Vite 代理到容器 signaling（带 TURN 凭据）→ 双浏览器 `?relay=1`（`iceTransportPolicy: "relay"`）：
+- 10 MB：PASS，路径「中继」，哈希一致
+- 100 MB：9.6 s，路径「中继」，哈希一致
+- **500 MB：PASS，路径「中继」，SHA-256 一致**（本机回环；真实 10 Mbps 网络 <10 分钟待实网验证）
+- 复现：`E2E_RELAY=1 TURN_SECRET=... TURN_URIS='turn:127.0.0.1:3478?transport=udp' pnpm exec playwright test tests/e2e/ac2-relay.spec.ts`
+
+**AC8（零存储）**：`bash tests/audit/zero-storage.sh` → local 模式 RESULT PASS（strace：无 O_WRONLY/O_CREAT、无文件 write、无 DB 路径、stdout 仅 1 行、cwd 为空）；`SKIP_BUILD=1 bash tests/audit/zero-storage.sh --container` → 容器模式 RESULT PASS（read-only rootfs、非 root、0 mount、CapDrop ALL、no-new-privileges、EROFS 写入失败、down -v 干净）。
 
 ## 7.1 开发链路（已实测）
 

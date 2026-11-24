@@ -5,7 +5,7 @@
 # third-party scripts). WebSocket upgrade is handled by Caddy's reverse_proxy automatically.
 #
 # Dev: the existing local reverse proxy terminates TLS for Vite on 5173 and proxies /v1/ws to the
-# signaling dev server on 8787 — see the commented second block.
+# signaling on host port 8788 — see the commented second block.
 #
 #     caddy validate --config infra/deploy/Caddyfile.example
 #     caddy run --config infra/deploy/Caddyfile.example
@@ -30,7 +30,7 @@ room.example.com {
 	# Signaling: WebSocket only, same-origin. Keep it on the same host so the web app's default
 	# wss://<origin>/v1/ws works without configuration.
 	handle /v1/ws {
-		reverse_proxy 127.0.0.1:8787
+		reverse_proxy 127.0.0.1:8788
 	}
 
 	# Static web build (`pnpm --filter @crossfile/web build` → apps/web/dist).
@@ -47,7 +47,7 @@ room.example.com {
 #
 # room.net.time-pack.com {
 # 	reverse_proxy 127.0.0.1:5173 {
-# 		# Vite already proxies /v1/ws to ws://127.0.0.1:8787 in dev (see apps/web/vite.config.ts).
+# 		# Vite already proxies /v1/ws to ws://127.0.0.1:8788 in dev (see apps/web/vite.config.ts).
 # 		header_up Host {host}
 # 	}
 # }

@@ -168,13 +168,18 @@ run_container() {
   export TURN_URIS="${TURN_URIS:-}"
   evidence "compose project=crossfile-audit, published signaling port=$PORT, TURN_SECRET=(generated/supplied, not printed)"
 
-  say "-- docker compose build signaling"
-  if ! "${COMPOSE[@]}" build signaling >"$TMP/build.log" 2>&1; then
-    fail "docker compose build signaling failed"
-    tail -n 25 "$TMP/build.log" | sed 's/^/[EVIDENCE]   /'
-    return 1
+  if [ "${SKIP_BUILD:-0}" = "1" ]; then
+    # Pre-built image (CI, or a sandbox where the docker builder cannot write its state dir).
+    evidence "SKIP_BUILD=1: reusing the existing crossfile/signaling:local image"
+  else
+    say "-- docker compose build signaling"
+    if ! "${COMPOSE[@]}" build signaling >"$TMP/build.log" 2>&1; then
+      fail "docker compose build signaling failed"
+      tail -n 25 "$TMP/build.log" | sed 's/^/[EVIDENCE]   /'
+      return 1
+    fi
+    pass "signaling image built"
   fi
-  pass "signaling image built"
 
   if ! "${COMPOSE[@]}" up -d --no-build signaling >"$TMP/up.log" 2>&1; then
     fail "docker compose up signaling failed (port $PORT busy?)"

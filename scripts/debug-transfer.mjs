@@ -7,9 +7,12 @@
  */
 import { chromium } from "@playwright/test";
 import { createHash, randomBytes } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 const SIZE_MB = Number(process.argv[2] ?? 10);
 const BASE = process.env.DEBUG_BASE_URL ?? "http://127.0.0.1:5175";
+const RELAY = process.env.DEBUG_RELAY === "1";
 const bytes = randomBytes(SIZE_MB * 1024 * 1024);
 const expected = createHash("sha256").update(bytes).digest("hex");
 console.log("expected sha256:", expected, "size:", bytes.length);
@@ -51,14 +54,14 @@ const dump = async (label) => {
   console.log("guest", JSON.stringify(await snap(guest)));
 };
 
-await host.goto(BASE + "/");
+await host.goto(BASE + "/" + (RELAY ? "?relay=1" : ""));
 await host.waitForFunction(() => window.__crossfile?.snapshot?.().phase === "waiting", null, { timeout: 30_000 });
 const link = await host.evaluate(() => window.__crossfile.snapshot().link);
 const code = await host.evaluate(() => window.__crossfile.snapshot().code);
 console.log("room link:", link, "code:", code);
 await dump("host created");
 
-await guest.goto(link);
+await guest.goto(RELAY ? link.replace("#", "?relay=1#") : link);
 await host.waitForFunction(() => (window.__crossfile?.snapshot?.().guests ?? []).length === 1, null, { timeout: 30_000 });
 await dump("guest joined (pending)");
 
@@ -66,11 +69,19 @@ await host.getByTestId("approve").click();
 await host.waitForFunction(() => window.__crossfile?.snapshot?.().guests?.[0]?.status === "joined", null, { timeout: 30_000 });
 await dump("approved");
 
-await host.getByTestId("file-input").setInputFiles({
-  name: `debug-${SIZE_MB}mb.bin`,
-  mimeType: "application/octet-stream",
-  buffer: bytes,
-});
+if (SIZE_MB > 40) {
+  const dir = resolve(".cache/fixtures");
+  mkdirSync(dir, { recursive: true });
+  const filePath = resolve(dir, `debug-${SIZE_MB}mb.bin`);
+  writeFileSync(filePath, bytes);
+  await host.getByTestId("file-input").setInputFiles(filePath);
+} else {
+  await host.getByTestId("file-input").setInputFiles({
+    name: `debug-${SIZE_MB}mb.bin`,
+    mimeType: "application/octet-stream",
+    buffer: bytes,
+  });
+}
 await guest.waitForFunction(() => (window.__crossfile?.snapshot?.().files ?? []).length === 1, null, { timeout: 30_000 });
 await dump("manifest arrived");
 

@@ -4,7 +4,7 @@
 #
 # Build context is the repository root (`infra/docker-compose.yml` sets `context: ..`) because the
 # server imports the pnpm workspace packages. Only the filtered workspace is installed, and the
-# final image contains a single pre-bundled file: no node_modules, no sources, no shell tooling.
+# final image contains a single pre-bundled file: no node_modules and no source tree.
 #
 # Runtime is deliberately boring: plain `node /app/server.cjs`, read-only rootfs, non-root user,
 # no volumes, no database, one startup log line. See docs/self-host.md for the audit commands.
@@ -24,7 +24,10 @@ WORKDIR /app
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.base.json ./
 COPY packages/core/package.json packages/core/package.json
 COPY packages/signaling/package.json packages/signaling/package.json
-RUN pnpm install --frozen-lockfile --filter @crossfile/signaling...
+# `--trust-lockfile` skips pnpm's supply-chain-policy network verification, which makes a
+# reproducible container build depend on registry metadata round-trips. The committed lockfile
+# plus --frozen-lockfile still pin every version; bumping a dependency is a reviewed repo change.
+RUN pnpm install --frozen-lockfile --trust-lockfile --filter @crossfile/signaling...
 
 # Sources needed by the bundle only (apps/web stays out of this image).
 COPY packages/core/src packages/core/src
@@ -40,8 +43,7 @@ FROM node:22-alpine AS runtime
 
 LABEL org.opencontainers.image.title="crossfile-signaling" \
       org.opencontainers.image.description="CrossFile ephemeral signaling server (zero storage)" \
-      org.opencontainers.image.source="https://github.com/crossfile/crossfile" \
-      org.opencontainers.image.licenses="AGPL-3.0-only"
+      org.opencontainers.image.licenses="MIT"
 
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \

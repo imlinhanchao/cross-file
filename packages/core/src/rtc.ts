@@ -19,6 +19,8 @@ export interface PeerOptions {
   iceServers?: RTCIceServer[];
   sendSignal: (payload: SignalPayload) => void;
   onError?: (error: unknown) => void;
+  /** AC2 test hook: force ICE onto relay candidates (docs/02 §6.6). */
+  relayOnly?: boolean;
 }
 
 export interface Peer {
@@ -62,7 +64,10 @@ function openChannel(channel: RTCDataChannel): Promise<void> {
 }
 
 export function createHostPeer(options: PeerOptions): Peer {
-  const pc = new RTCPeerConnection({ iceServers: options.iceServers ?? [] });
+  const pc = new RTCPeerConnection({
+    iceServers: options.iceServers ?? [],
+    ...(options.relayOnly ? { iceTransportPolicy: "relay" as RTCIceTransportPolicy } : {}),
+  });
   const ctrl = pc.createDataChannel("ctrl", { ordered: true });
   const data = pc.createDataChannel("data", { ordered: true });
 
@@ -106,7 +111,10 @@ export function createHostPeer(options: PeerOptions): Peer {
 }
 
 export function createGuestPeer(options: PeerOptions): Peer {
-  const pc = new RTCPeerConnection({ iceServers: options.iceServers ?? [] });
+  const pc = new RTCPeerConnection({
+    iceServers: options.iceServers ?? [],
+    ...(options.relayOnly ? { iceTransportPolicy: "relay" as RTCIceTransportPolicy } : {}),
+  });
   let ctrl: RTCDataChannel | null = null;
   let data: RTCDataChannel | null = null;
   const pendingCandidates: RTCIceCandidateInitLike[] = [];

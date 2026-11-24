@@ -14,7 +14,8 @@
 import WebSocket from "ws";
 import { base32Encode, randomBytes } from "../../packages/core/src/bytes.ts";
 
-const WS_URL = process.argv[2] ?? process.env.AUDIT_WS_URL ?? "ws://127.0.0.1:18787/v1/ws";
+const WS_URL =
+  process.argv[2] ?? process.env.AUDIT_WS_URL ?? "ws://127.0.0.1:18787/v1/ws";
 
 interface Caps {
   platform: string;
@@ -87,13 +88,18 @@ class Client {
         fail(`${label}: server sent non-JSON frame`);
       }
     });
-    this.ws.on("error", (error) => fail(`${label}: socket error: ${error.message}`));
+    this.ws.on("error", (error) =>
+      fail(`${label}: socket error: ${error.message}`),
+    );
   }
 
   async open(): Promise<void> {
     if (this.ws.readyState === WebSocket.OPEN) return;
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`${this.label}: open timeout`)), STEP_TIMEOUT_MS);
+      const timer = setTimeout(
+        () => reject(new Error(`${this.label}: open timeout`)),
+        STEP_TIMEOUT_MS,
+      );
       this.ws.once("open", () => {
         clearTimeout(timer);
         resolve();
@@ -115,7 +121,9 @@ class Client {
       const found = this.messages.find((message) => message.type === type);
       if (found) return found;
       if (Date.now() - started > timeoutMs) {
-        fail(`${this.label}: timeout waiting for ${type}; got [${this.messages.map((m) => m.type).join(", ")}]`);
+        fail(
+          `${this.label}: timeout waiting for ${type}; got [${this.messages.map((m) => m.type).join(", ")}]`,
+        );
       }
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
@@ -126,7 +134,10 @@ class Client {
   }
 }
 
-const overall = setTimeout(() => fail(`session exceeded ${SESSION_TIMEOUT_MS} ms`), SESSION_TIMEOUT_MS);
+const overall = setTimeout(
+  () => fail(`session exceeded ${SESSION_TIMEOUT_MS} ms`),
+  SESSION_TIMEOUT_MS,
+);
 overall.unref?.();
 
 const host = new Client("host");
@@ -141,17 +152,38 @@ try {
   host.send({ type: "hello", clientCaps: HOST_CAPS });
   host.send({ type: "create", roomId, hostCaps: HOST_CAPS });
   const created = await host.waitFor("created");
-  if (created.roomId !== roomId) fail(`created.roomId mismatch: ${String(created.roomId)}`);
+  if (created.roomId !== roomId)
+    fail(`created.roomId mismatch: ${String(created.roomId)}`);
   ok(`created roomId=${roomId} code=${String(created.code)}`);
+  const turn = created.turn as
+    | { uris?: string[]; username?: string; credential?: string; ttl?: number }
+    | undefined;
+  if (turn?.username && Array.isArray(turn.uris) && turn.credential) {
+    ok(
+      `turn credential issued (username=${turn.username}, ttl=${String(turn.ttl)}, uris=${turn.uris.join(",")})`,
+    );
+  } else {
+    ok("no turn credential (TURN_URIS unset on this server)");
+  }
 
   guest.send({ type: "hello", clientCaps: GUEST_CAPS });
-  guest.send({ type: "join", roomId, guestCaps: GUEST_CAPS, guestNonce: "audit-nonce-0123456789" });
+  guest.send({
+    type: "join",
+    roomId,
+    guestCaps: GUEST_CAPS,
+    guestNonce: "audit-nonce-0123456789",
+  });
   const joinRequest = await host.waitFor("join_request");
   ok(`join_request guestId=${String(joinRequest.guestId)}`);
 
   host.send({ type: "approve", guestId: joinRequest.guestId });
-  const [hostJoinOk, guestJoinOk] = await Promise.all([host.waitFor("join_ok"), guest.waitFor("join_ok")]);
-  ok(`join_ok host↔guest peerCaps=${String(hostJoinOk.peerCaps?.constructor?.name ?? "object")}/${String((guestJoinOk.peerCaps as Caps | undefined)?.uaFamily)}`);
+  const [hostJoinOk, guestJoinOk] = await Promise.all([
+    host.waitFor("join_ok"),
+    guest.waitFor("join_ok"),
+  ]);
+  ok(
+    `join_ok host↔guest peerCaps=${String(hostJoinOk.peerCaps?.constructor?.name ?? "object")}/${String((guestJoinOk.peerCaps as Caps | undefined)?.uaFamily)}`,
+  );
 
   // A few messages in both directions, comparable to the real trickle-ICE traffic.
   for (const seq of [1, 2, 3]) {

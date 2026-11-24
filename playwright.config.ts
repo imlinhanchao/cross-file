@@ -37,6 +37,13 @@ export default defineConfig({
   webServer: MANAGE_SERVERS ? [
     {
       command: `PORT=${SIGNALING_PORT} ./node_modules/.bin/tsx packages/signaling/src/dev.ts`,
+      env:
+        process.env.E2E_RELAY === "1"
+          ? {
+              TURN_URIS: process.env.TURN_URIS ?? "",
+              TURN_SECRET: process.env.TURN_SECRET ?? "",
+            }
+          : undefined,
       port: SIGNALING_PORT,
       reuseExistingServer: !process.env.CI,
       gracefulShutdown: { signal: "SIGTERM", timeout: 5_000 },

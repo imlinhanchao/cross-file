@@ -33,7 +33,7 @@ services:
       TURN_SECRET: ${TURN_SECRET:?set TURN_SECRET in infra/.env (cp infra/.env.example infra/.env)}
       NODE_ENV: production
     ports:
-      - "${SIGNAL_BIND:-0.0.0.0}:${SIGNAL_PORT:-8787}:8787"
+      - "${SIGNAL_BIND:-0.0.0.0}:${SIGNAL_PORT:-8788}:8787"
     healthcheck:
       # The image has no curl/wget; Node 22 ships a global WebSocket. A completed upgrade on
       # /v1/ws is enough to prove the listener is serving (no message is sent or logged).
@@ -69,22 +69,30 @@ services:
     # docs/02 §6.7: coturn static-auth-secret mode matches packages/signaling/src/turn.ts
     #   username   = "<expiryEpoch>:<peerId>"
     #   credential = base64(HMAC-SHA1(TURN_SECRET, username))
-    # `no-loopback-peers` is intentionally NOT set: local development needs loopback relay.
+    #
+    # Notes for coturn 4.19 (the pinned image):
+    #  - the admin CLI is off by default, so the old `--no-cli` flag is gone (it is deprecated and
+    #    logs an ERROR); nothing to add here;
+    #  - DTLS is off by default, so the old `--no-dtls` flag no longer exists;
+    #  - loopback peers are not blocked explicitly: `--allow-loopback-peers` stays off for a public
+    #    instance (it would let relayed peers reach the host's loopback services). Local relay tests
+    #    do not need it — browsers present their LAN address as the peer candidate.
     command:
       - --listening-port=3478
       - --static-auth-secret=${TURN_SECRET:?set TURN_SECRET in infra/.env (cp infra/.env.example infra/.env)}
       - --realm=crossfile
-      - --no-cli
       - --no-multicast-peers
       - --fingerprint
+      # No TLS/DTLS listener: TLS termination is the reverse proxy's job; TURN stays on 3478.
       - --no-tls
-      - --no-dtls
+      # Behind Docker's bridge the relay would advertise the container address; tell coturn which
+      # address clients actually reach. Set TURN_EXTERNAL_IP to the host's public/LAN IPv4.
+      - --external-ip=${TURN_EXTERNAL_IP:-127.0.0.1}
       - --min-port=${COTURN_MIN_PORT:-49160}
       - --max-port=${COTURN_MAX_PORT:-49200}
       # Lowest verbosity: no -v/-V flags; all logs to stdout, nothing to disk.
       - --log-file=stdout
       - --simple-log
-      - --new-log-timestamp
     ports:
       - "${COTURN_BIND:-0.0.0.0}:${COTURN_PORT:-3478}:3478/tcp"
       - "${COTURN_BIND:-0.0.0.0}:${COTURN_PORT:-3478}:3478/udp"

@@ -14,6 +14,14 @@ pnpm gate                  # typecheck + 单测 + 对比度 24/24 + 零硬编码
 pnpm e2e                   # Playwright 双浏览器真实传输（默认 10 MB）
 E2E_FILE_MB=500 pnpm e2e   # 500 MB 用例
 
+# 一键自托管（signaling + coturn，零存储、只读根文件系统）
+cp infra/.env.example infra/.env   # 填 TURN_SECRET / TURN_URIS / PUBLIC_HOST
+docker compose -f infra/docker-compose.yml up -d --build
+bash tests/audit/zero-storage.sh   # 零存储审计（本机 strace）
+SKIP_BUILD=1 bash tests/audit/zero-storage.sh --container   # 容器只读审计
+E2E_RELAY=1 TURN_SECRET=... TURN_URIS='turn:127.0.0.1:3478?transport=udp' \
+  pnpm exec playwright test tests/e2e/ac2-relay.spec.ts       # 仅中继路径
+
 # 经开发域名跑（需 Vite 5173 在跑，反代已把域名指到 5173）
 E2E_NO_WS=1 E2E_BASE_URL=https://room.net.time-pack.com E2E_IGNORE_TLS=1 \
   pnpm exec playwright test tests/e2e/m0-transfer.spec.ts

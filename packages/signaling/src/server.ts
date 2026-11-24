@@ -25,6 +25,7 @@ import { logError } from "./log.js";
 import { RateLimiter } from "./ratelimit.js";
 import { RoomStore, type GuestRecord, type RoomRecord } from "./rooms.js";
 import { ShortCodeStore } from "./shortcode.js";
+import { createStaticHandler } from "./static.js";
 import { issueTurnCredential } from "./turn.js";
 
 const WS_PATH = "/v1/ws";
@@ -92,6 +93,7 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
   const connections = new Map<WebSocket, ConnectionState>();
 
   let httpServer: HttpServer | null = null;
+  let staticHandler: Awaited<ReturnType<typeof createStaticHandler>> | null = null;
   let socketServer: WebSocketServer | null = null;
   let sweepTimer: ReturnType<typeof setInterval> | null = null;
   let keepAliveTimer: ReturnType<typeof setInterval> | null = null;
@@ -594,8 +596,10 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
     }
   }
 
-  function handleRequest(_request: IncomingMessage, response: ServerResponse): void {
-    // No access logging (docs/02 §7); the signaling process only speaks WebSocket for now.
+  function handleRequest(request: IncomingMessage, response: ServerResponse): void {
+    // No access logging (docs/02 §7). With staticDir the same origin serves the app;
+    // otherwise only /v1/ws exists and everything else is a quiet 404.
+    if (staticHandler?.ready && staticHandler(request, response)) return;
     response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
     response.end("not found");
   }
@@ -616,6 +620,10 @@ export function createSignalingServer(options: SignalingServerOptions = {}): Sig
 
   async function start(): Promise<{ port: number }> {
     if (httpServer) return { port: activePort };
+    if (options?.staticDir) {
+      staticHandler = await createStaticHandler(options.staticDir);
+      if (!staticHandler.ready) logError("static", new Error(`no index.html in ${options.staticDir}`));
+    }
     const server = createServer(handleRequest);
     const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES });
     wss.on("connection", (ws: WebSocket, request: IncomingMessage) => {

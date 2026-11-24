@@ -163,6 +163,10 @@
 - 对比度校验脚本扩到 25 组（文本一律 ≥4.5:1），`design/README` 与 `docs/04` §5/§6 同步。
 - 回归：7 个 e2e 通过（AC2 中继按 `E2E_RELAY=1` 单独通过）、95 单测、门禁全绿；`pnpm build` 产物中确认 dev-only 的 `autoaccept` 钩子已被剥离。
 
+## 7.0.7 生产单源（已完成）
+
+`packages/signaling/src/static.ts`：配置 `STATIC_DIR` 时同一进程服务前端与 `/v1/ws`——SPA 回退、`assets/*` immutable 缓存、`Referrer-Policy: no-referrer`、严格 CSP、`Permissions-Policy`、无访问日志、无写盘。新增 7 个单测；本地用生产构建 `apps/web/dist` + Playwright 双上下文跑通 10 MB（哈希一致）。Dockerfile 构建阶段增加 `vite build` 并把 dist 放进运行时镜像（`STATIC_DIR=/app/public`）；`docs/self-host.md` 补生产单源说明；新增 `.github/workflows/ci.yml`（门禁/e2e/零存储审计三个 job）。
+
 ## 7.1 开发链路（已实测）
 
 ```

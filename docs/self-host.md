@@ -396,3 +396,18 @@ INFO Total lost packets 0 (0.000000%), total send dropped 2 (16.666667%)
 | 审计 `--container` 报端口占用                | `AUDIT_PORT=18888 tests/audit/zero-storage.sh --container`。                                                                                                                                                            |
 | 反代 502 / WebSocket 连不上                  | 反代没有转发 Upgrade 头，或 `/v1/ws` 指到了错误端口；Caddy 的 `reverse_proxy` 默认支持 Upgrade，Nginx 需要手写 `proxy_set_header Upgrade $http_upgrade` 等。                                                            |
 | HTTPS 证书问题（TURN over TLS 未启用）       | 本方案 TURN 用明文 3478；若要求 TURN over TLS（5349），需要给 coturn 配证书并开放 5349/tcp+udp，自行在 compose 里加参数，signaling 下发的 `TURN_URIS` 改成 `turns:`。                                                   |
+
+---
+
+## 生产单源部署（一个容器同时服务网页与信令）
+
+镜像构建阶段会跑 `vite build`，并把 `apps/web/dist` 放进运行时镜像的 `/app/public`，容器里 `STATIC_DIR=/app/public`。也就是说：
+
+- 一个端口（容器 8787，宿主机默认映射 8788）同时提供页面、静态资源与 `/v1/ws`；
+- 页面响应自带安全头：`Referrer-Policy: no-referrer`（fragment 里的密钥不会被 referer 带走）、严格 CSP、`Permissions-Policy`；
+- SPA 路由（`/r/:id`、`/j/:code`、`/code`、`/privacy`）回退到 `index.html`；`/assets/*` 走 `immutable` 缓存；
+- 仍然**没有**访问日志、没有 cookie、没有写盘（`bash tests/audit/zero-storage.sh --container` 覆盖这一点）。
+
+本地已验证：`PORT=8791 STATIC_DIR=$PWD/apps/web/dist pnpm --filter @crossfile/signaling start` 后用 Playwright 两个浏览器上下文直接对 `http://127.0.0.1:8791` 完成 10 MB 传输（哈希一致），页面与 `/v1/ws` 同源。
+
+反代只负责 TLS 终结与可选的限流（`infra/deploy/Caddyfile.example`），转发到容器 8788 即可。

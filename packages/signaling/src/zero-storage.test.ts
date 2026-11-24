@@ -27,10 +27,16 @@ afterEach(() => {
 });
 
 describe("zero storage (docs/02 §7)", () => {
-  it("has no filesystem or database imports", () => {
+  it("has no filesystem or database imports (read-only static hosting excepted)", () => {
     for (const file of sourceFiles) {
       const source = readSource(file);
-      expect(source, file).not.toMatch(/from\s+["']node:fs(?:\/promises)?["']/);
+      // static.ts is the one place allowed to touch the filesystem, and only to read the
+      // built web app (production single-origin hosting, docs/02 §7).
+      if (file !== "static.ts") {
+        expect(source, file).not.toMatch(/from\s+["']node:fs(?:\/promises)?["']/);
+      } else {
+        expect(source, file).not.toMatch(/\b(?:writeFile|appendFile|createWriteStream|mkdir|rm|unlink|rename|truncate|chmod)\w*\s*\(/);
+      }
       expect(source, file).not.toMatch(/require\(\s*["']node:fs["']\s*\)/);
       expect(source, file).not.toMatch(
         /from\s+["'](?:pg|mysql2?|sqlite3?|better-sqlite3|redis|ioredis|mongoose|mongodb|knex|prisma|@prisma\/client|drizzle-orm|level|lowdb)["']/,

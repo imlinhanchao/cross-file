@@ -1,0 +1,57 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  gates:
+    name: typecheck · unit · design · build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm gate:contrast
+      - run: pnpm gate:colors
+      - run: pnpm --filter @crossfile/web build
+
+  e2e:
+    name: playwright (chromium)
+    needs: gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm e2e
+        env:
+          CI: "1"
+
+  zero-storage:
+    name: zero-storage audit (container)
+    needs: gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: docker compose -f infra/docker-compose.yml build signaling
+        env:
+          TURN_SECRET: ci-turn-secret
+      - run: SKIP_BUILD=1 bash tests/audit/zero-storage.sh --container
+        env:
+          TURN_SECRET: ci-turn-secret

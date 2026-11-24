@@ -30,6 +30,11 @@ export interface SignalingServerOptions {
   heartbeatMs?: number;
   /** Per-IP signaling budget. Default 60_000 ms / 120 messages. */
   rateLimit?: { windowMs: number; max: number };
+  /**
+   * Directory with the built web app (apps/web/dist). When set, the same process
+   * serves the frontend and /v1/ws on one origin (docs/02 §7, ADR 0001).
+   */
+  staticDir?: string;
 }
 
 export interface SignalingServer {

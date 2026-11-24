@@ -29,7 +29,7 @@
 
 | # | 判据 | 状态 |
 |---|---|---|
-| U1 | compose + dev 可起，HTTPS 入口可用 | ✅ 两条链路实测（见 §环境）；compose `up/ps/logs/down -v` 全过 |
+| U1 | compose + dev 可起，HTTPS 入口可用 | ✅ 三条链路实测：dev 域名；compose `up/ps/logs/down -v`；**生产单源**（signaling 直挂 `apps/web/dist`，一个端口同时服务页面与 `/v1/ws`，安全头齐全，Playwright 对 `http://127.0.0.1:8791` 传输 10 MB 哈希一致） |
 | U2 | 双端 100 MB 哈希一致 | ✅ 本机 Chromium↔Chromium 9.1 s；跨机 Chrome→Safari 直连/中继均一致 |
 | U3 | 500 MB 走通 + 真实路径标签 | ✅ 本机「局域网直连」150 Mbps；跨机「直连」153 Mbps；仅中继 500 MB PASS |
 | U4 | 断流续传 | ✅ AC3 |

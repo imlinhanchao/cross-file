@@ -2,6 +2,7 @@
  * Dev entry point: `pnpm --filter @crossfile/signaling dev` (tsx watch).
  *
  * Environment: PORT (default 8788 — 8787 is commonly taken on dev machines), HOST,
+ * STATIC_DIR (optional built web app for single-origin production),
  * TURN_URIS (comma separated), TURN_SECRET.
  * Per docs/02 §7 the process prints exactly one startup line and no request logs.
  */
@@ -19,7 +20,13 @@ const turn: TurnOptions | undefined = uris.length > 0 && secret ? { uris, secret
 
 // HOST lets the container bind 0.0.0.0 (a published port cannot reach 127.0.0.1).
 const host = process.env.HOST?.trim();
-const server = createSignalingServer({ port, ...(host ? { host } : {}), ...(turn ? { turn } : {}) });
+const staticDir = process.env.STATIC_DIR?.trim();
+const server = createSignalingServer({
+  port,
+  ...(host ? { host } : {}),
+  ...(turn ? { turn } : {}),
+  ...(staticDir ? { staticDir } : {}),
+});
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {

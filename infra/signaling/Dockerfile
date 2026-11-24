@@ -24,19 +24,26 @@ WORKDIR /app
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.base.json ./
 COPY packages/core/package.json packages/core/package.json
 COPY packages/signaling/package.json packages/signaling/package.json
+COPY packages/ui/package.json packages/ui/package.json
+COPY apps/web/package.json apps/web/package.json
 # `--trust-lockfile` skips pnpm's supply-chain-policy network verification, which makes a
 # reproducible container build depend on registry metadata round-trips. The committed lockfile
 # plus --frozen-lockfile still pin every version; bumping a dependency is a reviewed repo change.
-RUN pnpm install --frozen-lockfile --trust-lockfile --filter @crossfile/signaling...
+RUN pnpm install --frozen-lockfile --trust-lockfile --filter @crossfile/signaling... --filter @crossfile/web...
 
-# Sources needed by the bundle only (apps/web stays out of this image).
+# Sources needed by the bundle and the web build (the design system is imported by web styles).
 COPY packages/core/src packages/core/src
 COPY packages/signaling/src packages/signaling/src
+COPY packages/ui/src packages/ui/src
+COPY apps/web apps/web
+COPY design design
 COPY infra/signaling infra/signaling
 
 # esbuild bundles entry.ts + @crossfile/* + ws + zod into one CommonJS file (see build.mjs for why
 # the image does not run TypeScript directly).
 RUN node infra/signaling/build.mjs /app && node --check infra/signaling/build/server.cjs
+# Production single-origin: the build stage also produces the static web app.
+RUN pnpm --filter @crossfile/web build
 
 # --- runtime stage: one file, one process, zero writes ---------------------------------------
 FROM node:22-alpine AS runtime
@@ -47,12 +54,14 @@ LABEL org.opencontainers.image.title="crossfile-signaling" \
 
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
-    PORT=8787
+    PORT=8787 \
+    STATIC_DIR=/app/public
 
 WORKDIR /app
 
-# Single artifact: no node_modules, no source tree, nothing writable is mounted at runtime.
+# Single artifact + static app: no node_modules, no source tree, nothing writable at runtime.
 COPY --from=build --chown=node:node /app/infra/signaling/build/server.cjs /app/server.cjs
+COPY --from=build --chown=node:node /app/apps/web/dist /app/public
 
 USER node
 

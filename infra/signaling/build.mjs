@@ -24,7 +24,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(process.argv[2] ?? join(here, "..", ".."));
 const signalingDir = join(repoRoot, "packages", "signaling");
 
-const tsxManifest = require.resolve("tsx/package.json", { paths: [signalingDir] });
+const tsxManifest = require.resolve("tsx/package.json", {
+  paths: [signalingDir],
+});
 const esbuild = createRequire(tsxManifest)("esbuild");
 
 const outfile = join(here, "build", "server.cjs");

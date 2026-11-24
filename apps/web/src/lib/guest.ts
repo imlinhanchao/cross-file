@@ -81,7 +81,10 @@ export class GuestController {
 
     this.socket.onMessage((message) => void this.onMessage(message));
     this.socket.onClose(() => {
-      if (useApp.getState().phase === "done") return;
+      const phase = useApp.getState().phase;
+      // room_closed is delivered first (same socket); a host-initiated close already
+      // produced a specific message, so don't overwrite it with the generic one.
+      if (phase === "done" || phase === "error" || phase === "idle") return;
       useApp.getState().patch({ phase: "error", error: copy.connectionLost });
     });
     await this.socket.connect();
@@ -322,6 +325,7 @@ export class GuestController {
         chunkCount: entry.chunkCount,
         salt,
         key,
+        progressEveryChunks: 10,
         onProgress: (receivedBytes) => {
           const startedAt = store.transfer?.startedAt ?? Date.now();
           const elapsed = (Date.now() - startedAt) / 1000;

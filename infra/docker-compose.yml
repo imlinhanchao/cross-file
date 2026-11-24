@@ -64,7 +64,7 @@ services:
     stop_grace_period: 10s
 
   coturn:
-    image: coturn/coturn:4.6.3-alpine
+    image: coturn/coturn:4.19.2-alpine
     restart: unless-stopped
     # docs/02 §6.7: coturn static-auth-secret mode matches packages/signaling/src/turn.ts
     #   username   = "<expiryEpoch>:<peerId>"

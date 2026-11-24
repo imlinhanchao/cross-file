@@ -74,7 +74,11 @@ export class HostController {
   async start(): Promise<void> {
     useApp.getState().reset({ role: "host", phase: "provisioning" });
     this.socket.onMessage((message) => void this.onMessage(message));
-    this.socket.onClose(() => useApp.getState().patch({ phase: "error", error: copy.connectionLost }));
+    this.socket.onClose(() => {
+      const phase = useApp.getState().phase;
+      if (phase === "idle" || phase === "error") return;
+      useApp.getState().patch({ phase: "error", error: copy.connectionLost });
+    });
     await this.socket.connect();
     this.socket.send({ v: 1, type: "hello", clientCaps: this.caps });
     this.socket.send({ v: 1, type: "create", roomId: this.identity.roomId, hostCaps: this.caps });

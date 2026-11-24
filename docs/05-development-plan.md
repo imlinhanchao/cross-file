@@ -12,9 +12,9 @@
 | U2 | 双端 100 MB 传完且 SHA-256 一致（主判据） | ✅ 本机双上下文 9.1 s，哈希一致 |
 | U3 | 500 MB 走通，UI 显示真实路径标签 | ⚠️ 本机 500 MB 28 s、路径「局域网直连」（尚需跨机/TURN 验证） |
 | U4 | 断流续传（50% 断开、60 s 内重连、只补缺片、哈希一致） | ✅ 本机 20 MB：传输中强断通道 → 重连 → 只补 295 片 → 哈希一致（Playwright AC3） |
-| U5 | 6 位码 + 4 emoji SAS；结束房间即销毁 | ✅ 6 位码加入 + 双方 4 emoji 确认后经 ctrl 通道下发 roomKey，2 MB 传输哈希一致（Playwright code-sas）；结束房间销毁待补断言 |
+| U5 | 6 位码 + 4 emoji SAS；结束房间即销毁 | ✅ 6 位码 + SAS 后经 ctrl 通道下发 roomKey（哈希一致）；结束房间后 guest 立即收 room_closed、房间从内存删除、迟到 join 被拒（Playwright AC7） |
 | U6 | 零存储审计（无 DB / 无写盘 / 无访问日志） | 进行中（infra-dev：strace 审计脚本） |
-| U7 | 门禁全绿（typecheck / 单测 core ≥80% / 对比度 24/24 / 零硬编码色值 / e2e） | ⚠️ typecheck/82 单测/对比度/色值/e2e 全绿；覆盖率阈值待接线 |
+| U7 | 门禁全绿（typecheck / 单测 core ≥80% / 对比度 24/24 / 零硬编码色值 / e2e） | ⚠️ typecheck / 82 单测 / 对比度 24/24 / 零硬编码色值 / 4 个 e2e 全绿；`--coverage` 阈值已配置待核对 |
 | U8 | 文档齐（README 可照做、自托管、隐私页、LICENSE） | ☐ |
 
 ## 2. 已采纳决策（不再逐项确认）

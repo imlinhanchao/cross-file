@@ -13,7 +13,10 @@
  * make dev.ts read HOST and delete this file (reported to the Lead, not changed here because
  * `packages/**` is outside this task's write scope).
  */
-import { createSignalingServer, type TurnOptions } from "../../packages/signaling/src/index.js";
+import {
+  createSignalingServer,
+  type TurnOptions,
+} from "../../packages/signaling/src/index.js";
 import { logError } from "../../packages/signaling/src/log.js";
 
 const parsedPort = Number.parseInt(process.env.PORT ?? "8787", 10);
@@ -25,7 +28,8 @@ const uris = (process.env.TURN_URIS ?? "")
   .map((uri) => uri.trim())
   .filter((uri) => uri.length > 0);
 const secret = process.env.TURN_SECRET;
-const turn: TurnOptions | undefined = uris.length > 0 && secret ? { uris, secret } : undefined;
+const turn: TurnOptions | undefined =
+  uris.length > 0 && secret ? { uris, secret } : undefined;
 
 const server = createSignalingServer({ port, host, ...(turn ? { turn } : {}) });
 
@@ -39,7 +43,9 @@ server
   .start()
   .then(({ port: activePort }) => {
     // docs/02 §7: exactly one startup line on stdout, and no request logs after it.
-    console.log(`[crossfile-signaling] listening on ws://${host}:${activePort}/v1/ws`);
+    console.log(
+      `[crossfile-signaling] listening on ws://${host}:${activePort}/v1/ws`,
+    );
   })
   .catch((error: unknown) => {
     logError("startup", error);

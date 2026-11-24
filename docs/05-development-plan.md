@@ -188,6 +188,12 @@ ADR 0009：`apps/desktop-electron/` 用 Electron（Chromium）替代 WebKitGTK �
 - 复现：`CROSSFILE_URL=<link> HOME=<writable dir> electron apps/desktop-electron --no-sandbox`。
 剩余：Windows/macOS 的 Tauri 壳真机验证；Linux Electron 打包产物（AppImage）与签名。
 
+### macOS Tauri 壳进展（2026-11-24）
+- 在 mac-mini 上从 LAN 拉取仓库：`pnpm install --frozen-lockfile` ✅（修掉 Electron 壳缺 importer 的锁文件缺陷后）、`pnpm --filter @crossfile/web build` ✅、`cargo build --no-default-features` ✅、`tauri dev` 窗口启动 ✅；
+- 新增 shell 日志 `[shell] page load start/false url=…` 证明 WKWebView 已加载房间页；
+- 端到端 100 MB 未跑完：非交互 shell 启动 GUI 需要经 Terminal（已用 `open -a Terminal` 绕过），但房间链接每 600 s 轮换与 GUI 冷启动存在时序竞争；下一步可用「先用 blank 页预热、再固定房间 15 分钟」的编排重试。
+- 结论：macOS Tauri 壳的构建链已打通，传输验证待补（Linux 已由 Electron 达成 AC9）。
+
 ## 7.1 开发链路（已实测）
 
 ```

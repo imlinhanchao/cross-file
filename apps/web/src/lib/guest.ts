@@ -128,6 +128,7 @@ export class GuestController {
         const rtc = (globalThis as { __crossfileRtc?: Record<string, { state(): unknown }> }).__crossfileRtc?.guest;
         this.report("guest-diag", {
           phase: state.phase,
+          roomId: state.roomId,
           error: state.error,
           files: state.files.length,
           hasKey: state.hasKey ?? false,

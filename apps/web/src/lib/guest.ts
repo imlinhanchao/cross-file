@@ -32,6 +32,7 @@ import {
   type SaveSink,
 } from "./native.js";
 import { probeCaps } from "./caps.js";
+import { readShellConfig } from "./native.js";
 import { sasTimeoutMs, startTimeout, type TimeoutGuard } from "./timeout.js";
 import { resolveSignalingUrl, SignalingSocket, withTimeout } from "./signal.js";
 import { useApp } from "../store.js";
@@ -62,7 +63,7 @@ export class GuestController {
   private readonly native = isNativeShell();
   private cleanupNative?: () => void;
   /** DEV-ONLY diagnostics for cross-machine acceptance tests (stripped from production builds). */
-  private readonly autoAccept =
+  private autoAccept =
     import.meta.env.DEV &&
     new URLSearchParams(location.search).get("autoaccept") === "1";
   private readonly reportUrl = import.meta.env.DEV
@@ -87,6 +88,14 @@ export class GuestController {
     const store = useApp.getState();
     store.reset({ role: "guest", phase: "provisioning" });
     this.caps = await probeCaps();
+    // Debug shells advertise the flag via get_shell_config; release builds never set it,
+    // so a crafted link cannot bypass the receiver's consent in production.
+    if (!this.autoAccept && this.native) {
+      const shell = await readShellConfig();
+      this.autoAccept =
+        shell?.debugAutoAccept === true &&
+        new URLSearchParams(location.search).get("autoaccept") === "1";
+    }
     if (this.joinCode) {
       // 6-digit-code path: no roomKey yet, it arrives after the SAS check.
       this.codeMode = true;

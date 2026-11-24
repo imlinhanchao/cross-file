@@ -36,6 +36,8 @@ struct ShellConfig {
     platform: &'static str,
     signaling_url: String,
     save_strategy: &'static str,
+    /// Debug builds only: lets an automated acceptance run auto-accept without taps.
+    debug_auto_accept: bool,
     version: &'static str,
 }
 
@@ -50,6 +52,8 @@ fn get_shell_config() -> ShellConfig {
         platform: std::env::consts::OS,
         signaling_url,
         save_strategy: "native",
+        debug_auto_accept: cfg!(debug_assertions)
+            && std::env::var("CROSSFILE_DEV_AUTOACCEPT").is_ok_and(|value| value == "1"),
         version: env!("CARGO_PKG_VERSION"),
     }
 }

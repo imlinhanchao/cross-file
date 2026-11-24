@@ -64,6 +64,8 @@ struct ShellConfig {
     save_root: String,
     save_strategy: &'static str,
     version: &'static str,
+    /// Debug builds only: automated acceptance runs may auto-accept without taps.
+    debug_auto_accept: bool,
 }
 
 fn platform_name() -> &'static str {
@@ -286,6 +288,8 @@ fn get_shell_config(app: tauri::AppHandle) -> Result<ShellConfig, String> {
         save_root: save_root(&app)?.to_string_lossy().into_owned(),
         save_strategy: "native",
         version: env!("CARGO_PKG_VERSION"),
+        debug_auto_accept: cfg!(debug_assertions)
+            && std::env::var("CROSSFILE_DEV_AUTOACCEPT").is_ok_and(|value| value == "1"),
     })
 }
 
@@ -366,7 +370,29 @@ fn shell_init_script() -> String {
 fn on_page_load(_webview: &Webview, payload: &PageLoadPayload<'_>) {
     if let PageLoadEvent::Finished = payload.event() {
         let _ = _webview.eval(&shell_init_script());
+        #[cfg(debug_assertions)]
+        if let Some(script) = dev_join_script() {
+            let _ = _webview.eval(&script);
+        }
     }
+}
+
+/// Debug-only navigation harness: `CROSSFILE_DEV_JOIN=<room link>` makes the shell
+/// open that room so acceptance runs need no touch input (release builds omit this).
+#[cfg(debug_assertions)]
+fn dev_join_script() -> Option<String> {
+    let link = std::env::var("CROSSFILE_DEV_JOIN")
+        .ok()
+        .filter(|value| !value.trim().is_empty())?;
+    let target = serde_json::to_string(&link).ok()?;
+    Some(format!(
+        r#"(function () {{
+  var target = {target};
+  if (location.href !== target) {{
+    setTimeout(function () {{ location.href = target; }}, 1200);
+  }}
+}})();"#
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -417,10 +443,8 @@ mod tests {
 
     #[test]
     fn duplicate_names_do_not_overwrite() {
-        let dir = std::env::temp_dir().join(format!(
-            "crossfile-mobile-test-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("crossfile-mobile-test-{}", std::process::id()));
         fs::create_dir_all(&dir).expect("temp dir");
         let first = unique_path(&dir, "a.bin");
         assert_eq!(first, dir.join("a.bin"));

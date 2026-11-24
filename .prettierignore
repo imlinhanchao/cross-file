@@ -14,3 +14,5 @@ design
 docs
 README.md
 **/dist-electron
+**/src-tauri/gen
+**/target

@@ -38,6 +38,8 @@ export interface ShellConfig {
   shell?: string;
   signalingUrl?: string;
   saveStrategy?: string;
+  /** Debug shells only: acceptance runs may accept without a tap. */
+  debugAutoAccept?: boolean;
 }
 
 /**
@@ -51,7 +53,11 @@ export async function readShellConfig(): Promise<ShellConfig | null> {
   try {
     // Rust commands serialize snake_case; accept both so desktop and mobile match.
     const raw = await invoke<
-      ShellConfig & { signaling_url?: string; save_strategy?: string }
+      ShellConfig & {
+        signaling_url?: string;
+        save_strategy?: string;
+        debug_auto_accept?: boolean;
+      }
     >("get_shell_config");
     if (!raw) return null;
     return {
@@ -59,6 +65,7 @@ export async function readShellConfig(): Promise<ShellConfig | null> {
       shell: raw.shell,
       saveStrategy: raw.saveStrategy ?? raw.save_strategy,
       signalingUrl: raw.signalingUrl ?? raw.signaling_url,
+      debugAutoAccept: raw.debugAutoAccept ?? raw.debug_auto_accept ?? false,
     };
   } catch {
     return null;

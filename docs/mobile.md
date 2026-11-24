@@ -423,3 +423,31 @@ AC9 的手机侧仍缺一次真机（或用带 KVM 的机器/云端模拟器）�
 6. **AC9 手机侧验收**：需要一台真机或带 KVM 的模拟器环境（本机不具备）；拿到设备后按 §2.2/§2.4 出 APK、
    `adb install -r`、`adb shell am start -n com.crossfile.mobile/.MainActivity`，`adb logcat` 抓 WebView 启动，
    再跑 500 MB 用例并记录保存路径 / 通知 / 前后台切换行为。
+
+---
+
+## 调试/自动化钩子（仅 debug 构建）
+
+Android 与 iOS 的 debug 构建会读取三个运行期环境变量，配合主机侧的验收脚本可以无人值守跑通接收流程：
+
+| 环境变量 | 作用 |
+|---|---|
+| `CROSSFILE_SIGNALING_URL` | 信令地址（默认 `ws://127.0.0.1:8788/v1/ws`），自托管/测试实例用 |
+| `CROSSFILE_DEV_JOIN` | 启动后自动 `location.href` 跳到房间链接（带 `#` 下的 roomKey） |
+| `CROSSFILE_DEV_AUTOACCEPT=1` | 允许页面在带 `?autoaccept=1` 时自动接收，无需点按（release 构建不读它） |
+
+iOS 模拟器示例（App 安装后）：
+
+```bash
+LINK=$(curl -sS http://<host>:8099/link.txt)
+xcrun simctl terminate booted <bundle-id> 2>/dev/null
+SIMCTL_CHILD_CROSSFILE_SIGNALING_URL="wss://<domain>/v1/ws" \
+SIMCTL_CHILD_CROSSFILE_DEV_JOIN="$LINK" \
+SIMCTL_CHILD_CROSSFILE_DEV_AUTOACCEPT=1 \
+  xcrun simctl launch booted <bundle-id>
+# 落盘位置（应用沙盒内）
+xcrun simctl get_app_container booted <bundle-id> data
+```
+
+安全说明：`CROSSFILE_DEV_AUTOACCEPT` 只在 `cfg!(debug_assertions)` 下生效，且必须链接里带 `autoaccept=1`；
+release 包即使设置该变量也不会绕过接收方的同意步骤。

@@ -231,6 +231,13 @@ docs/02 §4.5 的 60 秒未确认超时落地：guest 收到 4 emoji 后计时�
 - **500 MB：路径「直连」，host `sha256=a2cff034…`，落盘 524 288 000 B、sha256 完全一致**。
 因此 AC9 桌面侧在 Linux（Electron）与 macOS（Tauri）双双达成；剩 Windows 壳与手机壳。
 
+## 7.0.13 手机壳无人值守验收钩子（进行中）
+
+手机壳 debug 构建新增 `CROSSFILE_DEV_JOIN` / `CROSSFILE_DEV_AUTOACCEPT`（配合同样 debug-only 的
+`get_shell_config.debug_auto_accept`，由 Web 端读取后才允许自动接收；release 永不开启），并在 iOS
+模拟器上尝试「构建 → 安装 → simctl launch（带环境变量）→ 自动加入 → 原生落盘」全链路。
+手机壳新增 Rust 单测（文件名穿越防护、重名去重、init script 注入信令地址，3 个全过）。
+
 ## 7.1 开发链路（已实测）
 
 ```

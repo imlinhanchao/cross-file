@@ -1,0 +1,53 @@
+# Caddy reverse proxy example for CrossFile (docs/03 M4).
+#
+# Production: one HTTPS origin serves the built web app and the signaling WebSocket on the same
+# host, so the browser only ever talks to https://room.example.com/ (same-origin, no CORS, no
+# third-party scripts). WebSocket upgrade is handled by Caddy's reverse_proxy automatically.
+#
+# Dev: the existing local reverse proxy terminates TLS for Vite on 5173 and proxies /v1/ws to the
+# signaling dev server on 8787 — see the commented second block.
+#
+#     caddy validate --config infra/deploy/Caddyfile.example
+#     caddy run --config infra/deploy/Caddyfile.example
+#
+# Replace room.example.com everywhere and point it at this machine before running.
+
+room.example.com {
+	encode zstd gzip
+
+	# docs/01 §8: no referrer leaks, no framing, no inline/3rd-party script. The app builds without
+	# inline JS; `style-src 'unsafe-inline'` stays because React sets style attributes at runtime.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		Referrer-Policy "no-referrer"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+		Content-Security-Policy "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'"
+		-Server
+	}
+
+	# Signaling: WebSocket only, same-origin. Keep it on the same host so the web app's default
+	# wss://<origin>/v1/ws works without configuration.
+	handle /v1/ws {
+		reverse_proxy 127.0.0.1:8787
+	}
+
+	# Static web build (`pnpm --filter @crossfile/web build` → apps/web/dist).
+	handle {
+		root * /srv/crossfile/web
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+# --- Local development (HTTPS for the Vite dev server) --------------------------------------
+# Uncomment and replace the hostname when working on this machine. Caddy obtains the certificate
+# for the real domain; `tls internal` is only for a throwaway local name.
+#
+# room.net.time-pack.com {
+# 	reverse_proxy 127.0.0.1:5173 {
+# 		# Vite already proxies /v1/ws to ws://127.0.0.1:8787 in dev (see apps/web/vite.config.ts).
+# 		header_up Host {host}
+# 	}
+# }

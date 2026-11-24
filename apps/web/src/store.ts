@@ -61,6 +61,12 @@ export interface RoomView {
   error?: string;
   notice?: string;
   roomClosed?: boolean;
+  /** 6-digit-code path: 4 emoji both sides must compare before the key is sent */
+  sas?: string[];
+  sasPending?: boolean;
+  sasConfirmedByMe?: boolean;
+  codeMode?: boolean;
+  hasKey?: boolean;
 }
 
 interface AppStore extends RoomView {

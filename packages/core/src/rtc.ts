@@ -3,6 +3,7 @@
  * Browser-only (RTC* globals); not imported by node-side packages.
  */
 import type { RTCIceCandidateInitLike, SignalPayload, TurnCredential } from "./protocol.js";
+import { computeSas, parseDtlsFingerprint } from "./crypto.js";
 
 export type PathLabel = "lan" | "direct" | "relay";
 
@@ -194,6 +195,20 @@ export async function detectPath(pc: RTCPeerConnection): Promise<PathLabel> {
   if (localType === "relay" || remoteType === "relay") return "relay";
   if (localType === "host" && remoteType === "host") return "lan";
   return "direct";
+}
+
+/**
+ * 6-digit-code path SAS (docs/02 §3.5/§4.5): derive the 4 emoji from both DTLS
+ * fingerprints. Returns null until the peer connection has both descriptions.
+ */
+export function sasFromPeerConnection(pc: RTCPeerConnection): string[] | null {
+  const localSdp = pc.localDescription?.sdp;
+  const remoteSdp = pc.remoteDescription?.sdp;
+  if (!localSdp || !remoteSdp) return null;
+  const local = parseDtlsFingerprint(localSdp);
+  const remote = parseDtlsFingerprint(remoteSdp);
+  if (!local || !remote) return null;
+  return computeSas(local, remote);
 }
 
 /** HTML string for RTCIceCandidateInit transport; kept here so callers stay typed. */

@@ -1,0 +1,18 @@
+# Build context is the repository root; keep the context small and deterministic (BuildKit reads
+# the file named after the Dockerfile: infra/signaling/Dockerfile.dockerignore).
+node_modules
+**/node_modules
+.git
+.cache
+test-results
+playwright-report
+design
+docs
+apps
+tests
+scripts
+infra/deploy
+infra/signaling/build
+**/*.log
+.env
+.env.*

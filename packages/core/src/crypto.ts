@@ -147,6 +147,17 @@ export class IncrementalSha256 {
   }
 }
 
+/** Whole-file digest, streamed so a 500 MB file never lands in memory at once. */
+export async function wholeFileSha256(file: Blob, sliceBytes = 1024 * 1024): Promise<string> {
+  const hasher = new IncrementalSha256();
+  for (let offset = 0; offset < file.size; offset += sliceBytes) {
+    const part = new Uint8Array(await file.slice(offset, Math.min(offset + sliceBytes, file.size)).arrayBuffer());
+    hasher.update(part);
+  }
+  if (file.size === 0) hasher.update(new Uint8Array(0));
+  return hasher.digestHex();
+}
+
 export function sha256Hex(bytes: Uint8Array): string {
   return bytesToHex(sha256(bytes));
 }

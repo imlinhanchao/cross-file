@@ -5,7 +5,7 @@ import { useApp } from "../store.js";
 import { Icon } from "../ui/Icon.js";
 import { Progress, WarningCard } from "../ui/bits.js";
 
-export function GuestPage() {
+export function GuestPage({ code }: { code?: string }) {
   const state = useApp();
   const controller = useRef<GuestController | null>(null);
   const started = useRef(false);
@@ -13,13 +13,13 @@ export function GuestPage() {
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    const instance = new GuestController();
+    const instance = new GuestController(code);
     controller.current = instance;
     void instance.start().catch((error: unknown) => {
       useApp.getState().patch({ phase: "error", error: String(error) });
     });
     return () => instance.close();
-  }, []);
+  }, [code]);
 
   const totalBytes = state.files.reduce((sum, file) => sum + file.size, 0);
   const canAccept = state.phase === "joined" && state.files.length > 0;
@@ -46,6 +46,41 @@ export function GuestPage() {
             <div className="card">
               <p className="lead">正在连接对方…</p>
               <p className="small muted">密钥只存在于这个链接里，不会发给服务器。</p>
+            </div>
+          ) : null}
+
+          {state.sasPending && state.sas ? (
+            <div className="card">
+              <div className="card__head">
+                <span className="card__title">核对安全码</span>
+                <span className="spacer" />
+                <span className="card__hint">6 位码加入</span>
+              </div>
+              <p className="lead">和对方屏幕上的 4 个图标一致吗？</p>
+              <div className="row gap-4" style={{ fontSize: 44, lineHeight: 1.2 }} aria-label="安全码图标">
+                {state.sas.map((emoji, index) => (
+                  <span key={index}>{emoji}</span>
+                ))}
+              </div>
+              <p className="small muted mt-4">
+                这个码来自双方的加密握手，服务器无法伪造。不一致请点拒绝并让对方重新建房。
+              </p>
+              {state.sasConfirmedByMe ? (
+                <p className="note mt-4">
+                  <Icon name="clock" size="sm" />
+                  <span>已确认，等待对方确认…</span>
+                </p>
+              ) : (
+                <button
+                  className="btn btn--primary btn--lg btn--block mt-4"
+                  type="button"
+                  data-testid="sas-confirm"
+                  onClick={() => controller.current?.confirmSas()}
+                >
+                  <Icon name="check" size="sm" />
+                  四个图标一致
+                </button>
+              )}
             </div>
           ) : null}
 

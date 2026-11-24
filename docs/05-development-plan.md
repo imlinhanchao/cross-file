@@ -11,8 +11,8 @@
 | U1 | `docker compose -f infra/docker-compose.yml up -d` + `pnpm dev` 可起，`https://room.net.time-pack.com` 可访问 | 进行中（infra-dev） |
 | U2 | 双端 100 MB 传完且 SHA-256 一致（主判据） | ✅ 本机双上下文 9.1 s，哈希一致 |
 | U3 | 500 MB 走通，UI 显示真实路径标签 | ⚠️ 本机 500 MB 28 s、路径「局域网直连」（尚需跨机/TURN 验证） |
-| U4 | 断流续传（50% 断开、60 s 内重连、只补缺片、哈希一致） | ☐ |
-| U5 | 6 位码 + 4 emoji SAS；结束房间即销毁 | ☐（服务端短码已实现，客户端输码页与 SAS 未接） |
+| U4 | 断流续传（50% 断开、60 s 内重连、只补缺片、哈希一致） | ✅ 本机 20 MB：传输中强断通道 → 重连 → 只补 295 片 → 哈希一致（Playwright AC3） |
+| U5 | 6 位码 + 4 emoji SAS；结束房间即销毁 | ✅ 6 位码加入 + 双方 4 emoji 确认后经 ctrl 通道下发 roomKey，2 MB 传输哈希一致（Playwright code-sas）；结束房间销毁待补断言 |
 | U6 | 零存储审计（无 DB / 无写盘 / 无访问日志） | 进行中（infra-dev：strace 审计脚本） |
 | U7 | 门禁全绿（typecheck / 单测 core ≥80% / 对比度 24/24 / 零硬编码色值 / e2e） | ⚠️ typecheck/82 单测/对比度/色值/e2e 全绿；覆盖率阈值待接线 |
 | U8 | 文档齐（README 可照做、自托管、隐私页、LICENSE） | ☐ |
@@ -90,6 +90,9 @@
 | 2026-11-24 | 不引 Tailwind | 设计系统已是纯 CSS token 体系 |
 | 2026-11-24 | ctrl 消息统一 `{v:1,type}` 判别字段；`created` 增加 `code`；`join_ok.turn` 可缺省；`signal.to` 支持 `"host"` 哨兵 | docs/02 未定义这些字段/路由，按实现补齐，待回写 docs/02 |
 | 2026-11-24 | 500 MB 暂用 blob sink 跑通（本机 Chromium 可承受） | fs/sw sink 属 M2；本机 500 MB 峰值内存占用偏高，跨机/移动端必须换 sink |
+| 2026-11-24 | 续传：发送方在发 manifest 前先算一次全文件 SHA-256，续传只重发缺失分片、`seq`/nonce 不变 | 发送方哈希必须覆盖整个文件；边发边哈希在乱序补片时无法接续 |
+| 2026-11-24 | ctrl 通道新增 `sas-confirm` / `room-key {key, roomId}` / `key-ok` | docs/02 §3.5 只写了"人工比对后 H 通过 ctrl 发送 roomKey"，字段未定义 |
+| 2026-11-24 | 发送前按接收方能力给软/硬上限提示（`judgeFile`），超硬上限禁用发送 | docs/01 D16 要求发送方提前看到限制提示 |
 
 ## 7.1 实测数据（本机 Chromium↔Chromium，loopback WebRTC，路径=局域网直连）
 

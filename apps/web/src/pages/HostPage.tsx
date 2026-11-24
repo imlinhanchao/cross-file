@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
+import { judgeFile } from "@crossfile/core";
 import { copy, formatBytes, pathLabel, splitCode } from "@crossfile/ui";
 import { HostController } from "../lib/host.js";
 import { useApp } from "../store.js";
@@ -17,6 +18,7 @@ export function HostPage() {
   useEffect(() => {
     const instance = new HostController();
     controller.current = instance;
+    (globalThis as { __cfHost?: HostController }).__cfHost = instance;
     void instance.start().catch((error: unknown) => {
       useApp.getState().patch({ phase: "error", error: String(error) });
     });
@@ -34,7 +36,14 @@ export function HostPage() {
   const pending = guests.filter((guest) => guest.status === "pending");
   const joined = guests.filter((guest) => guest.status === "joined" || guest.status === "transferring" || guest.status === "done");
   const totalBytes = state.files.reduce((sum, file) => sum + file.size, 0);
-  const canSend = joined.length > 0 && state.files.length > 0 && (state.phase === "joined" || state.phase === "approval");
+  const verdicts = joined.map((guest) => ({ guest, verdict: judgeFile(totalBytes, guest.caps) }));
+  const rejected = verdicts.find((entry) => entry.verdict.level === "reject");
+  const warned = verdicts.find((entry) => entry.verdict.level === "warn");
+  const canSend =
+    joined.length > 0 &&
+    state.files.length > 0 &&
+    !rejected &&
+    (state.phase === "joined" || state.phase === "approval");
 
   const pickFiles = (files: FileList | null): void => {
     if (!files || files.length === 0) return;
@@ -153,6 +162,53 @@ export function HostPage() {
               </div>
             ) : null}
 
+            {state.files.length > 0 && rejected ? (
+              <WarningCard
+                title="对方可能收不了这个文件"
+                body={`${formatBytes(totalBytes)} 超过对方浏览器能接收的上限（约 ${rejected.verdict.hardLimitMB} MB）。换成电脑接收，或让对方安装 CrossFile App。`}
+              />
+            ) : null}
+            {state.files.length > 0 && !rejected && warned ? (
+              <WarningCard
+                title="这台设备存下大文件有风险"
+                body={`${formatBytes(totalBytes)} 超过稳定保存上限（约 ${warned.verdict.softLimitMB} MB，${warned.guest.caps.platform === "ios" ? "iPhone" : warned.guest.caps.uaFamily}）。可以继续发送，但对方可能保存失败；建议改用电脑接收或安装 App。`}
+              />
+            ) : null}
+
+            {state.sasPending && state.sas ? (
+              <div className="card">
+                <div className="card__head">
+                  <span className="card__title">核对安全码</span>
+                  <span className="spacer" />
+                  <span className="card__hint">6 位码加入</span>
+                </div>
+                <p className="small muted">
+                  对方用 6 位码加入，密钥还没有送过去。先和对方核对下面 4 个图标，一致后再通过加密通道传密钥。
+                </p>
+                <div className="row gap-4 mt-4" style={{ fontSize: 40, lineHeight: 1.2 }} aria-label="安全码图标">
+                  {state.sas.map((emoji, index) => (
+                    <span key={index}>{emoji}</span>
+                  ))}
+                </div>
+                {state.sasConfirmedByMe ? (
+                  <p className="note mt-4">
+                    <Icon name="clock" size="sm" />
+                    <span>已确认，等待对方确认…</span>
+                  </p>
+                ) : (
+                  <button
+                    className="btn btn--primary btn--lg btn--block mt-4"
+                    type="button"
+                    data-testid="sas-confirm-host"
+                    onClick={() => controller.current?.confirmSas()}
+                  >
+                    <Icon name="check" size="sm" />
+                    四个图标一致
+                  </button>
+                )}
+              </div>
+            ) : null}
+
             {state.transfer && state.transfer.totalBytes > 0 ? (
               <div className="card">
                 <Progress
@@ -223,6 +279,12 @@ export function HostPage() {
               <p className="note">
                 <Icon name="shield-check" size="sm" />
                 <span>{copy.privacyShort}</span>
+              </p>
+              <p className="note">
+                <Icon name="link" size="sm" />
+                <span>
+                  接收方也可以打开 <span className="mono">{location.origin}/code</span> 输入房间码
+                </span>
               </p>
             </section>
 

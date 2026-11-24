@@ -211,7 +211,16 @@ export type CtrlMessage =
   | { v: 1; type: "ack"; fileId: number; ok: boolean; error?: string }
   | { v: 1; type: "error"; code: ErrorCode; msg: string; fileId?: number }
   | { v: 1; type: "pause" }
-  | { v: 1; type: "resume" };
+  | { v: 1; type: "resume" }
+  /**
+   * 6-digit-code path only (docs/02 §3.5): the guest joins without the roomKey in
+   * the fragment, so the key is handed over the encrypted data channel after both
+   * sides confirm the 4-emoji SAS. These message shapes are not fixed by docs/02
+   * and are recorded as an implementation note in docs/05 §7.
+   */
+  | { v: 1; type: "sas-confirm" }
+  | { v: 1; type: "room-key"; key: string; roomId: string }
+  | { v: 1; type: "key-ok" };
 
 const manifestEntrySchema = z.object({
   id: z.number().int().min(1).max(65535),
@@ -263,6 +272,9 @@ export const ctrlMessageSchema: z.ZodType<CtrlMessage> = z.union([
   }),
   z.object({ v: z.literal(1), type: z.literal("pause") }),
   z.object({ v: z.literal(1), type: z.literal("resume") }),
+  z.object({ v: z.literal(1), type: z.literal("sas-confirm") }),
+  z.object({ v: z.literal(1), type: z.literal("room-key"), key: z.string().min(1).max(128), roomId: z.string().min(1).max(64) }),
+  z.object({ v: z.literal(1), type: z.literal("key-ok") }),
 ]) as z.ZodType<CtrlMessage>;
 
 export function parseCtrlMessage(raw: unknown): CtrlMessage {

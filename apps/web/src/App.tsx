@@ -1,6 +1,13 @@
 import { HostPage } from "./pages/HostPage.js";
 import { GuestPage } from "./pages/GuestPage.js";
+import { CodePage } from "./pages/CodePage.js";
 
 export function App() {
-  return location.pathname.startsWith("/r/") ? <GuestPage /> : <HostPage />;
+  if (location.pathname.startsWith("/r/")) return <GuestPage />;
+  if (location.pathname.startsWith("/j/")) {
+    const code = location.pathname.split("/")[2] ?? "";
+    return <GuestPage code={code} />;
+  }
+  if (location.pathname.startsWith("/code")) return <CodePage />;
+  return <HostPage />;
 }

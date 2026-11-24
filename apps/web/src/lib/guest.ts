@@ -12,12 +12,14 @@ import {
   iceServersFromTurn,
   importFileKey,
   parseCtrlMessage,
+  sasFromPeerConnection,
   type Caps,
   type CtrlMessage,
   type FileManifestEntry,
   type Manifest,
   type Peer,
   type PeerHandles,
+  type ClientMessage,
   type ServerMessage,
 } from "@crossfile/core";
 import { copy } from "@crossfile/ui";
@@ -33,9 +35,14 @@ interface FileReceiver {
 export class GuestController {
   private readonly caps: Caps = detectCaps();
   private readonly nonce = createGuestNonce();
+  private readonly joinCode?: string;
+  private codeMode = false;
+  private sasConfirmedByMe = false;
   private readonly socket = new SignalingSocket();
   private peer?: Peer;
   private handles?: PeerHandles;
+  private hostTurn?: Parameters<typeof iceServersFromTurn>[0];
+  private peerDead = false;
   private manifest?: Manifest;
   private receivers = new Map<number, FileReceiver>();
   private roomId = "";
@@ -43,22 +50,34 @@ export class GuestController {
   private roomIdBytes: Uint8Array = new Uint8Array(0);
   private sessionKey: Uint8Array = new Uint8Array(0);
 
+  constructor(joinCode?: string) {
+    this.joinCode = joinCode;
+  }
+
   get link(): string {
-    return buildRoomLink(location.origin, this.roomId, this.roomKey);
+    return this.roomId ? buildRoomLink(location.origin, this.roomId, this.roomKey) : "";
   }
 
   async start(): Promise<void> {
     const store = useApp.getState();
     store.reset({ role: "guest", phase: "provisioning" });
-    const parsed = parseLocation();
-    if (!parsed) {
-      store.patch({ phase: "error", error: "链接不完整：缺少房间密钥（# 后的部分）" });
-      return;
+    if (this.joinCode) {
+      // 6-digit-code path: no roomKey yet, it arrives after the SAS check.
+      this.codeMode = true;
+      this.roomId = this.joinCode;
+      store.patch({ codeMode: true, hasKey: false });
+    } else {
+      const parsed = parseLocation();
+      if (!parsed) {
+        store.patch({ phase: "error", error: "链接不完整：缺少房间密钥（# 后的部分）" });
+        return;
+      }
+      this.roomId = parsed.roomId;
+      this.roomKey = parsed.roomKey;
+      this.roomIdBytes = base32Decode(parsed.roomId);
+      this.sessionKey = deriveSessionKey(this.roomKey, this.roomIdBytes);
+      store.patch({ hasKey: true });
     }
-    this.roomId = parsed.roomId;
-    this.roomKey = parsed.roomKey;
-    this.roomIdBytes = base32Decode(parsed.roomId);
-    this.sessionKey = deriveSessionKey(this.roomKey, this.roomIdBytes);
 
     this.socket.onMessage((message) => void this.onMessage(message));
     this.socket.onClose(() => {
@@ -73,9 +92,19 @@ export class GuestController {
       roomId: this.roomId,
       guestCaps: this.caps,
       guestNonce: this.nonce,
-      proof: computeJoinProof(this.roomKey, this.roomIdBytes, this.nonce),
-    });
+      ...(this.codeMode
+        ? {}
+        : { proof: computeJoinProof(this.roomKey, this.roomIdBytes, this.nonce) }),
+    } as ClientMessage);
     store.patch({ phase: "waiting", roomId: this.roomId, link: this.link });
+  }
+
+  /** Guest side of the 4-emoji check; unlocks the roomKey hand-over. */
+  confirmSas(): void {
+    if (this.sasConfirmedByMe || !this.handles) return;
+    this.sasConfirmedByMe = true;
+    this.handles.ctrl.send(JSON.stringify({ v: 1, type: "sas-confirm" }));
+    useApp.getState().patch({ sasConfirmedByMe: true });
   }
 
   accept(): void {
@@ -99,7 +128,8 @@ export class GuestController {
     switch (message.type) {
       case "join_ok": {
         store.patch({ hostCaps: message.peerCaps, phase: "joined" });
-        this.openPeer(message.turn);
+        this.hostTurn = message.turn;
+        this.attachPeer(message.turn);
         break;
       }
       case "join_rejected": {
@@ -107,6 +137,11 @@ export class GuestController {
         break;
       }
       case "signal": {
+        if (message.payload.k === "offer" && this.peerDead) {
+          // Host re-offers after a channel drop (docs/02 §6.5): fresh PC, same receiver state.
+          this.peerDead = false;
+          this.attachPeer(this.hostTurn);
+        }
         await this.peer?.handleSignal(message.payload);
         break;
       }
@@ -123,23 +158,72 @@ export class GuestController {
     }
   }
 
-  private openPeer(turn: Parameters<typeof iceServersFromTurn>[0]): void {
+  /** Creates the guest peer connection; re-used verbatim when the host re-offers. */
+  private attachPeer(turn: Parameters<typeof iceServersFromTurn>[0]): void {
+    this.hostTurn = turn;
     this.peer = createGuestPeer({
       iceServers: iceServersFromTurn(turn),
       sendSignal: (payload) => this.socket.signal("host", payload),
-      onError: (error) => useApp.getState().patch({ error: String(error) }),
+      onError: (error) => {
+        console.debug("[cf-guest] peer error", String(error));
+        this.markChannelLost();
+      },
     });
-    // `to` is ignored by the server for guests: it routes to the room host.
-    this.peer.whenOpen
+    // `to: "host"` is a sentinel: the server routes guest signals to the room host.
+    const peer = this.peer;
+    peer.whenOpen
       .then((handles) => {
+        if (this.peer !== peer) return; // superseded by a resume connection
         this.handles = handles;
         handles.ctrl.addEventListener("message", (event: MessageEvent) => this.onCtrl(event.data));
         handles.data.binaryType = "arraybuffer";
         handles.data.addEventListener("message", (event: MessageEvent) => void this.onData(event.data));
+        handles.data.addEventListener("close", () => {
+          if (this.peer === peer) this.markChannelLost();
+        });
+        handles.ctrl.addEventListener("close", () => {
+          if (this.peer === peer) this.markChannelLost();
+        });
         handles.ctrl.send(JSON.stringify({ v: 1, type: "hello", guestCaps: this.caps }));
         void handles.path().then((path) => useApp.getState().setTransfer({ path }));
+
+        if (this.codeMode && this.sessionKey.length === 0) {
+          const sas = sasFromPeerConnection(handles.pc);
+          useApp.getState().patch({
+            sas: sas ?? ["❓", "❓", "❓", "❓"],
+            sasPending: true,
+            sasConfirmedByMe: false,
+          });
+          return;
+        }
+        if (this.receivers.size > 0) this.requestResume();
       })
-      .catch((error) => useApp.getState().patch({ error: String(error) }));
+      .catch((error) => {
+        console.debug("[cf-guest] peer open failed", String(error));
+        if (this.peer === peer) this.markChannelLost();
+      });
+  }
+
+  private markChannelLost(): void {
+    this.peerDead = true;
+    const store = useApp.getState();
+    if (store.phase === "transferring") store.patch({ phase: "paused", notice: copy.resumeHint });
+  }
+
+  /** Tell the host what is still missing; only those chunks are re-sent (docs/02 §6.5). */
+  private requestResume(): void {
+    if (!this.handles) return;
+    let asked = false;
+    for (const [fileId, file] of this.receivers) {
+      if (file.receiver.isComplete()) continue;
+      asked = true;
+      this.handles.ctrl.send(
+        JSON.stringify({ v: 1, type: "bitmap", fileId, bits: file.receiver.bitmap() }),
+      );
+    }
+    const store = useApp.getState();
+    if (asked) store.patch({ phase: "transferring", notice: copy.resumeHint });
+    else if (this.receivers.size > 0) store.patch({ phase: "done" });
   }
 
   private async onCtrl(raw: unknown): Promise<void> {
@@ -158,6 +242,15 @@ export class GuestController {
           phase: "joined",
           files: message.files.map((file) => ({ id: file.id, name: file.name, size: file.size, mime: file.mime })),
         });
+        break;
+      }
+      case "room-key": {
+        this.roomKey = base64urlToBytes(message.key);
+        this.roomId = message.roomId;
+        this.roomIdBytes = base32Decode(message.roomId);
+        this.sessionKey = deriveSessionKey(this.roomKey, this.roomIdBytes);
+        this.handles?.ctrl.send(JSON.stringify({ v: 1, type: "key-ok" }));
+        useApp.getState().patch({ sas: undefined, sasPending: false, hasKey: true });
         break;
       }
       case "done": {
@@ -204,6 +297,7 @@ export class GuestController {
     const totalBytes = this.manifest?.files.reduce((sum, entry) => sum + entry.size, 0) ?? bytes.length;
     store.patch({
       phase: "done",
+      notice: copy.done,
       result: { ok: true, sha256: result.sha256, url, fileName: file.entry.name, bytes: bytes.length },
     });
     store.setTransfer({ sentBytes: totalBytes, totalBytes, speedBps: 0 });

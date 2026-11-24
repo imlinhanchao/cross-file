@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const SIZE_MB = Number(process.env.E2E_FILE_MB ?? 10);
@@ -12,7 +12,7 @@ function fixturePath(bytes: Buffer): { path: string; name: string } {
   mkdirSync(dir, { recursive: true });
   const name = `e2e-${SIZE_MB}mb.bin`;
   const path = resolve(dir, name);
-  if (!existsSync(path)) writeFileSync(path, bytes);
+  writeFileSync(path, bytes); // random bytes differ per run: always rewrite
   return { path, name };
 }
 
@@ -112,6 +112,7 @@ test("M0: two browsers transfer a file end to end with matching SHA-256", async 
   const hostResult = await snapshot(host);
   expect(hostResult.result?.sha256).toBe(expected);
   expect(guestHash).toBe(expected);
+  if (pageErrors.length > 0) console.log("PAGE ERRORS:", JSON.stringify(pageErrors, null, 2));
   expect(pageErrors).toEqual([]);
 
   await hostContext.close();

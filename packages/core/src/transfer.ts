@@ -70,6 +70,13 @@ export interface SendFileOptions {
   progressEveryChunks?: number;
   /** sctp.maxMessageSize of the current pair; frames are clamped to fit it */
   maxMessageSize?: number;
+  /**
+   * Resume support (docs/02 §6.5): send only these chunk indexes. `seq` and the
+   * derived nonce never change, so a re-sent chunk is byte-identical.
+   */
+  onlyChunks?: number[] | Set<number>;
+  /** Set false when the caller already owns the whole-file digest (resume path). */
+  computeHash?: boolean;
 }
 
 export interface SendFileResult {
@@ -78,6 +85,8 @@ export interface SendFileResult {
   bytes: number;
   /** chunk size actually used; the manifest must advertise this value */
   chunkSize: number;
+  /** chunks actually transmitted by this call */
+  sentChunks: number;
 }
 
 export async function sendFile(options: SendFileOptions): Promise<SendFileResult> {
@@ -95,6 +104,8 @@ export async function sendFile(options: SendFileOptions): Promise<SendFileResult
     onProgress,
     progressEveryChunks = 100,
     maxMessageSize = 262_144,
+    onlyChunks,
+    computeHash = true,
   } = options;
 
   const effective = effectiveChunkSize(chunkSize, maxMessageSize);
@@ -102,8 +113,12 @@ export async function sendFile(options: SendFileOptions): Promise<SendFileResult
   const chunkCount = chunkCountFor(totalBytes, effective);
   const hasher = new IncrementalSha256();
   let sentBytes = 0;
+  let sentChunks = 0;
+  const seqs = onlyChunks
+    ? [...onlyChunks].filter((seq) => seq >= 0 && seq < chunkCount).sort((a, b) => a - b)
+    : Array.from({ length: chunkCount }, (_, index) => index);
 
-  for (let seq = 0; seq < chunkCount; seq++) {
+  for (const seq of seqs) {
     if (signal?.aborted) throw new Error("send aborted");
     if (waitIfPaused) await waitIfPaused();
 
@@ -111,7 +126,7 @@ export async function sendFile(options: SendFileOptions): Promise<SendFileResult
     const end = Math.min(totalBytes, start + effective);
     const plaintext = new Uint8Array(await file.slice(start, end).arrayBuffer());
     if (plaintext.length > CHUNK_MAX) throw new Error(`chunk too large: ${plaintext.length}`);
-    hasher.update(plaintext);
+    if (computeHash) hasher.update(plaintext);
 
     const ciphertext = await sealChunk({ key, fileId, seq, salt, plaintext });
     const frame = encodeChunkFrame({ fileId, seq, last: seq === chunkCount - 1, ciphertext });
@@ -121,6 +136,7 @@ export async function sendFile(options: SendFileOptions): Promise<SendFileResult
     channel.send(frame);
 
     sentBytes += plaintext.length;
+    sentChunks += 1;
     if (seq % progressEveryChunks === 0 || seq === chunkCount - 1) {
       onProgress?.(sentBytes, totalBytes, seq);
     }
@@ -130,7 +146,13 @@ export async function sendFile(options: SendFileOptions): Promise<SendFileResult
     // let the channel drain before the control message `done` follows
     await waitForDrain(channel, lowWaterMark);
   }
-  return { sha256: hasher.digestHex(), chunkCount, bytes: totalBytes, chunkSize: effective };
+  return {
+    sha256: computeHash ? hasher.digestHex() : "",
+    chunkCount,
+    bytes: totalBytes,
+    chunkSize: effective,
+    sentChunks,
+  };
 }
 
 // --- receiving --------------------------------------------------------------

@@ -15,7 +15,7 @@
 
 | # | 场景 | 状态 | 证据 |
 |---|---|---|---|
-| AC1 | Chrome↔Chrome 同网 500 MB ≥60 Mbps，显示「局域网直连」 | ✅ 本机 + 跨机 Chromium | 本机：500 MB 28 s ≈150 Mbps，路径「局域网直连」；**跨机 Chrome→Edge(Chromium, mac-mini) 500 MB 63 s ≈66.6 Mbps，路径「直连」，双方 SHA-256 `2d58573f…` 一致**。注：跨机跑出的是 srflx 直连（路径「直连」），未观察到 host↔host 的「局域网直连」标签（Chromium mDNS 候选跨解析限制），属 D2 阶梯内的第二档 |
+| AC1 | Chrome↔Chrome 同网 500 MB ≥60 Mbps，显示「局域网直连」 | ✅ 本机 + 跨机 Chromium | 本机：500 MB 28 s ≈150 Mbps，路径「局域网直连」；**跨机 Chrome→Edge(Chromium, mac-mini) 500 MB 63 s ≈66.6 Mbps，路径「直连」，双方 SHA-256 `2d58573f…` 一致**。注：跨机跑出的是 srflx 直连（路径「直连」），未观察到 host↔host 的「局域网直连」标签（Chromium mDNS 候选跨解析限制），属 D2 阶梯内的第二档。已额外做过对照实验：给宿主 Chrome 加 `--disable-features=WebRtcHideLocalIpsWithMdns`（同时保留 Playwright 默认 feature 列表）后，本环境下跨机仍为 `"path":"direct"`，未得到 host↔host 的局域网路径（`scripts/ac4-host-loop.mjs` 保留该开关，便于在别的网络环境复验） |
 | AC2 | 仅 TURN 500 MB，显示「中继」 | ✅ 本机（含限速 10 Mbps） | coturn + `?relay=1`：10/100/500 MB 均 PASS，路径「中继」，哈希一致；**限速验证**：coturn `--max-bps=1250000`（≈10 Mbps），500 MB 用时 **451.8 s（7.5 min < 10 min）**，有效速率 ≈9.3 Mbps，双方 SHA-256 `85d76e70…` 一致。`E2E_RELAY=1 … pnpm exec playwright test tests/e2e/ac2-relay.spec.ts` |
 | AC3 | 传输中断 60 s 内重连续传，只重传缺失分片，哈希一致 | ✅ | `tests/e2e/ac3-resume.spec.ts`：20 MB，50% 强断 → 重连 → 只补 295 片 → 哈希一致 |
 | AC4 | Chrome→iPhone Safari 100 MB；500 MB 分级提示 | 🟡 传输侧通过（桌面 100/500 MB + iOS 模拟器 100 MB）/ 保存与 iOS 落盘待人工 | 桌面 Safari 100 MB（中继）与 500 MB（直连）、iOS 27.2 模拟器 Safari 100 MB（中继）均双方哈希一致；接收端超软上限风险对话框由 `capability-warn.spec.ts` 覆盖；Safari「保存」点击需用户手势，未自动化 |

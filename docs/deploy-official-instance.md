@@ -61,8 +61,9 @@ docker compose -f infra/docker-compose.yml ps      # signaling (healthy) + cotur
 
 `infra/deploy/Caddyfile.example` 是同样内容的模板（含开发期 `room.net.time-pack.com → 5173` 注释块）。
 
-> 也可以不用手工部署：仓库自带 `.github/workflows/deploy.yml`，push 到 `main` 后自动构建镜像到
-> GHCR 并通过 SSH 滚动更新；所需 Secrets 与服务器一次性准备见 `docs/self-host.md`。
+> 也可以不用手工部署：仓库自带 `.github/workflows/deploy.yml`，push 到 `main` 后自动构建
+> 「前端 + 单文件信令服务」发布包，scp 到服务器并用 PM2 重载（**不需要服务器装 Docker**）；
+> 所需 Secrets 与服务器一次性准备见 `docs/self-host.md`。
 
 ## 4. 验收（逐条跑，全部通过才算上线）
 

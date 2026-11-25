@@ -52,7 +52,7 @@ E2E_NO_WS=1 E2E_BASE_URL=https://room.net.time-pack.com E2E_IGNORE_TLS=1 \
 | [docs/03-roadmap.md](docs/03-roadmap.md) | 仓库结构、技术栈、M0–M4 里程碑、测试矩阵、风险清单 |
 | [docs/04-design-system.md](docs/04-design-system.md) | 设计系统：设计意图、OKLCH token、排版、组件与状态、无障碍、平台适配、文案 |
 | [docs/deploy-official-instance.md](docs/deploy-official-instance.md) | 官方实例部署清单：前置条件、.env、反代、验收命令、运维边界、中继成本 |
-| [.github/workflows/deploy.yml](.github/workflows/deploy.yml) | 自动部署：push 到 main → 门禁 → GHCR 镜像 → SSH 滚动更新 + 健康检查 |
+| [.github/workflows/deploy.yml](.github/workflows/deploy.yml) | 自动部署（无 Docker）：push 到 main → 门禁 → 打包 → scp → PM2 重载 + 健康检查 |
 | [docs/desktop.md](docs/desktop.md) | Tauri 2 桌面壳：依赖、开发/打包命令、原生写盘 IPC、关窗保护、菜单 |
 | [docs/mobile.md](docs/mobile.md) | Tauri 2 手机壳：Android 构建、原生写盘、前台保活、分享接收、限制 |
 | [design/](design/README.md) | 设计稿与出图流水线：5 个画面、token、对比度校验、截图脚本 |

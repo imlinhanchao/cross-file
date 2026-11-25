@@ -1,18 +1,20 @@
 name: deploy
 
-# Push to main (or manual run) builds the signaling image, publishes it to GHCR and
-# rolls it out over SSH. The server keeps its own infra/.env (TURN_SECRET etc.);
-# this workflow never writes secrets to disk there.
+# Build → scp → pm2. For servers without Docker.
+#
+# Push to main (or run manually) builds the web app and the bundled signaling server,
+# packs a release tarball, uploads it over SSH and reloads a PM2 process. The server
+# keeps its own shared/.env (TURN_SECRET etc.); this workflow never writes secrets to
+# disk there.
 #
 # Required repository secrets:
-#   DEPLOY_HOST          server hostname or IP
-#   DEPLOY_USER          ssh user (member of the docker group)
-#   DEPLOY_SSH_KEY       private key for that user (ed25519 recommended)
-#   DEPLOY_PATH          absolute path to the clone, e.g. /srv/crossfile
-#   GHCR_PULL_TOKEN      PAT with read:packages (skip if the package is public)
+#   DEPLOY_HOST        server hostname or IP
+#   DEPLOY_USER        ssh user (owns the deploy directory)
+#   DEPLOY_SSH_KEY     private key for that user (ed25519 recommended)
+#   DEPLOY_PATH        absolute path, e.g. /srv/crossfile
 # Optional:
-#   DEPLOY_PORT          ssh port (default 22)
-#   PUBLIC_BASE_URL      e.g. https://room.example.com — smoke-tested after rollout
+#   DEPLOY_PORT        ssh port (default 22)
+#   PUBLIC_BASE_URL    e.g. https://room.example.com — smoke-tested after reload
 
 on:
   push:
@@ -23,18 +25,10 @@ concurrency:
   group: deploy-production
   cancel-in-progress: false
 
-env:
-  REGISTRY: ghcr.io
-
 jobs:
   build:
-    name: build & push signaling image
+    name: build release tarball
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    outputs:
-      ref: ${{ steps.meta.outputs.ref }}
     steps:
       - uses: actions/checkout@v4
 
@@ -43,74 +37,82 @@ jobs:
           node-version: 22
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
+
       # Cheap deploy gate; the full matrix lives in ci.yml.
       - run: pnpm lint && pnpm typecheck && pnpm test
 
-      - name: image name and tag
-        id: meta
+      - name: build web app
+        run: pnpm --filter @crossfile/web build
+
+      - name: bundle signaling server
+        run: node infra/signaling/build.mjs .
+
+      - name: assemble release
         shell: bash
         run: |
-          # GHCR requires a lowercase path.
-          image="ghcr.io/${GITHUB_REPOSITORY,,}/signaling"
-          sha="${GITHUB_SHA::12}"
-          {
-            echo "image=$image"
-            echo "sha=$sha"
-            echo "ref=$image:$sha"
-          } >> "$GITHUB_OUTPUT"
+          rm -rf release
+          mkdir -p release
+          cp infra/signaling/build/server.cjs release/server.cjs
+          cp -r apps/web/dist release/public
+          cp infra/pm2/ecosystem.config.cjs release/ecosystem.config.cjs
+          printf 'commit=%s\nbuilt=%s\n' "$GITHUB_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > release/VERSION
+          tar -czf crossfile-signaling.tar.gz -C release .
+          ls -lh crossfile-signaling.tar.gz
 
-      - uses: docker/setup-buildx-action@v3
-
-      - uses: docker/login-action@v3
+      - uses: actions/upload-artifact@v4
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: build & push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: infra/signaling/Dockerfile
-          push: true
-          platforms: linux/amd64
-          tags: |
-            ${{ steps.meta.outputs.ref }}
-            ${{ steps.meta.outputs.image }}:latest
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          name: crossfile-signaling
+          path: crossfile-signaling.tar.gz
+          retention-days: 14
 
   deploy:
-    name: roll out over ssh
+    name: upload & pm2 reload
     needs: build
     runs-on: ubuntu-latest
     # Add required reviewers under Settings → Environments → production if wanted.
     environment: production
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: crossfile-signaling
 
-      - name: sync compose files
+      - name: prepare server directories
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          RELEASE_ID: ${{ github.sha }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || 22 }}
+          envs: DEPLOY_PATH,RELEASE_ID
+          script: |
+            set -euo pipefail
+            mkdir -p "$DEPLOY_PATH/releases/$RELEASE_ID" "$DEPLOY_PATH/shared" "$DEPLOY_PATH/logs"
+            if [ ! -f "$DEPLOY_PATH/shared/.env" ]; then
+              echo "missing $DEPLOY_PATH/shared/.env on the server" >&2
+              echo "create it once (TURN_SECRET, TURN_URIS, PORT, ...); see docs/self-host.md" >&2
+              exit 1
+            fi
+            command -v pm2 >/dev/null || { echo "pm2 is not installed: npm i -g pm2" >&2; exit 1; }
+
+      - name: upload release tarball
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_PORT || 22 }}
-          source: "infra/docker-compose.yml,infra/docker-compose.hostnet.yml,infra/deploy/Caddyfile.example"
-          target: ${{ secrets.DEPLOY_PATH }}
+          source: crossfile-signaling.tar.gz
+          target: ${{ secrets.DEPLOY_PATH }}/releases/${{ github.sha }}
           overwrite: true
-          # Keep the server's infra/.env intact: it is not in the repository.
 
-      - name: pull and restart signaling
+      - name: extract, reload pm2 and health check
         uses: appleboy/ssh-action@v1.2.0
         env:
-          IMAGE: ${{ needs.build.outputs.ref }}
-          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
-          GHCR_USER: ${{ github.repository_owner }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          RELEASE_ID: ${{ github.sha }}
           PUBLIC_BASE_URL: ${{ secrets.PUBLIC_BASE_URL }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
@@ -118,42 +120,47 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_PORT || 22 }}
           command_timeout: 10m
-          envs: IMAGE,GHCR_PULL_TOKEN,GHCR_USER,DEPLOY_PATH,PUBLIC_BASE_URL
+          envs: DEPLOY_PATH,RELEASE_ID,PUBLIC_BASE_URL
           script: |
             set -euo pipefail
-            cd "$DEPLOY_PATH"
+            ROOT="$DEPLOY_PATH"
+            RELEASE="$ROOT/releases/$RELEASE_ID"
 
-            if [ ! -f infra/.env ]; then
-              echo "infra/.env is missing on the server. Create it once from infra/.env.example" >&2
-              echo "(TURN_SECRET, TURN_URIS, TURN_EXTERNAL_IP, PUBLIC_HOST, SIGNAL_PORT)." >&2
-              exit 1
-            fi
+            tar -xzf "$RELEASE/crossfile-signaling.tar.gz" -C "$RELEASE"
+            rm -f "$RELEASE/crossfile-signaling.tar.gz"
 
-            if [ -n "${GHCR_PULL_TOKEN:-}" ]; then
-              echo "$GHCR_PULL_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
-            fi
+            # Secrets/config live only on the server.
+            set -a
+            . "$ROOT/shared/.env"
+            set +a
+            export PM2_LOG_DIR="$ROOT/logs"
 
-            export SIGNALING_IMAGE="$IMAGE"
-            docker compose -f infra/docker-compose.yml pull signaling
-            docker compose -f infra/docker-compose.yml up -d --remove-orphans
+            pm2 startOrReload "$RELEASE/ecosystem.config.cjs" --update-env
+            pm2 save
 
-            container="$(docker compose -f infra/docker-compose.yml ps -q signaling)"
-            status=starting
-            for _ in $(seq 1 30); do
-              status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}unknown{{end}}' "$container" 2>/dev/null || echo unknown)"
-              [ "$status" = "healthy" ] && break
-              sleep 2
+            PORT="${PORT:-8788}"
+            healthy=0
+            for _ in $(seq 1 20); do
+              if curl -fsS -o /dev/null --max-time 3 "http://127.0.0.1:${PORT}/"; then
+                healthy=1
+                break
+              fi
+              sleep 1
             done
-            if [ "$status" != "healthy" ]; then
-              echo "signaling did not become healthy (status=$status); last logs:" >&2
-              docker compose -f infra/docker-compose.yml logs --tail=40 signaling >&2
+            if [ "$healthy" != 1 ]; then
+              echo "signaling is not responding on 127.0.0.1:${PORT}; last pm2 logs:" >&2
+              pm2 logs crossfile-signaling --lines 40 --nostream >&2 || true
               exit 1
             fi
-            echo "signaling is healthy on $IMAGE"
+
+            ln -sfn "$RELEASE" "$ROOT/current"
 
             if [ -n "${PUBLIC_BASE_URL:-}" ]; then
-              curl -fsS -o /dev/null --max-time 10 "$PUBLIC_BASE_URL/" || { echo "public URL smoke test failed" >&2; exit 1; }
+              curl -fsS -o /dev/null --max-time 10 "$PUBLIC_BASE_URL/" \
+                || { echo "public URL smoke test failed: $PUBLIC_BASE_URL" >&2; exit 1; }
               echo "public URL responds: $PUBLIC_BASE_URL"
             fi
 
-            docker image prune -f >/dev/null 2>&1 || true
+            # Keep the five newest releases for rollback; drop older ones.
+            ls -1dt "$ROOT"/releases/*/ 2>/dev/null | tail -n +6 | xargs -r rm -rf
+            echo "deployed $RELEASE to pm2 (port $PORT)"

@@ -416,70 +416,112 @@ INFO Total lost packets 0 (0.000000%), total send dropped 2 (16.666667%)
 
 ---
 
-## GitHub Actions 自动部署（GHCR + SSH）
+---
 
-`.github/workflows/deploy.yml`：推到 `main`（或手动 `workflow_dispatch`）后自动完成
-「门禁 → 构建镜像 → 推 GHCR → SSH 滚动更新 → 健康检查 → 可选公网 smoke」。
+## GitHub Actions 自动部署（无 Docker：构建 → scp → PM2）
 
-### 它做了什么
+适用于**服务器没有 Docker**、但有 Node.js 的情况。`.github/workflows/deploy.yml`：
 
-1. **build job**：`pnpm lint / typecheck / test` 快速门禁 → `docker buildx` 用
-   `infra/signaling/Dockerfile` 构建（含前端与 `STATIC_DIR`）→ 推到 `ghcr.io/<owner>/<repo>/signaling`
-   两个 tag：`:sha`（12 位提交号，用于回滚）和 `:latest`；GHA 层缓存。
+**触发**：push 到 `main`，或手动 `workflow_dispatch`；`concurrency` 防并发。
+
+1. **build job**：`pnpm lint / typecheck / test` 门禁 → `vite build` 前端 → esbuild 打包
+   `infra/signaling/build/server.cjs`（单文件，含静态托管）→ 组装
+   `server.cjs + public/ + ecosystem.config.cjs + VERSION` → 打成 `crossfile-signaling.tar.gz`
+   并上传为 workflow artifact。
 2. **deploy job**（`environment: production`，可加人工审批）：
-   - `scp` 同步 `infra/docker-compose.yml`、`infra/docker-compose.hostnet.yml`、`infra/deploy/Caddyfile.example`
-     到服务器 `DEPLOY_PATH`（**不会覆盖服务器的 `infra/.env`**）；
-   - SSH 执行：检查 `.env` 存在 → 可选 `docker login ghcr.io` → `SIGNALING_IMAGE=<新镜像> docker compose pull signaling`
-     → `up -d --remove-orphans` → 轮询容器 healthcheck（最多 60 s，失败打印最后 40 行日志并让 job 失败）
-     → 若配置了 `PUBLIC_BASE_URL` 再 `curl -f` 验证公网入口。
+   - SSH 建目录（`releases/<sha>`、`shared/`、`logs/`），检查 `shared/.env` 与 `pm2` 是否存在；
+   - `scp` 上传 tar 到 `releases/<sha>/`；
+   - SSH 解包 → 加载 `shared/.env` → `pm2 startOrReload releases/<sha>/ecosystem.config.cjs --update-env`
+     → `pm2 save` → 轮询 `http://127.0.0.1:${PORT}/`（默认 8788）直到 200，失败打印最近 40 行 PM2 日志并让 job 失败
+     → 更新 `current` 软链 → 可选 `PUBLIC_BASE_URL` 公网 smoke → 只保留最近 5 个 release。
 
-### 需要在 GitHub 配置的 Secrets
+### 服务器一次性准备（只需要一次）
+
+```bash
+# 1) Node 22+（server.cjs 的 target 是 node22）和 pm2
+node -v                    # 需要 v22+
+npm i -g pm2
+sudo env PATH=$PATH:$(dirname "$(which node)") pm2 startup systemd -u deploy --hp /home/deploy
+
+# 2) 部署目录
+sudo mkdir -p /srv/crossfile/{releases,shared,logs}
+sudo chown -R deploy:deploy /srv/crossfile
+
+# 3) 配置（只存在服务器上，不进仓库）
+sudo -u deploy nano /srv/crossfile/shared/.env
+```
+
+`/srv/crossfile/shared/.env` 示例（工作流会 `source` 它）：
+
+```ini
+TURN_SECRET=<openssl rand -hex 32>
+TURN_URIS=turn:room.example.com:3478?transport=udp,turn:room.example.com:3478?transport=tcp
+PUBLIC_HOST=room.example.com
+PORT=8788
+# HOST=0.0.0.0
+```
+
+反代（Caddy/nginx）指向 `127.0.0.1:8788`，模板见 `infra/deploy/Caddyfile.example`。
+
+### 需要配置的 GitHub Secrets
 
 | Secret | 必填 | 说明 |
 |---|---|---|
 | `DEPLOY_HOST` | ✅ | 服务器域名或 IP |
-| `DEPLOY_USER` | ✅ | SSH 用户，需在 `docker` 组（能执行 docker compose） |
-| `DEPLOY_SSH_KEY` | ✅ | 该用户的私钥（建议 ed25519，只用于部署） |
-| `DEPLOY_PATH` | ✅ | 服务器上的仓库路径，例如 `/srv/crossfile` |
-| `GHCR_PULL_TOKEN` | 可选 | 若 GHCR package 为私有：PAT（`read:packages`）。把 package 设为 public 后可省略 |
+| `DEPLOY_USER` | ✅ | SSH 用户（拥有 `/srv/crossfile`） |
+| `DEPLOY_SSH_KEY` | ✅ | 该用户的私钥（ed25519 推荐） |
+| `DEPLOY_PATH` | ✅ | 部署根目录，例如 `/srv/crossfile` |
 | `DEPLOY_PORT` | 可选 | SSH 端口，默认 22 |
-| `PUBLIC_BASE_URL` | 可选 | 例如 `https://room.example.com`，设置后会做公网 smoke test |
+| `PUBLIC_BASE_URL` | 可选 | 例如 `https://room.example.com`，设置后做公网 smoke test |
 
-### 服务器一次性准备
+### 无 Docker 时的 TURN（coturn）
 
-```bash
-# 1) 部署用户 + docker 组（示例）
-sudo adduser --disabled-password --gecos "" deploy
-sudo usermod -aG docker deploy
-
-# 2) clone 仓库并准备 .env（只需做一次；之后 CI 只更新容器）
-sudo mkdir -p /srv/crossfile && sudo chown deploy:deploy /srv/crossfile
-sudo -u deploy git clone https://github.com/<owner>/<repo>.git /srv/crossfile
-sudo -u deploy cp /srv/crossfile/infra/.env.example /srv/crossfile/infra/.env
-sudo -u deploy "$EDITOR" /srv/crossfile/infra/.env   # TURN_SECRET / TURN_URIS / TURN_EXTERNAL_IP / PUBLIC_HOST
-
-# 3) 反代指向 127.0.0.1:8788（Caddy/nginx 均可，见本文件上一节）
-```
-
-把部署用户的公钥加到 GitHub Deploy Key 只在需要 `git pull` 时才需要；本工作流用镜像部署，
-**不需要服务器能访问 GitHub 仓库**。
-
-### 首次与回滚
-
-首次：Actions → `deploy` → `Run workflow`，或直接 push 一个提交到 `main`。
-
-回滚到上一版（在服务器上）：
+信令服务不需要 Docker；但**中继 TURN 需要 coturn**（公网实例建议有，否则只能直连）。用系统包安装：
 
 ```bash
-cd /srv/crossfile
-SIGNALING_IMAGE=ghcr.io/<owner>/<repo>/signaling:<旧 sha> \
-  docker compose -f infra/docker-compose.yml up -d --remove-orphans
+sudo apt install -y coturn            # Debian/Ubuntu；RHEL 系用 dnf install coturn
+sudo sed -i 's/^#TURNSERVER_ENABLED=1/TURNSERVER_ENABLED=1/' /etc/default/coturn
 ```
 
-### 注意
+`/etc/turnserver.conf` 最小配置（`static-auth-secret` 与 `shared/.env` 的 `TURN_SECRET` 相同）：
 
-- 工作流只重启 `signaling`，**不会**更新 coturn 镜像；coturn 升级请手动 `docker compose pull coturn`。
-- 镜像默认 `linux/amd64`。ARM 服务器把 workflow 里的 `platforms` 改为 `linux/arm64`（或 `linux/amd64,linux/arm64`）。
-- GHCR package 默认私有；要公开：GitHub → Packages → 该 package → Package settings → Change visibility。
-- 生产建议：给 `production` environment 加 Required reviewers；把第三方 action（appleboy/*）pin 到 SHA。
-- 部署会中断进行中的传输（房间在内存里），尽量避开高峰；失败时 job 会 fail 并保留旧容器继续服务。
+```ini
+listening-port=3478
+static-auth-secret=<与 TURN_SECRET 相同>
+realm=crossfile
+fingerprint
+no-tls
+no-dtls
+external-ip=<服务器公网 IPv4>
+min-port=49160
+max-port=49200
+log-file=stdout
+simple-log
+```
+
+```bash
+sudo systemctl enable --now coturn
+# 防火墙放行 3478/tcp+udp 与 49160-49200/udp
+```
+
+没有 coturn 也能跑（局域网/多数 NAT 直连可用），只是弱网/对称 NAT 场景会失败；官方实例建议保留中继。
+
+### 回滚
+
+```bash
+ssh deploy@server
+export PM2_LOG_DIR=/srv/crossfile/logs
+set -a; . /srv/crossfile/shared/.env; set +a
+pm2 startOrReload /srv/crossfile/releases/<旧 commit sha>/ecosystem.config.cjs --update-env
+pm2 save
+```
+
+（或 checkout 旧 commit 重跑一次 workflow。）
+
+### 运维提示
+
+- 日志：`pm2 logs crossfile-signaling`，文件在 `$DEPLOY_PATH/logs/signaling.{out,err}.log`；
+  需要轮转时 `pm2 install pm2-logrotate`。
+- PM2 开机自启：`pm2 startup` 一次，之后每次部署工作流会 `pm2 save`。
+- 部署会重启信令（房间在内存里），进行中的传输会中断，尽量避开高峰。
+- 如果服务器其实有 Docker，仍可用 `infra/docker-compose.yml` 的容器方式（见本文件上面的章节）。

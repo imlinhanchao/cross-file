@@ -24,3 +24,7 @@ playwright/.cache/
 
 # coverage reports
 coverage/
+
+# deploy build output
+/release/
+/crossfile-signaling.tar.gz

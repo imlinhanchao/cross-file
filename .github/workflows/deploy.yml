@@ -63,7 +63,7 @@ jobs:
         with:
           name: crossfile-signaling
           path: crossfile-signaling.tar.gz
-          retention-days: 14
+          retention-days: 7
 
   deploy:
     name: upload & pm2 reload

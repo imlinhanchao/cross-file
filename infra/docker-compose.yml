@@ -19,7 +19,10 @@ services:
     build:
       context: ..
       dockerfile: infra/signaling/Dockerfile
-    image: crossfile/signaling:local
+    # CI/deploy publishes this image to a registry; local development keeps building it.
+    #   docker compose up -d --build            -> builds crossfile/signaling:local
+    #   SIGNALING_IMAGE=ghcr.io/you/cross-file/signaling:sha docker compose pull signaling
+    image: ${SIGNALING_IMAGE:-crossfile/signaling:local}
     restart: unless-stopped
     read_only: true
     user: "1000:1000"

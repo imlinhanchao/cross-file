@@ -413,3 +413,73 @@ INFO Total lost packets 0 (0.000000%), total send dropped 2 (16.666667%)
 2. **生产镜像**：`docker build -f infra/signaling/Dockerfile -t crossfile/signaling:local .` → `docker compose -f infra/docker-compose.yml up -d signaling`，`http://127.0.0.1:18788/` 返回页面与安全头、`/r/<id>` SPA 回退 200、Playwright 传输通过；容器只读根文件系统下 `tests/audit/zero-storage.sh --container` 仍 PASS。
 
 反代只负责 TLS 终结与可选的限流（`infra/deploy/Caddyfile.example`），转发到容器 8788 即可。
+
+---
+
+## GitHub Actions 自动部署（GHCR + SSH）
+
+`.github/workflows/deploy.yml`：推到 `main`（或手动 `workflow_dispatch`）后自动完成
+「门禁 → 构建镜像 → 推 GHCR → SSH 滚动更新 → 健康检查 → 可选公网 smoke」。
+
+### 它做了什么
+
+1. **build job**：`pnpm lint / typecheck / test` 快速门禁 → `docker buildx` 用
+   `infra/signaling/Dockerfile` 构建（含前端与 `STATIC_DIR`）→ 推到 `ghcr.io/<owner>/<repo>/signaling`
+   两个 tag：`:sha`（12 位提交号，用于回滚）和 `:latest`；GHA 层缓存。
+2. **deploy job**（`environment: production`，可加人工审批）：
+   - `scp` 同步 `infra/docker-compose.yml`、`infra/docker-compose.hostnet.yml`、`infra/deploy/Caddyfile.example`
+     到服务器 `DEPLOY_PATH`（**不会覆盖服务器的 `infra/.env`**）；
+   - SSH 执行：检查 `.env` 存在 → 可选 `docker login ghcr.io` → `SIGNALING_IMAGE=<新镜像> docker compose pull signaling`
+     → `up -d --remove-orphans` → 轮询容器 healthcheck（最多 60 s，失败打印最后 40 行日志并让 job 失败）
+     → 若配置了 `PUBLIC_BASE_URL` 再 `curl -f` 验证公网入口。
+
+### 需要在 GitHub 配置的 Secrets
+
+| Secret | 必填 | 说明 |
+|---|---|---|
+| `DEPLOY_HOST` | ✅ | 服务器域名或 IP |
+| `DEPLOY_USER` | ✅ | SSH 用户，需在 `docker` 组（能执行 docker compose） |
+| `DEPLOY_SSH_KEY` | ✅ | 该用户的私钥（建议 ed25519，只用于部署） |
+| `DEPLOY_PATH` | ✅ | 服务器上的仓库路径，例如 `/srv/crossfile` |
+| `GHCR_PULL_TOKEN` | 可选 | 若 GHCR package 为私有：PAT（`read:packages`）。把 package 设为 public 后可省略 |
+| `DEPLOY_PORT` | 可选 | SSH 端口，默认 22 |
+| `PUBLIC_BASE_URL` | 可选 | 例如 `https://room.example.com`，设置后会做公网 smoke test |
+
+### 服务器一次性准备
+
+```bash
+# 1) 部署用户 + docker 组（示例）
+sudo adduser --disabled-password --gecos "" deploy
+sudo usermod -aG docker deploy
+
+# 2) clone 仓库并准备 .env（只需做一次；之后 CI 只更新容器）
+sudo mkdir -p /srv/crossfile && sudo chown deploy:deploy /srv/crossfile
+sudo -u deploy git clone https://github.com/<owner>/<repo>.git /srv/crossfile
+sudo -u deploy cp /srv/crossfile/infra/.env.example /srv/crossfile/infra/.env
+sudo -u deploy "$EDITOR" /srv/crossfile/infra/.env   # TURN_SECRET / TURN_URIS / TURN_EXTERNAL_IP / PUBLIC_HOST
+
+# 3) 反代指向 127.0.0.1:8788（Caddy/nginx 均可，见本文件上一节）
+```
+
+把部署用户的公钥加到 GitHub Deploy Key 只在需要 `git pull` 时才需要；本工作流用镜像部署，
+**不需要服务器能访问 GitHub 仓库**。
+
+### 首次与回滚
+
+首次：Actions → `deploy` → `Run workflow`，或直接 push 一个提交到 `main`。
+
+回滚到上一版（在服务器上）：
+
+```bash
+cd /srv/crossfile
+SIGNALING_IMAGE=ghcr.io/<owner>/<repo>/signaling:<旧 sha> \
+  docker compose -f infra/docker-compose.yml up -d --remove-orphans
+```
+
+### 注意
+
+- 工作流只重启 `signaling`，**不会**更新 coturn 镜像；coturn 升级请手动 `docker compose pull coturn`。
+- 镜像默认 `linux/amd64`。ARM 服务器把 workflow 里的 `platforms` 改为 `linux/arm64`（或 `linux/amd64,linux/arm64`）。
+- GHCR package 默认私有；要公开：GitHub → Packages → 该 package → Package settings → Change visibility。
+- 生产建议：给 `production` environment 加 Required reviewers；把第三方 action（appleboy/*）pin 到 SHA。
+- 部署会中断进行中的传输（房间在内存里），尽量避开高峰；失败时 job 会 fail 并保留旧容器继续服务。

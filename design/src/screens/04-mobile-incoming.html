@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CrossFile · 手机接收（浅色）</title>
+<title>CrossFile · 收到文件确认（浅色）</title>
 <link rel="stylesheet" href="../tokens/tokens.css">
 <link rel="stylesheet" href="../base.css">
 </head>
@@ -21,9 +21,9 @@
 
   <main class="stack gap-4" aria-labelledby="recv-title">
     <section class="m-hero" style="margin-top:var(--space-4)">
-      <p class="eyebrow">来自 Mira 的 MacBook</p>
+      <p class="eyebrow">来自 MacBook · <span class="name-code">7K2F</span></p>
       <h1 id="recv-title" class="h1">接收 2 个文件？</h1>
-      <p class="lead">共 498.6 MB · 数据直接发送到这台设备。</p>
+      <p class="lead">共 498.6 MB · 同一房间的成员发来的文件，直接传到这台设备。</p>
     </section>
 
     <div class="warn-card" role="note">
@@ -56,13 +56,14 @@
 
     <div class="card card--inset">
       <dl class="kv">
+        <div class="kv__row"><dt>发起方</dt><dd>MacBook · <span class="name-code">7K2F</span> · 成员</dd></div>
         <div class="kv__row"><dt>路径</dt><dd>局域网优先，失败才走中继</dd></div>
         <div class="kv__row"><dt>完整性</dt><dd>逐片认证 + SHA-256 校验</dd></div>
         <div class="kv__row"><dt>保存位置</dt><dd>「文件」App · 下载</dd></div>
       </dl>
     </div>
 
-    <p class="note">{{ICON:lock}}<span>房间结束后，服务器不会留下任何副本</span></p>
+    <p class="note">{{ICON:lock}}<span>每次接收都需要你确认 · 服务器不留下任何副本</span></p>
   </main>
 
   <div class="m-sticky">

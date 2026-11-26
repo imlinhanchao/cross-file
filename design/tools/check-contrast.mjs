@@ -94,7 +94,13 @@ const pairs = [
   ["light / warning text on warning surface", "w700", "w300", 4.5],
   ["light / warning text on card", "w700", "n0", 4.5],
   ["light / input border vs page", "n500", "n25", 3.0],
+  ["light / input border vs card", "n500", "n0", 3.0],
   ["light / focus ring vs page", "b500", "n25", 3.0],
+  ["light / focus ring vs card", "b500", "n0", 3.0],
+  // self-row / inset surfaces (member list, hash row)
+  ["light / muted text on subtle", "n600", "n50", 4.5],
+  ["light / secondary text on subtle", "n700", "n50", 4.5],
+  ["light / mint on inset", "m800", "n100", 4.5],
   // dark theme
   ["dark / body text on page", "n0", "n925", 4.5],
   ["dark / body text on card", "n0", "n900", 4.5],
@@ -107,6 +113,10 @@ const pairs = [
   ["dark / warning text on card", "w400", "n900", 4.5],
   ["dark / input border vs card", "n500", "n900", 3.0],
   ["dark / focus ring vs card", "m400", "n900", 3.0],
+  // self-row / inset surfaces (member list, hash row)
+  ["dark / secondary text on subtle", "n300", "n850", 4.5],
+  ["dark / muted text on subtle", "n400", "n850", 4.5],
+  ["dark / mint on inset", "m400", "n950", 4.5],
 ];
 
 let failures = 0;

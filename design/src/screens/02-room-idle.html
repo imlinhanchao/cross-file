@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CrossFile · 发送方房间（浅色）</title>
+<title>CrossFile · 房间（浅色）</title>
 <link rel="stylesheet" href="../tokens/tokens.css">
 <link rel="stylesheet" href="../base.css">
 </head>
@@ -17,31 +17,32 @@
     </span>
     <span class="pill pill--secure">{{ICON:shield-check}}<span>端到端加密</span></span>
     <span class="topbar__spacer"></span>
-    <button class="icon-btn" type="button" aria-label="复制房间链接">{{ICON:link}}</button>
+    <span class="user-chip">我 · MacBook · <span class="name-code">7K2F</span> · 管理员</span>
+    <button class="btn btn--ghost btn--sm" type="button">改名</button>
     <button class="btn btn--ghost" type="button">结束房间</button>
   </header>
 
   <main class="shell">
     <div class="room-grid">
 
-      <!-- left: files to send ------------------------------------------- -->
+      <!-- left: files + send target ------------------------------------- -->
       <section class="stack gap-5" aria-labelledby="room-title">
         <div class="stack gap-2">
-          <p class="eyebrow">房间已创建 · 剩余 12:34</p>
-          <h1 id="room-title" class="display">把文件发给谁？</h1>
-          <p class="lead">对方扫码或打开链接即可接收，无需安装任何东西。文件直接在你的设备和对方设备之间传输。</p>
+          <p class="eyebrow">房间已创建 · 23:41 后失效</p>
+          <h1 id="room-title" class="display">把文件发给房间里的成员</h1>
+          <p class="lead">房间里任何成员都能给你发文件，你也可以发给任何一台设备。同一对设备之间一次只走一条传输。</p>
         </div>
 
         <div class="dropzone" role="button" tabindex="0">
           <span class="dropzone__icon">{{ICON:upload}}</span>
           <span style="font-weight:600; color:var(--text-primary)">拖入文件，或点击选择</span>
-          <span class="small muted">单个文件 ≤ 500 MB · 单次总计 ≤ 2 GB</span>
+          <span class="small muted">单个文件 ≤ 500 MB · 单个发送方总计 ≤ 2 GB</span>
         </div>
 
         <div class="card">
           <div class="card__head">
-            <span class="card__title">已选 2 个文件</span>
-            <span class="card__hint">共 498.6 MB</span>
+            <span class="card__title">已选 1 个文件</span>
+            <span class="card__hint">共 486.2 MB</span>
             <span class="spacer"></span>
             <button class="btn btn--ghost btn--sm" type="button">清空</button>
           </div>
@@ -54,19 +55,7 @@
                 <span class="file-meta">486.2 MB · 视频</span>
               </span>
               <span class="row gap-1 wrap" aria-label="发送给">
-                <span class="chip-toggle" data-checked="true">{{ICON:check}}Mira 的 MacBook</span>
-                <span class="chip-toggle" data-disabled="true">Mira 的 iPhone（待批准）</span>
-              </span>
-            </li>
-            <li class="file-row">
-              <span class="file-tile">{{ICON:file-text}}</span>
-              <span class="stack" style="gap:2px; min-width:0">
-                <span class="file-name">brief-final.pdf</span>
-                <span class="file-meta">12.4 MB · PDF</span>
-              </span>
-              <span class="row gap-1 wrap" aria-label="发送给">
-                <span class="chip-toggle" data-checked="true">{{ICON:check}}Mira 的 MacBook</span>
-                <span class="chip-toggle" data-disabled="true">Mira 的 iPhone（待批准）</span>
+                <span class="chip-toggle" data-checked="true">{{ICON:check}}iPhone · 3Q9A</span>
               </span>
             </li>
           </ul>
@@ -78,22 +67,22 @@
         <p class="small muted">按 <span class="kbd">⌘</span> <span class="kbd">⏎</span> 开始发送 · 对方需保持页面打开</p>
       </section>
 
-      <!-- right: join + receivers --------------------------------------- -->
+      <!-- right: invite (admin only) + members -------------------------- -->
       <aside class="stack gap-4">
-        <section class="card qr-card" aria-labelledby="qr-title">
+        <section class="card qr-card" aria-labelledby="join-title">
           <div class="card__head" style="margin-bottom:0">
-            <span class="card__title" id="qr-title">扫码加入</span>
+            <span class="card__title" id="join-title">邀请成员</span>
             <span class="spacer"></span>
-            <span class="pill">{{ICON:wifi}}<span>局域网优先</span></span>
+            <span class="pill">{{ICON:lock}}<span>仅管理员可见</span></span>
           </div>
 
-          <div class="qr-frame">{{QR}}</div>
+          <div class="qr-frame" style="padding:var(--space-3)"><div class="qr-holder" style="width:152px;height:152px">{{QR}}</div></div>
 
           <div class="join-line">
             {{ICON:link}}
             <span class="url">crossfile.app/r/7QK2M9</span>
             <span class="spacer"></span>
-            <button class="icon-btn" type="button" aria-label="复制链接" style="width:36px;height:36px">{{ICON:copy}}</button>
+            <button class="icon-btn" type="button" aria-label="复制邀请链接" style="width:36px;height:36px">{{ICON:copy}}</button>
           </div>
 
           <div class="code-block">
@@ -107,28 +96,31 @@
           <p class="note">{{ICON:shield-check}}<span>密钥只在这张码里，服务器看不到</span></p>
         </section>
 
-        <section class="card" aria-labelledby="recv-title">
+        <section class="card" aria-labelledby="members-title">
           <div class="card__head">
-            <span class="card__title" id="recv-title">接收方 1/4</span>
+            <span class="card__title" id="members-title">成员 2/4</span>
             <span class="spacer"></span>
             <span class="card__hint">加入需你批准</span>
           </div>
 
           <ul class="receiver-list">
             <li class="receiver">
-              <span class="receiver__tile">{{ICON:laptop}}</span>
+              <span class="receiver__tile">{{ICON:smartphone}}</span>
               <span class="stack" style="gap:1px; min-width:0">
-                <span class="receiver__name">Mira 的 MacBook</span>
-                <span class="receiver__meta">Safari · 已加入 · 等待发送</span>
+                <span class="receiver__name">iPhone · <span class="name-code">3Q9A</span></span>
+                <span class="receiver__meta">iOS · 已加入 · 空闲</span>
               </span>
-              <span class="path-badge path-badge--lan"><span class="dot"></span>局域网</span>
+              <span class="receiver__actions">
+                <span class="path-badge path-badge--lan"><span class="dot"></span>局域网直连</span>
+                <button class="icon-btn" type="button" aria-label="移除 iPhone · 3Q9A" style="width:36px;height:36px">{{ICON:x}}</button>
+              </span>
             </li>
 
             <li class="receiver receiver--pending">
-              <span class="receiver__tile">{{ICON:smartphone}}</span>
+              <span class="receiver__tile">{{ICON:laptop}}</span>
               <span class="stack" style="gap:1px; min-width:0">
-                <span class="receiver__name">Mira 的 iPhone</span>
-                <span class="receiver__meta">Safari · 请求加入</span>
+                <span class="receiver__name">ThinkPad · <span class="name-code">8B1C</span></span>
+                <span class="receiver__meta">Windows · 请求加入</span>
               </span>
               <span class="receiver__actions">
                 <button class="btn btn--primary btn--sm" type="button">批准</button>
@@ -142,7 +134,7 @@
   </main>
 
   <div class="sticky-bar">
-    <span class="small secondary">发给 1 个接收方 · 共 498.6 MB</span>
+    <span class="small secondary">发给 1 个成员 · 共 486.2 MB</span>
     <span class="spacer"></span>
     <button class="btn btn--secondary" type="button">{{ICON:plus}}添加文件</button>
     <button class="btn btn--primary btn--lg" type="button">{{ICON:arrow-right}}开始发送</button>

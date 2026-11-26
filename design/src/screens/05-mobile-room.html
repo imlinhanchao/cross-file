@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CrossFile · 手机房间（浅色）</title>
+<link rel="stylesheet" href="../tokens/tokens.css">
+<link rel="stylesheet" href="../base.css">
+</head>
+<body>
+<div class="m-app">
+
+  <header class="m-header">
+    <span class="brand" style="font-size:0.9375rem">
+      <span class="brand-mark" style="width:22px;height:22px" aria-hidden="true">{{ICON:send}}</span>
+      CrossFile
+    </span>
+    <span class="spacer"></span>
+    <span class="pill pill--secure">{{ICON:shield-check}}<span>端到端加密</span></span>
+    <button class="btn btn--ghost btn--sm" type="button">退出</button>
+  </header>
+
+  <main class="stack gap-4" aria-labelledby="room-title">
+    <section class="m-hero" style="margin-top:var(--space-3)">
+      <p class="eyebrow">房间 · 2 台设备</p>
+      <h1 id="room-title" class="h1">给谁发文件？</h1>
+      <p class="lead">同一房间的成员可以互传。你可以发给任何一台设备，也能收到别人发来的文件。</p>
+    </section>
+
+    <section class="card" aria-labelledby="members-title">
+      <div class="card__head">
+        <span class="card__title" id="members-title">成员 2/4</span>
+        <span class="spacer"></span>
+        <span class="card__hint">加入由管理员负责</span>
+      </div>
+
+      <ul class="receiver-list">
+        <li class="receiver">
+          <span class="receiver__tile">{{ICON:laptop}}</span>
+          <span class="stack" style="gap:1px; min-width:0">
+            <span class="receiver__name">MacBook · <span class="name-code">7K2F</span></span>
+            <span class="receiver__meta">macOS · 管理员 · 局域网直连</span>
+          </span>
+          <span class="receiver__actions">
+            <button class="icon-btn" type="button" aria-label="给 MacBook · 7K2F 发文件">{{ICON:send}}</button>
+          </span>
+        </li>
+
+        <li class="receiver receiver--self">
+          <span class="receiver__tile">{{ICON:smartphone}}</span>
+          <span class="stack" style="gap:1px; min-width:0">
+            <span class="receiver__name">我 · iPhone · <span class="name-code">3Q9A</span></span>
+            <span class="receiver__meta">iOS · 成员 · 这台设备</span>
+          </span>
+          <span class="receiver__actions">
+            <button class="btn btn--ghost btn--sm" type="button">改名</button>
+          </span>
+        </li>
+      </ul>
+
+    </section>
+
+    <div class="card card--inset">
+      <div class="card__head">
+        <span class="card__title">这个房间怎么传</span>
+      </div>
+      <div class="stack gap-2">
+        <span class="note">{{ICON:shield-check}}<span>每次接收都会先征求你的同意</span></span>
+        <span class="note">{{ICON:clock}}<span>同一对设备一次只传一条，其他成员可以同时传</span></span>
+        <span class="note">{{ICON:lock}}<span>退出房间后，已接收的文件仍留在你的设备上</span></span>
+      </div>
+    </div>
+
+    <p class="note">{{ICON:shield-check}}<span>服务器不存一个字节 · 房间结束即销毁</span></p>
+  </main>
+
+  <div class="m-sticky">
+    <button class="btn btn--primary btn--lg btn--block" type="button">{{ICON:upload}}选择文件</button>
+  </div>
+</div>
+</body>
+</html>

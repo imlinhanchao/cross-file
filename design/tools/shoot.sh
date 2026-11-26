@@ -26,8 +26,9 @@ shoot() {
   fi
 }
 
-shoot 01-sender-room.html    1440 900 1 01-sender-room
-shoot 02-sender-transfer.html 1440 900 1 02-sender-transfer
-shoot 03-mobile-receive.html  390 844 2 03-mobile-receive
-shoot 04-mobile-done.html     390 844 2 04-mobile-done
-shoot 05-mobile-code.html     390 844 2 05-mobile-code
+shoot 01-entry.html           1440 900 1 01-entry
+shoot 02-room-idle.html       1440 900 1 02-room-idle
+shoot 03-room-transfer.html   1440 900 1 03-room-transfer
+shoot 04-mobile-incoming.html 390 844 2 04-mobile-incoming
+shoot 05-mobile-room.html     390 844 2 05-mobile-room
+shoot 06-mobile-done.html     390 844 2 06-mobile-done

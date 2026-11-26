@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CrossFile · 手机接收完成（深色）</title>
+<title>CrossFile · 手机完成（深色）</title>
 <link rel="stylesheet" href="../tokens/tokens.css">
 <link rel="stylesheet" href="../base.css">
 </head>
@@ -16,7 +16,7 @@
       CrossFile
     </span>
     <span class="spacer"></span>
-    <span class="pill pill--secure">{{ICON:shield-check}}<span>端到端加密</span></span>
+    <span class="pill pill--secure">{{ICON:shield-check}}<span>零留存</span></span>
   </header>
 
   <main class="stack gap-4" aria-labelledby="done-title">
@@ -24,7 +24,7 @@
 
     <section class="stack gap-2" style="text-align:center; align-items:center">
       <h1 id="done-title" class="h1">接收完成</h1>
-      <p class="lead" style="max-width:34ch">2 个文件已保存到「文件」App</p>
+      <p class="lead" style="max-width:34ch">2 个文件已通过 SHA-256 校验</p>
     </section>
 
     <div class="card">
@@ -48,25 +48,26 @@
 
     <div class="card">
       <div class="card__head">
-        <span class="card__title">本次传输</span>
+        <span class="card__title">完整性</span>
         <span class="spacer"></span>
-        <span class="pill pill--secure">{{ICON:shield-check}}<span>零留存</span></span>
+        <span class="pill pill--secure">{{ICON:shield-check}}<span>校验通过</span></span>
       </div>
-      <dl class="kv">
-        <div class="kv__row"><dt>路径</dt><dd><span class="path-badge path-badge--lan"><span class="dot"></span>局域网直连</span></dd></div>
-        <div class="kv__row"><dt>速率 / 用时</dt><dd class="tnum">41.2 MB/s · 12 秒</dd></div>
-        <div class="kv__row"><dt>完整性</dt><dd>SHA-256 校验通过</dd></div>
-        <div class="kv__row"><dt>服务器</dt><dd>未参与传输，无副本</dd></div>
-      </dl>
+      <div class="hash-row">
+        {{ICON:check}}
+        <span class="mono">f5b7ea08…3c9d41</span>
+        <button class="icon-btn" type="button" aria-label="复制 SHA-256" style="width:36px;height:36px">{{ICON:copy}}</button>
+      </div>
     </div>
 
-    <p class="note">{{ICON:lock}}<span>房间已结束 · 服务器没有留下副本</span></p>
+    <p class="note">{{ICON:globe}}<span>来自 MacBook · <span class="name-code">7K2F</span> · 局域网直连 · 12 秒</span></p>
+
+    <p class="note">{{ICON:lock}}<span>房间仍在进行 · 你可以回到房间继续给成员发文件</span></p>
   </main>
 
   <div class="m-sticky">
     <div class="row gap-3">
-      <button class="btn btn--ghost btn--lg" type="button">打开文件</button>
-      <button class="btn btn--primary btn--lg" type="button" style="flex:1">完成</button>
+      <button class="btn btn--ghost btn--lg" type="button">回到房间</button>
+      <button class="btn btn--primary btn--lg" type="button" style="flex:1">{{ICON:check}}保存文件</button>
     </div>
   </div>
 </div>

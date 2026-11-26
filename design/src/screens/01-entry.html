@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CrossFile · 首页（浅色）</title>
+<link rel="stylesheet" href="../tokens/tokens.css">
+<link rel="stylesheet" href="../base.css">
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <span class="brand">
+      <span class="brand-mark" aria-hidden="true">{{ICON:send}}</span>
+      CrossFile
+    </span>
+    <span class="pill pill--secure">{{ICON:shield-check}}<span>服务器不存一个字节</span></span>
+    <span class="topbar__spacer"></span>
+    <a class="btn btn--ghost btn--sm" href="#privacy">{{ICON:lock}}隐私说明</a>
+  </header>
+
+  <main class="shell" style="flex:1; display:flex; flex-direction:column">
+    <div class="entry-grid" style="margin-top:auto; margin-bottom:auto">
+
+      <!-- left: what it is / why it is safe ------------------------------ -->
+      <section class="entry-hero" aria-labelledby="entry-title">
+        <p class="eyebrow">临时 · 大文件 · 用完即走</p>
+        <h1 id="entry-title" class="display">把文件直接送到对方的设备</h1>
+        <p class="lead">不需要账号，不需要安装。房间只在传输期间存在，文件在两台设备之间端到端加密直传，服务器不保存任何内容。</p>
+
+        <div class="signal-rule mt-5" aria-hidden="true"></div>
+
+        <ul class="entry-features">
+          <li class="entry-feature">
+            <span class="entry-feature__tile">{{ICON:shield-check}}</span>
+            <span class="stack" style="gap:2px">
+              <span class="entry-feature__title">端到端加密</span>
+              <span class="entry-feature__body">AES-256-GCM 逐片认证，完成后双方比对 SHA-256。</span>
+            </span>
+          </li>
+          <li class="entry-feature">
+            <span class="entry-feature__tile">{{ICON:lock}}</span>
+            <span class="stack" style="gap:2px">
+              <span class="entry-feature__title">服务器不存一个字节</span>
+              <span class="entry-feature__body">只转发密文，不落盘；房间结束，密钥和状态一起销毁。</span>
+            </span>
+          </li>
+          <li class="entry-feature">
+            <span class="entry-feature__tile">{{ICON:smartphone}}</span>
+            <span class="stack" style="gap:2px">
+              <span class="entry-feature__title">零安装接收</span>
+              <span class="entry-feature__body">对方用浏览器扫码就能收，不用装 App。</span>
+            </span>
+          </li>
+        </ul>
+
+        <p class="note mt-5">{{ICON:globe}}<span>开源 · 可自托管 · 文件不经过任何云盘</span></p>
+      </section>
+
+      <!-- right: create / join ------------------------------------------- -->
+      <section class="card" aria-labelledby="action-title">
+        <div class="card__head">
+          <span class="card__title" id="action-title">开始传输</span>
+          <span class="spacer"></span>
+          <span class="pill pill--secure">{{ICON:wifi}}<span>局域网优先</span></span>
+        </div>
+
+        <button class="btn btn--primary btn--lg btn--block" type="button">{{ICON:plus}}创建房间</button>
+        <p class="small muted mt-2">你将成为管理员，可以邀请成员加入；房间里的任何人都能给你发文件。</p>
+
+        <div class="divider-label mt-5 mb-4"><span>或加入别人的房间</span></div>
+
+        <div class="field">
+          <span class="field__label">输入 6 位房间码</span>
+          <div class="field__row">
+            <input class="input mono input--code" inputmode="numeric" autocomplete="one-time-code" placeholder="000 000" aria-label="6 位房间码">
+            <button class="btn btn--secondary" type="button">{{ICON:arrow-right}}加入</button>
+          </div>
+        </div>
+
+        <button class="btn btn--ghost btn--block mt-3" type="button">{{ICON:link}}粘贴邀请链接</button>
+
+        <div class="signal-rule mt-5" aria-hidden="true"></div>
+        <p class="note mt-4">{{ICON:shield-check}}<span>邀请链接里带着房间密钥，只在你的浏览器里。</span></p>
+      </section>
+    </div>
+
+    <footer class="row gap-4 wrap mt-7">
+      <span class="small muted">CrossFile · MIT</span>
+      <span class="spacer"></span>
+      <a class="small" href="#privacy">隐私说明</a>
+      <a class="small" href="#self-host">自托管</a>
+      <a class="small" href="#faq">常见问题</a>
+    </footer>
+  </main>
+</div>
+</body>
+</html>

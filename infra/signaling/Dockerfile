@@ -29,7 +29,11 @@ COPY apps/web/package.json apps/web/package.json
 # `--trust-lockfile` skips pnpm's supply-chain-policy network verification, which makes a
 # reproducible container build depend on registry metadata round-trips. The committed lockfile
 # plus --frozen-lockfile still pin every version; bumping a dependency is a reviewed repo change.
-RUN pnpm install --frozen-lockfile --trust-lockfile --filter @crossfile/signaling... --filter @crossfile/web...
+# `--ignore-scripts` is deliberate: the workspace root's devDependencies (electron-builder chain)
+# are installed even under --filter, and pnpm 12 fails the install on their unapproved lifecycle
+# scripts. Neither the esbuild bundle nor the Vite web build needs a lifecycle script.
+RUN pnpm install --frozen-lockfile --trust-lockfile --ignore-scripts \
+      --filter @crossfile/signaling... --filter @crossfile/web...
 
 # Sources needed by the bundle and the web build (the design system is imported by web styles).
 COPY packages/core/src packages/core/src

@@ -1,8 +1,8 @@
-import { HostPage } from "./pages/HostPage.js";
-import { GuestPage } from "./pages/GuestPage.js";
-import { CodePage } from "./pages/CodePage.js";
+import { EntryPage } from "./pages/EntryPage.js";
+import { RoomPage } from "./pages/RoomPage.js";
 import { PrivacyPage } from "./pages/PrivacyPage.js";
 import { UnsupportedPage } from "./ui/UnsupportedPage.js";
+import type { RoomMode } from "./lib/room.js";
 
 function hasWebRTC(): boolean {
   const globals = globalThis as { RTCPeerConnection?: unknown };
@@ -11,16 +11,17 @@ function hasWebRTC(): boolean {
 
 export function App() {
   if (!hasWebRTC()) return <UnsupportedPage />;
-  // Debug shells open the guest page on their own origin with the room key in a
-  // query parameter (native IPC is only allowed there); the controller validates
-  // the debug shell flag before honouring it.
-  if (new URLSearchParams(location.search).has("devkey")) return <GuestPage />;
-  if (location.pathname.startsWith("/r/")) return <GuestPage />;
-  if (location.pathname.startsWith("/j/")) {
-    const code = location.pathname.split("/")[2] ?? "";
-    return <GuestPage code={code} />;
-  }
-  if (location.pathname.startsWith("/code")) return <CodePage />;
-  if (location.pathname.startsWith("/privacy")) return <PrivacyPage />;
-  return <HostPage />;
+  const path = location.pathname;
+  const params = new URLSearchParams(location.search);
+  // Debug shells pass the room key as a query parameter (native IPC origin,
+  // docs/05 §7.0.13); the controller only honours it for shell debug builds.
+  if (params.has("devkey")) return <RoomPage mode={{ kind: "auto" }} />;
+  if (path.startsWith("/r/") || path.startsWith("/j/"))
+    return <RoomPage mode={{ kind: "auto" }} />;
+  if (path.startsWith("/room")) return <RoomPage mode={{ kind: "create" }} />;
+  if (path.startsWith("/code")) return <EntryPage focusCode />;
+  if (path.startsWith("/privacy")) return <PrivacyPage />;
+  return <EntryPage />;
 }
+
+export type { RoomMode };

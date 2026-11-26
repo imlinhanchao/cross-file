@@ -37,6 +37,10 @@ export function PrivacyPage() {
             为了建立连接，服务器能看到双方的 IP
             地址、房间存在的时间、以及经过中继的流量大小。这是我们诚实说明的部分；自托管可以自己验证这一点。
           </p>
+          <p className="lead">
+            房间内互传时，服务器还能看到房间里有哪几台设备、它们的显示名和平台，以及谁在跟谁建立连接。这些信息
+            同样只存在内存里：不落盘、不写日志、不做分析。
+          </p>
           <h2 className="h2">自己验证</h2>
           <p className="lead">
             仓库里的 <span className="mono">tests/audit/zero-storage.sh</span>{" "}

@@ -7,6 +7,8 @@ export interface DialogProps {
   confirmLabel: string;
   cancelLabel?: string;
   danger?: boolean;
+  /** e2e hook: override the confirm button's test id (default `dialog-confirm`) */
+  confirmTestId?: string;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -23,6 +25,7 @@ export function Dialog({
   confirmLabel,
   cancelLabel = "取消",
   danger,
+  confirmTestId = "dialog-confirm",
   onConfirm,
   onCancel,
 }: DialogProps) {
@@ -88,7 +91,7 @@ export function Dialog({
             className={danger ? "btn btn--danger" : "btn btn--primary"}
             type="button"
             ref={confirmRef}
-            data-testid="dialog-confirm"
+            data-testid={confirmTestId}
             onClick={onConfirm}
           >
             {confirmLabel}

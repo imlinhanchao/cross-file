@@ -97,7 +97,7 @@ export class SignalingSocket {
   }
 
   signal(to: string, payload: SignalPayload): void {
-    this.send({ v: 1, type: "signal", to, payload });
+    this.send({ v: 2, type: "signal", to, payload });
   }
 
   close(): void {

@@ -459,6 +459,8 @@ TURN_URIS=turn:room.example.com:3478?transport=udp,turn:room.example.com:3478?tr
 PUBLIC_HOST=room.example.com
 PORT=8788
 # HOST=0.0.0.0
+# 成员上限（不含管理员）：自托管默认 4；官方实例建议 2（docs/01 D6）
+# MAX_MEMBERS=2
 ```
 
 反代（Caddy/nginx）指向 `127.0.0.1:8788`，模板见 `infra/deploy/Caddyfile.example`。

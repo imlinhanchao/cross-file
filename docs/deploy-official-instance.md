@@ -29,6 +29,7 @@ TURN_URIS=turn:<domain>:3478?transport=udp,turn:<domain>:3478?transport=tcp
 TURN_EXTERNAL_IP=<public-ip>
 PUBLIC_HOST=<domain>
 SIGNAL_PORT=8788
+MAX_MEMBERS=2
 COTURN_MIN_PORT=49160
 COTURN_MAX_PORT=49200
 ```
@@ -36,7 +37,7 @@ COTURN_MAX_PORT=49200
 说明：
 - `TURN_URIS` 用域名而不是 IP：Safari/iOS 对 `turn:` 的凭据与 URI 更严格，域名 + 有效 TLS 反代是稳妥组合；
 - `TURN_SECRET` 只给 signaling 与 coturn 用，**不要**在前端出现；
-- 官方实例建议把 `MAX_GUESTS` 设为 2（docs/01 D13），自托管默认 4。
+- 官方实例把 `MAX_MEMBERS` 设为 2（成员上限，**不含管理员**；docs/01 D6/D13），自托管默认 4；旧名 `MAX_GUESTS` 仍兼容，两者同时存在时 `MAX_MEMBERS` 优先。
 
 ## 3. 起服务
 

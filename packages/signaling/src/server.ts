@@ -127,7 +127,7 @@ export function createSignalingServer(
 ): SignalingServer {
   const listenPort = options.port ?? DEFAULT_PORT;
   const listenHost = options.host ?? DEFAULT_HOST;
-  const maxGuests = options.maxGuests ?? MAX_MEMBERS;
+  const maxMembers = options.maxMembers ?? options.maxGuests ?? MAX_MEMBERS;
   const roomTtlMs = options.roomTtlMs ?? ROOM_TTL_MS;
   const heartbeatMs = options.heartbeatMs ?? HEARTBEAT_MS;
   const reconnectWindowMs = options.reconnectWindowMs ?? RECONNECT_WINDOW_MS;
@@ -574,7 +574,7 @@ export function createSignalingServer(
       sendError(ws, "ROOM_CLOSED", "admin is offline");
       return;
     }
-    if (room.members.length >= maxGuests) {
+    if (room.members.length >= maxMembers) {
       sendError(ws, "ROOM_FULL", "room is full");
       return;
     }

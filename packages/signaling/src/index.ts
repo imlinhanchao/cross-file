@@ -25,8 +25,12 @@ export interface SignalingServerOptions {
   turn?: TurnOptions;
   /**
    * Maximum members per room (the admin is not counted), pending + joined + offline.
-   * Default MAX_MEMBERS (4); the official instance uses 2 (docs/01 D6).
+   * Default MAX_MEMBERS (4); the official instance uses 2 (docs/01 D6). The deploy entry
+   * point reads the `MAX_MEMBERS` environment variable (legacy `MAX_GUESTS` also accepted)
+   * into this option; see packages/signaling/src/config.ts.
    */
+  maxMembers?: number;
+  /** @deprecated v1 name; use {@link maxMembers}. */
   maxGuests?: number;
   /** Idle-room TTL. Default ROOM_TTL_MS from @crossfile/core. */
   roomTtlMs?: number;

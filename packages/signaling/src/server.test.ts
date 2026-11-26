@@ -404,8 +404,8 @@ describe("join / approve / deny (docs/02 §3.4, §3.5)", () => {
     expect((await member.next("error")).code).toBe("ROOM_NOT_FOUND");
   });
 
-  it("answers ROOM_FULL once maxGuests is reached", async () => {
-    const { port } = await startServer({ maxGuests: 1 });
+  it("answers ROOM_FULL once maxMembers is reached", async () => {
+    const { port } = await startServer({ maxMembers: 1 });
     const { admin, roomId } = await createRoom(port);
     const first = await connect(port);
     const request = await requestJoin(admin, first, roomId);

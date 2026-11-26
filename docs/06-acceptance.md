@@ -43,7 +43,7 @@
 | U4 | 断流续传 | ✅ AC3 |
 | U5 | 6 位码 + SAS；结束房间即销毁 | ✅ AC5 + AC7 |
 | U6 | 零存储审计 | ✅ AC8 |
-| U7 | 门禁全绿 | ✅ prettier 检查 / typecheck / **173 单测（13 文件，core 覆盖率 92.46% stmts / 85.44% branch）** / 对比度 33/33（2026-11-26 从 25 组扩至 33 组）/ 零硬编码色值 / **20 个 e2e 通过 + 1 跳过**（跳过项为 AC2 relay：本机无 coturn；含暗色 axe、双向、排队、双向续传、昵称、版本门禁、配额拒绝、SAS 超时） |
+| U7 | 门禁全绿 | ✅ prettier 检查 / typecheck / **178 单测（14 文件，core 覆盖率 92.46% stmts / 85.44% branch）** / 对比度 33/33（2026-11-26 从 25 组扩至 33 组）/ 零硬编码色值 / **20 个 e2e 通过 + 1 跳过**（跳过项为 AC2 relay：本机无 coturn；含暗色 axe、双向、排队、双向续传、昵称、版本门禁、配额拒绝、SAS 超时） |
 | U8 | 文档齐 | ✅ README/自托管/隐私页/LICENSE/ADR/desktop/mobile/验收记录/**官方实例部署清单**齐备；公网实例本身待按清单执行（需要你的域名与公网 IP） |
 
 ## 复现命令
@@ -71,7 +71,7 @@ TURN_SECRET=… AC4_QUERY='debug=1&relay=1&autoaccept=1&report=https%3A%2F%2Froo
 
 ### AC10–AC15（任意互传阶段 1，已实现）
 
-> 2026-11-26 实测：全部通过。完整回归 `pnpm exec playwright test` → **20 passed / 1 skipped**（跳过项为 AC2 relay：本机无 coturn），约 2.0 min；单测 173 个、core 覆盖率 92.46%。
+> 2026-11-26 实测：全部通过。完整回归 `pnpm exec playwright test` → **20 passed / 1 skipped**（跳过项为 AC2 relay：本机无 coturn），约 2.0 min；单测 178 个、core 覆盖率 92.46%。
 
 ```bash
 # 全量 e2e（默认 10 MB；AC2 relay 需 TURN 环境，自动跳过）

@@ -26,6 +26,8 @@ const app = {
     STATIC_DIR: path.join(__dirname, "public"),
     TURN_URIS: process.env.TURN_URIS || "",
     TURN_SECRET: process.env.TURN_SECRET || "",
+    // Room capacity excluding the admin (docs/01 D6); empty means the server default (4).
+    MAX_MEMBERS: process.env.MAX_MEMBERS || "",
   },
 };
 

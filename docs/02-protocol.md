@@ -25,7 +25,7 @@
 `HWM = 8 MiB`（发送高水位）；`LWM = 2 MiB`；`RECONNECT_WINDOW = 60 s`（`rejoinToken` 有效期，双方都适用；
 窗口到期不等于房间销毁，房间保留到 TTL）；
 `ROOM_TTL = 30 min`；`HEARTBEAT = 20 s`（阶段 1 仅管理员心跳续期房间，沿用 v1；阶段 2 任一成员）；`TURN_TTL = 1 h`；
-`MAX_MEMBERS`：官方实例 2、自托管默认 4（不含管理员；实现里沿用 `maxGuests` 选项，语义为成员上限）。
+`MAX_MEMBERS`：官方实例 2、自托管默认 4（不含管理员）。服务端选项为 `maxMembers`（旧名 `maxGuests` 兼容），部署时用 `MAX_MEMBERS` 环境变量配置（旧名 `MAX_GUESTS` 兼容，非法值启动即失败）。
 
 ---
 

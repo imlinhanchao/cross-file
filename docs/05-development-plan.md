@@ -316,10 +316,12 @@ https://room.net.time-pack.com  --TLS-->  nginx (既有反代)  -->  Vite :5173
 - 显示名：默认 `平台 · 4 位代号`、入房前/会话中可改、房内查重、本地记忆、可「忘记」。
 - 隐私：S 可见元数据新增成员数、显示名、平台、连接关系（不落盘）；`docs/01` §5、`/privacy`、README 同步；
   零存储审计标准不变。
+- 部署：房间成员上限改为可用 `MAX_MEMBERS` 环境变量配置（官方实例 2 / 自托管默认 4，不含管理员；
+  旧名 `MAX_GUESTS` 兼容，非法值启动即失败），docker compose、PM2 与 `infra/.env.example` 已接线。
 - **不在范围**：阶段 2（成员↔成员互传、懒建连 mesh、管理权移交、自动接收开关）。
 
 **门禁（2026-11-26 实测）**
-- ✅ `pnpm gate`：prettier / typecheck（core、ui、signaling、web 全过）/ **173 单测（13 文件，core 覆盖率 92.46% stmts / 85.44% branch）** / 对比度 33/33 / 零硬编码色值。
+- ✅ `pnpm gate`：prettier / typecheck（core、ui、signaling、web 全过）/ **178 单测（14 文件，core 覆盖率 92.46% stmts / 85.44% branch）** / 对比度 33/33 / 零硬编码色值。
 - ✅ `pnpm e2e`：**20 passed / 1 skipped**（跳过项为 AC2 relay：本机无 coturn），约 2.0 min；AC10 另跑 `E2E_FILE_MB=500` → 双向 500 MB 1 passed (2.0 min)。AC10–AC15 证据见 `docs/06-acceptance.md`。
 - ✅ `bash tests/audit/zero-storage.sh` → RESULT PASS：8 步真实 v2 会话（create → 2×join/approve → members 广播 → profile 改名广播 → 任意成员信令 → close），0 写盘 / 0 DB / stdout 仅 1 行启动日志。
 - ✅ `bash tests/audit/zero-storage.sh --container` → RESULT PASS：只读 rootfs、非 root（1000:1000）、无 volume/mount、CapDrop ALL、no-new-privileges、健康检查、同一 8 步 v2 会话、容器内写盘 EROFS、`down -v` 干净。本机沙箱需 `DOCKER_BUILDKIT=0`（buildx 活动文件只读）；构建需 Dockerfile 的 `--ignore-scripts`（见偏差记录）。

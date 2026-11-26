@@ -5,7 +5,8 @@
 import { WebSocket } from "ws";
 import type { Caps, ServerMessage } from "@crossfile/core/protocol";
 
-export const HOST_CAPS: Caps = {
+/** Room creator (desktop Chrome): v2 calls it the admin. */
+export const ADMIN_CAPS: Caps = {
   platform: "linux",
   uaFamily: "chrome",
   nativeShell: false,
@@ -19,7 +20,8 @@ export const HOST_CAPS: Caps = {
   screen: "desktop",
 };
 
-export const GUEST_CAPS: Caps = {
+/** Joiner (iPhone Safari): v2 calls it a member, and it may send back too. */
+export const MEMBER_CAPS: Caps = {
   platform: "ios",
   uaFamily: "safari",
   nativeShell: false,
@@ -32,6 +34,11 @@ export const GUEST_CAPS: Caps = {
   storageQuotaMB: 10_240,
   screen: "phone",
 };
+
+/** @deprecated v1 fixture names; tests are migrating to ADMIN_CAPS / MEMBER_CAPS. */
+export const HOST_CAPS = ADMIN_CAPS;
+/** @deprecated v1 fixture names; tests are migrating to ADMIN_CAPS / MEMBER_CAPS. */
+export const GUEST_CAPS = MEMBER_CAPS;
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {

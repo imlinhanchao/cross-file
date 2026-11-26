@@ -22,11 +22,30 @@ const turn: TurnOptions | undefined =
 // HOST lets the container bind 0.0.0.0 (a published port cannot reach 127.0.0.1).
 const host = process.env.HOST?.trim();
 const staticDir = process.env.STATIC_DIR?.trim();
+// Test/dev escape hatch: Playwright runs every spec from 127.0.0.1 against one
+// signaling process, so the production per-IP budget (120 msg / 60 s) would
+// throttle a full suite. Unset keeps the production policy untouched.
+const rateLimitMax = Number.parseInt(process.env.RATE_LIMIT_MAX ?? "", 10);
+const rateLimitWindowMs = Number.parseInt(
+  process.env.RATE_LIMIT_WINDOW_MS ?? "",
+  10,
+);
+const rateLimit =
+  Number.isFinite(rateLimitMax) && rateLimitMax > 0
+    ? {
+        windowMs:
+          Number.isFinite(rateLimitWindowMs) && rateLimitWindowMs > 0
+            ? rateLimitWindowMs
+            : 60_000,
+        max: rateLimitMax,
+      }
+    : undefined;
 const server = createSignalingServer({
   port,
   ...(host ? { host } : {}),
   ...(turn ? { turn } : {}),
   ...(staticDir ? { staticDir } : {}),
+  ...(rateLimit ? { rateLimit } : {}),
 });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

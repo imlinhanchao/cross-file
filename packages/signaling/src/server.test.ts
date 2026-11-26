@@ -1,10 +1,11 @@
 /**
- * End-to-end tests over a real `ws` client against an ephemeral-port server.
- * Covers the protocol behaviours listed in docs/02 §3 and the TURN credential rule in §6.7.
+ * End-to-end tests over a real `ws` client against an ephemeral-port server (v2, ADR 0010).
+ * Covers the room protocol in docs/02 §3 (admin + members, members broadcast, any-to-any
+ * signal, rejoinToken), the TURN credential rule in §6.8 and the version gate.
  */
 import { createHmac } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Caps, ServerMessage } from "@crossfile/core/protocol";
+import type { Caps, MemberInfo, ServerMessage } from "@crossfile/core/protocol";
 import { createRoomIdentity } from "@crossfile/core/ids";
 import {
   createSignalingServer,
@@ -12,11 +13,12 @@ import {
   type SignalingServerOptions,
 } from "./index.js";
 import { SHORTCODE_TTL_MS } from "./shortcode.js";
-import { GUEST_CAPS, HOST_CAPS, sleep, TestClient } from "./test-support.js";
+import { ADMIN_CAPS, MEMBER_CAPS, sleep, TestClient } from "./test-support.js";
 
 type CreatedMessage = Extract<ServerMessage, { type: "created" }>;
 type JoinRequestMessage = Extract<ServerMessage, { type: "join_request" }>;
 type JoinOkMessage = Extract<ServerMessage, { type: "join_ok" }>;
+type MembersMessage = Extract<ServerMessage, { type: "members" }>;
 
 const servers: SignalingServer[] = [];
 const clients: TestClient[] = [];
@@ -46,77 +48,121 @@ afterEach(async () => {
   for (const server of servers.splice(0)) await server.stop();
 });
 
-async function createRoom(port: number): Promise<{
-  host: TestClient;
+function memberNamed(members: MemberInfo[], id: string): MemberInfo {
+  const found = members.find((member) => member.id === id);
+  if (!found) throw new Error(`member ${id} is not in the room`);
+  return found;
+}
+
+async function createRoom(
+  port: number,
+  options: { name?: string; caps?: Caps; roomId?: string } = {},
+): Promise<{
+  admin: TestClient;
   roomId: string;
   code: string;
   created: CreatedMessage;
 }> {
-  const host = await connect(port);
-  const { roomId } = createRoomIdentity();
-  host.send({ v: 1, type: "hello", clientCaps: HOST_CAPS });
-  host.send({ v: 1, type: "create", roomId, hostCaps: HOST_CAPS });
-  const created = await host.next("created");
-  return { host, roomId, code: created.code, created };
+  const admin = await connect(port);
+  const roomId = options.roomId ?? createRoomIdentity().roomId;
+  const caps = options.caps ?? ADMIN_CAPS;
+  admin.send({ v: 2, type: "hello", clientCaps: caps });
+  admin.send({
+    v: 2,
+    type: "create",
+    roomId,
+    caps,
+    name: options.name ?? "MacBook · 7K2F",
+  });
+  const created = await admin.next("created");
+  return { admin, roomId, code: created.code, created };
 }
 
 async function requestJoin(
-  host: TestClient,
-  guest: TestClient,
+  admin: TestClient,
+  member: TestClient,
   roomIdOrCode: string,
-  guestCaps: Caps = GUEST_CAPS,
-  proof: string | null = "proof-value-0123456789",
+  options: {
+    caps?: Caps;
+    proof?: string | null;
+    nonce?: string;
+  } = {},
 ): Promise<JoinRequestMessage> {
-  guest.send({ v: 1, type: "hello", clientCaps: guestCaps });
-  guest.send({
-    v: 1,
+  const caps = options.caps ?? MEMBER_CAPS;
+  const proof =
+    options.proof === undefined ? "proof-value-0123456789" : options.proof;
+  member.send({ v: 2, type: "hello", clientCaps: caps });
+  member.send({
+    v: 2,
     type: "join",
     roomId: roomIdOrCode,
-    guestCaps,
-    guestNonce: "guest-nonce-0123456789",
+    caps,
+    nonce: options.nonce ?? "member-nonce-0123456789",
     ...(proof !== null ? { proof } : {}),
   });
-  return host.next("join_request");
+  return admin.next("join_request");
 }
 
+/** Approve a pending member; consumes the broadcast each side receives. */
 async function approve(
-  host: TestClient,
-  guest: TestClient,
+  admin: TestClient,
+  member: TestClient,
   request: JoinRequestMessage,
-): Promise<{ guestOk: JoinOkMessage; hostOk: JoinOkMessage }> {
-  host.send({ v: 1, type: "approve", guestId: request.guestId });
-  const guestOk = await guest.next("join_ok");
-  const hostOk = await host.next("join_ok");
-  return { guestOk, hostOk };
-}
-
-async function joinedPair(port: number): Promise<{
-  host: TestClient;
-  guest: TestClient;
-  roomId: string;
-  request: JoinRequestMessage;
+): Promise<{
+  joinOk: JoinOkMessage;
+  adminView: MemberInfo[];
+  memberView: MemberInfo[];
 }> {
-  const { host, roomId } = await createRoom(port);
-  const guest = await connect(port);
-  const request = await requestJoin(host, guest, roomId);
-  await approve(host, guest, request);
-  return { host, guest, roomId, request };
+  admin.send({ v: 2, type: "approve", memberId: request.memberId });
+  const joinOk = await member.next("join_ok");
+  const memberMembers = await member.next("members");
+  const adminMembers = await admin.next("members");
+  return {
+    joinOk,
+    adminView: adminMembers.members,
+    memberView: memberMembers.members,
+  };
 }
 
-/** Retry a host create until the server has noticed the old socket is gone. */
-async function reconnectHost(
+async function joinedPair(
+  port: number,
+  options: { adminName?: string; memberCaps?: Caps } = {},
+): Promise<{
+  admin: TestClient;
+  member: TestClient;
+  roomId: string;
+  created: CreatedMessage;
+  request: JoinRequestMessage;
+  joinOk: JoinOkMessage;
+}> {
+  const { admin, roomId, created } = await createRoom(port, {
+    ...(options.adminName ? { name: options.adminName } : {}),
+  });
+  const member = await connect(port);
+  const request = await requestJoin(admin, member, roomId, {
+    ...(options.memberCaps ? { caps: options.memberCaps } : {}),
+  });
+  const { joinOk } = await approve(admin, member, request);
+  return { admin, member, roomId, created, request, joinOk };
+}
+
+/** Reconnect a member with its rejoinToken; returns the fresh join_ok. */
+async function rejoin(
   port: number,
   roomId: string,
-): Promise<{ host: TestClient; created: CreatedMessage }> {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    const host = await connect(port);
-    host.send({ v: 1, type: "create", roomId, hostCaps: HOST_CAPS });
-    const message = await host.nextAny(["created", "error"]);
-    if (message.type === "created") return { host, created: message };
-    await host.close();
-    await sleep(20);
-  }
-  throw new Error("host could not reconnect to its room");
+  rejoinToken: string,
+): Promise<{ client: TestClient; joinOk: JoinOkMessage }> {
+  const client = await connect(port);
+  client.send({
+    v: 2,
+    type: "join",
+    roomId,
+    caps: MEMBER_CAPS,
+    nonce: "rejoin-nonce-0123456789",
+    rejoinToken,
+  });
+  const joinOk = await client.next("join_ok");
+  return { client, joinOk };
 }
 
 async function expectNoMessage(
@@ -127,184 +173,327 @@ async function expectNoMessage(
   await expect(client.next(type, waitMs)).rejects.toThrow(/timed out/);
 }
 
-describe("create (docs/02 §3.2)", () => {
-  it("creates a room with a 26 character base32 roomId and a six digit code", async () => {
+describe("create (docs/02 §3.2, ADR 0010)", () => {
+  it("creates a room whose creator is the admin", async () => {
     const { port } = await startServer();
     const { roomId, code, created } = await createRoom(port);
     expect(roomId).toMatch(/^[a-z2-7]{26}$/);
     expect(code).toMatch(/^\d{6}$/);
     expect(created.roomId).toBe(roomId);
-    // TURN is not configured, so no credentials are handed out (docs/02 §6.7).
+    expect(created.selfId).toMatch(/^[A-Za-z0-9_-]{11}$/);
+    expect(created.name).toBe("MacBook · 7K2F");
+    expect(created.rejoinToken).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    expect(created.members).toHaveLength(1);
+    expect(created.members[0]).toMatchObject({
+      id: created.selfId,
+      name: "MacBook · 7K2F",
+      isAdmin: true,
+      state: "joined",
+    });
+    expect(created.members[0]!.caps).toEqual(ADMIN_CAPS);
+    // TURN is not configured, so no credentials are handed out (docs/02 §6.8).
     expect("turn" in created).toBe(false);
   });
 
-  it("refuses a second create for the same roomId while the host socket is connected", async () => {
+  it("trims and normalises the admin display name", async () => {
+    const { port } = await startServer();
+    const { created } = await createRoom(port, { name: "  客厅 的电脑  " });
+    expect(created.name).toBe("客厅 的电脑");
+    expect(created.members[0]!.name).toBe("客厅 的电脑");
+  });
+
+  it("rejects an invalid admin display name with BAD_MESSAGE", async () => {
+    const { port } = await startServer();
+    const admin = await connect(port);
+    admin.send({
+      v: 2,
+      type: "create",
+      roomId: createRoomIdentity().roomId,
+      caps: ADMIN_CAPS,
+      name: "   ",
+    });
+    expect((await admin.next("error")).code).toBe("BAD_MESSAGE");
+
+    admin.send({
+      v: 2,
+      type: "create",
+      roomId: createRoomIdentity().roomId,
+      caps: ADMIN_CAPS,
+      name: "一二三四五六七八九十一二三四五六七",
+    });
+    expect((await admin.next("error")).code).toBe("BAD_MESSAGE");
+  });
+
+  it("refuses a second create for the same roomId while the admin is connected", async () => {
     const { port } = await startServer();
     const { roomId } = await createRoom(port);
     const rival = await connect(port);
-    rival.send({ v: 1, type: "create", roomId, hostCaps: HOST_CAPS });
-    const error = await rival.next("error");
-    expect(error.code).toBe("ROOM_CLOSED");
+    rival.send({
+      v: 2,
+      type: "create",
+      roomId,
+      caps: ADMIN_CAPS,
+      name: "rival",
+    });
+    expect((await rival.next("error")).code).toBe("ROOM_CLOSED");
   });
 
-  it("treats a repeated create after host loss as host reconnect and keeps the guest list", async () => {
+  it("treats a repeated create after admin loss as a reconnect and keeps members", async () => {
     const { port } = await startServer();
-    const { host, roomId, code } = await createRoom(port);
-    const guest = await connect(port);
-    const request = await requestJoin(host, guest, roomId);
-    await approve(host, guest, request);
+    const { admin, member, roomId, created, request } = await joinedPair(port);
 
-    await host.close();
-    await expectNoMessage(guest, "room_closed");
+    await admin.close();
+    // Members see the admin drop as an offline entry, not as a closed room.
+    const offlineView = await member.next("members");
+    expect(memberNamed(offlineView.members, created.selfId).state).toBe(
+      "offline",
+    );
+    await expectNoMessage(member, "room_closed");
 
-    const { host: host2, created } = await reconnectHost(port, roomId);
-    expect(created.roomId).toBe(roomId);
-    expect(created.code).toBe(code);
-    // The reconnected host is told about the peers it still serves.
-    const replay = await host2.next("join_ok");
-    expect(replay.guestId).toBe(request.guestId);
-    expect(replay.peerCaps).toEqual(GUEST_CAPS);
+    const host2 = await connect(port);
+    host2.send({
+      v: 2,
+      type: "create",
+      roomId,
+      caps: ADMIN_CAPS,
+      name: "MacBook · 7K2F",
+    });
+    const created2 = await host2.next("created");
+    expect(created2.roomId).toBe(roomId);
+    expect(created2.code).toBe(created.code);
+    expect(created2.selfId).toBe(created.selfId);
+    expect(created2.members.map((entry) => entry.id)).toContain(
+      request.memberId,
+    );
 
-    guest.send({
-      v: 1,
+    // The admin socket gets the same full snapshot the members get.
+    const adminView = await host2.next("members");
+    expect(memberNamed(adminView.members, request.memberId).state).toBe(
+      "joined",
+    );
+    const memberView = await member.next("members");
+    expect(memberNamed(memberView.members, created.selfId).state).toBe(
+      "joined",
+    );
+
+    member.send({
+      v: 2,
       type: "signal",
-      to: "host",
+      to: created.selfId,
       payload: { k: "offer", sdp: "v=0\r\n" },
     });
     const signal = await host2.next("signal");
-    expect(signal.from).toBe(request.guestId);
+    expect(signal.from).toBe(request.memberId);
+  });
+
+  it("rejects a v1 connection with VERSION_MISMATCH and closes it", async () => {
+    const { port } = await startServer();
+    const stale = await connect(port);
+    stale.send({ v: 1, type: "hello" });
+    const error = await stale.next("error");
+    expect(error.code).toBe("VERSION_MISMATCH");
+    expect(error.msg).toContain("刷新");
+    const closed = await stale.closed(2_000);
+    expect(closed.code).toBe(1008);
   });
 });
 
 describe("join / approve / deny (docs/02 §3.4, §3.5)", () => {
-  it("forwards join_request, then joins both sides with the opposite peer capabilities", async () => {
+  it("forwards join_request with a default name, caps, nonce and proof", async () => {
     const { port } = await startServer();
-    const { host, roomId } = await createRoom(port);
-    const guest = await connect(port);
-    const request = await requestJoin(host, guest, roomId);
+    const { admin, roomId } = await createRoom(port);
+    const member = await connect(port);
+    const request = await requestJoin(admin, member, roomId);
 
-    expect(request.guestId).toMatch(/^[A-Za-z0-9_-]{11}$/);
-    expect(request.guestCaps).toEqual(GUEST_CAPS);
-    expect(request.guestNonce).toBe("guest-nonce-0123456789");
-    // The server has no roomKey, so the QR proof is forwarded verbatim for the host to check.
+    expect(request.memberId).toMatch(/^[A-Za-z0-9_-]{11}$/);
+    expect(request.caps).toEqual(MEMBER_CAPS);
+    expect(request.nonce).toBe("member-nonce-0123456789");
+    // The server has no roomKey, so the QR proof is forwarded verbatim for the admin.
     expect(request.proof).toBe("proof-value-0123456789");
+    // `join` carries no name (ADR 0010 §协议增量): the server seeds one from the caps.
+    expect(request.name).toMatch(/^iPhone · [A-Z2-7]{4}$/);
     expect("error" in request).toBe(false);
-
-    host.send({ v: 1, type: "approve", guestId: request.guestId });
-    const guestOk = await guest.next("join_ok");
-    const hostOk = await host.next("join_ok");
-    expect(guestOk.guestId).toBe(request.guestId);
-    expect(guestOk.peerCaps).toEqual(HOST_CAPS);
-    expect(hostOk.guestId).toBe(request.guestId);
-    expect(hostOk.peerCaps).toEqual(GUEST_CAPS);
+    // A pending request is not a member yet: no `members` broadcast before approval.
+    await expectNoMessage(admin, "members");
   });
 
-  it("rejects a denied guest and removes it from the room", async () => {
+  it("approves a member with join_ok carrying the full member list", async () => {
     const { port } = await startServer();
-    const { host, roomId } = await createRoom(port);
-    const guest = await connect(port);
-    const request = await requestJoin(host, guest, roomId);
+    const { admin, roomId, created } = await createRoom(port);
+    const member = await connect(port);
+    const request = await requestJoin(admin, member, roomId);
 
-    host.send({
-      v: 1,
+    admin.send({ v: 2, type: "approve", memberId: request.memberId });
+    const joinOk = await member.next("join_ok");
+    expect(joinOk.roomId).toBe(roomId);
+    expect(joinOk.selfId).toBe(request.memberId);
+    expect(joinOk.name).toBe(request.name);
+    expect(joinOk.rejoinToken).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    expect(joinOk.members).toHaveLength(2);
+    expect(memberNamed(joinOk.members, created.selfId).isAdmin).toBe(true);
+    expect(memberNamed(joinOk.members, request.memberId)).toMatchObject({
+      name: request.name,
+      caps: MEMBER_CAPS,
+      isAdmin: false,
+      state: "joined",
+    });
+
+    // The admin learns about the member through `members`, not through join_ok (v2).
+    const adminView = await admin.next("members");
+    expect(memberNamed(adminView.members, request.memberId).state).toBe(
+      "joined",
+    );
+    await expectNoMessage(admin, "join_ok");
+  });
+
+  it("rejects a denied member and frees its slot", async () => {
+    const { port } = await startServer();
+    const { admin, roomId } = await createRoom(port);
+    const member = await connect(port);
+    const request = await requestJoin(admin, member, roomId);
+
+    admin.send({
+      v: 2,
       type: "deny",
-      guestId: request.guestId,
+      memberId: request.memberId,
       reason: "ROOM_NOT_FOUND",
     });
-    const rejected = await guest.next("join_rejected");
+    const rejected = await member.next("join_rejected");
     expect(rejected.code).toBe("ROOM_NOT_FOUND");
     expect(rejected.reason).toBe("ROOM_NOT_FOUND");
 
-    // The denied guest is gone: signaling to it yields PEER_GONE.
-    host.send({
-      v: 1,
+    // The denied member is gone: signaling to it yields PEER_GONE.
+    admin.send({
+      v: 2,
       type: "signal",
-      to: request.guestId,
+      to: request.memberId,
       payload: { k: "offer", sdp: "v=0" },
     });
-    expect((await host.next("error")).code).toBe("PEER_GONE");
+    expect((await admin.next("error")).code).toBe("PEER_GONE");
 
-    // And a new guest can still join the room afterwards.
     const late = await connect(port);
-    await requestJoin(host, late, roomId);
+    await requestJoin(admin, late, roomId);
   });
 
   it("passes free-form deny reasons through as reason text", async () => {
     const { port } = await startServer();
-    const { host, roomId } = await createRoom(port);
-    const guest = await connect(port);
-    const request = await requestJoin(host, guest, roomId);
-    host.send({
-      v: 1,
+    const { admin, roomId } = await createRoom(port);
+    const member = await connect(port);
+    const request = await requestJoin(admin, member, roomId);
+    admin.send({
+      v: 2,
       type: "deny",
-      guestId: request.guestId,
+      memberId: request.memberId,
       reason: "not right now",
     });
-    const rejected = await guest.next("join_rejected");
+    const rejected = await member.next("join_rejected");
     expect(rejected.code).toBe("ROOM_CLOSED");
     expect(rejected.reason).toBe("not right now");
   });
 
   it("answers ROOM_NOT_FOUND for an unknown room", async () => {
     const { port } = await startServer();
-    const guest = await connect(port);
-    guest.send({
-      v: 1,
+    const member = await connect(port);
+    member.send({
+      v: 2,
       type: "join",
       roomId: createRoomIdentity().roomId,
-      guestCaps: GUEST_CAPS,
-      guestNonce: "guest-nonce-0123456789",
+      caps: MEMBER_CAPS,
+      nonce: "member-nonce-0123456789",
     });
-    expect((await guest.next("error")).code).toBe("ROOM_NOT_FOUND");
+    expect((await member.next("error")).code).toBe("ROOM_NOT_FOUND");
   });
 
   it("answers ROOM_FULL once maxGuests is reached", async () => {
     const { port } = await startServer({ maxGuests: 1 });
-    const { host, roomId } = await createRoom(port);
+    const { admin, roomId } = await createRoom(port);
     const first = await connect(port);
-    await requestJoin(host, first, roomId);
+    const request = await requestJoin(admin, first, roomId);
 
     const second = await connect(port);
     second.send({
-      v: 1,
+      v: 2,
       type: "join",
       roomId,
-      guestCaps: GUEST_CAPS,
-      guestNonce: "guest-nonce-0123456789",
+      caps: MEMBER_CAPS,
+      nonce: "member-nonce-0123456789",
     });
     expect((await second.next("error")).code).toBe("ROOM_FULL");
+
+    // Denying the pending slot lets someone else in.
+    admin.send({ v: 2, type: "deny", memberId: request.memberId });
+    await first.next("join_rejected");
+    const third = await connect(port);
+    await requestJoin(admin, third, roomId);
+  });
+
+  it("de-duplicates display names in join order and renumbers after removal", async () => {
+    const { port } = await startServer();
+    const { admin, roomId, created } = await createRoom(port, { name: "同名" });
+
+    const first = await connect(port);
+    const firstRequest = await requestJoin(admin, first, roomId);
+    await approve(admin, first, firstRequest);
+    first.send({ v: 2, type: "profile", name: "同名" });
+    const firstView = await admin.next("members");
+    expect(memberNamed(firstView.members, firstRequest.memberId).name).toBe(
+      "同名-2",
+    );
+
+    const second = await connect(port);
+    const secondRequest = await requestJoin(admin, second, roomId);
+    await approve(admin, second, secondRequest);
+    second.send({ v: 2, type: "profile", name: "同名" });
+    const secondView = await admin.next("members");
+    expect(memberNamed(secondView.members, secondRequest.memberId).name).toBe(
+      "同名-3",
+    );
+
+    // The admin keeps the base name and stays first in the list.
+    expect(memberNamed(secondView.members, created.selfId).name).toBe("同名");
+    expect(secondView.members[0]!.isAdmin).toBe(true);
+
+    admin.send({ v: 2, type: "remove", memberId: firstRequest.memberId });
+    const afterRemoval = await admin.next("members");
+    expect(
+      afterRemoval.members.some((entry) => entry.id === firstRequest.memberId),
+    ).toBe(false);
+    expect(memberNamed(afterRemoval.members, secondRequest.memberId).name).toBe(
+      "同名-2",
+    );
   });
 });
 
-describe("signal (docs/02 §3.2)", () => {
-  it("relays offer/answer in both directions and only whitelisted payload fields", async () => {
+describe("signal (docs/02 §3.2, §3.6)", () => {
+  it("relays offer/answer both ways and strips non-whitelisted payload fields", async () => {
     const { port } = await startServer();
-    const { host, guest, request } = await joinedPair(port);
+    const { admin, member, request, created } = await joinedPair(port);
 
-    host.send({
-      v: 1,
+    admin.send({
+      v: 2,
       type: "signal",
-      to: request.guestId,
+      to: request.memberId,
       payload: { k: "offer", sdp: "v=0", junk: "must not be relayed" },
     });
-    const offer = await guest.next("signal");
-    expect(offer.from).toBeTruthy();
+    const offer = await member.next("signal");
+    expect(offer.from).toBe(created.selfId);
     expect(offer.payload).toEqual({ k: "offer", sdp: "v=0" });
 
-    guest.send({
-      v: 1,
+    // No "host" sentinel anymore: members address the admin by its member id.
+    member.send({
+      v: 2,
       type: "signal",
-      to: "host",
+      to: created.selfId,
       payload: { k: "answer", sdp: "v=0\r\n" },
     });
-    const answer = await host.next("signal");
-    expect(answer.from).toBe(request.guestId);
+    const answer = await admin.next("signal");
+    expect(answer.from).toBe(request.memberId);
     expect(answer.payload).toEqual({ k: "answer", sdp: "v=0\r\n" });
 
-    guest.send({
-      v: 1,
+    member.send({
+      v: 2,
       type: "signal",
-      to: "host",
+      to: created.selfId,
       payload: {
         k: "candidate",
         candidate: {
@@ -313,7 +502,7 @@ describe("signal (docs/02 §3.2)", () => {
         },
       },
     });
-    const candidate = await host.next("signal");
+    const candidate = await admin.next("signal");
     expect(candidate.payload).toEqual({
       k: "candidate",
       candidate: {
@@ -323,61 +512,316 @@ describe("signal (docs/02 §3.2)", () => {
     });
   });
 
-  it("answers PEER_GONE for unknown targets and when the host is offline", async () => {
+  it("routes between any two joined members (not only admin↔member)", async () => {
     const { port } = await startServer();
-    const { host, guest } = await joinedPair(port);
+    const { admin, roomId, created } = await createRoom(port);
+    const first = await connect(port);
+    const firstRequest = await requestJoin(admin, first, roomId);
+    await approve(admin, first, firstRequest);
+    const second = await connect(port);
+    const secondRequest = await requestJoin(admin, second, roomId);
+    await approve(admin, second, secondRequest);
 
-    host.send({
-      v: 1,
+    first.send({
+      v: 2,
       type: "signal",
-      to: "no-such-guest",
-      payload: { k: "offer", sdp: "v=0" },
+      to: secondRequest.memberId,
+      payload: { k: "offer", sdp: "v=0 member-to-member" },
     });
-    expect((await host.next("error")).code).toBe("PEER_GONE");
+    const relayed = await second.next("signal");
+    expect(relayed.from).toBe(firstRequest.memberId);
+    expect(relayed.payload).toEqual({
+      k: "offer",
+      sdp: "v=0 member-to-member",
+    });
 
-    guest.send({
-      v: 1,
+    second.send({
+      v: 2,
       type: "signal",
-      to: "no-such-host",
-      payload: { k: "answer", sdp: "v=0" },
+      to: created.selfId,
+      payload: { k: "answer", sdp: "v=0 to-admin" },
     });
-    expect((await guest.next("error")).code).toBe("PEER_GONE");
+    expect((await admin.next("signal")).from).toBe(secondRequest.memberId);
   });
 
-  it("does not relay signal before the guest is approved", async () => {
+  it("answers PEER_GONE for unknown or offline targets", async () => {
     const { port } = await startServer();
-    const { host, roomId } = await createRoom(port);
-    const guest = await connect(port);
-    const request = await requestJoin(host, guest, roomId);
-    guest.send({
-      v: 1,
+    const { admin } = await joinedPair(port);
+
+    admin.send({
+      v: 2,
       type: "signal",
-      to: "host",
+      to: "no-such-member",
+      payload: { k: "offer", sdp: "v=0" },
+    });
+    expect((await admin.next("error")).code).toBe("PEER_GONE");
+  });
+
+  it("does not relay signal before the member is approved", async () => {
+    const { port } = await startServer();
+    const { admin, roomId, created } = await createRoom(port);
+    const member = await connect(port);
+    const request = await requestJoin(admin, member, roomId);
+    member.send({
+      v: 2,
+      type: "signal",
+      to: created.selfId,
       payload: { k: "answer", sdp: "v=0" },
     });
-    expect((await guest.next("error")).code).toBe("PEER_GONE");
-    // host can still approve afterwards
-    await approve(host, guest, request);
+    expect((await member.next("error")).code).toBe("PEER_GONE");
+    // The admin can still approve afterwards.
+    await approve(admin, member, request);
+  });
+});
+
+describe("rejoinToken (docs/02 §6.6, ADR 0010)", () => {
+  it("re-attaches a member inside the window without a new approval", async () => {
+    const { port } = await startServer();
+    const { admin, member, roomId, request, joinOk } = await joinedPair(port);
+
+    await member.close();
+    const offlineView = await admin.next("members");
+    expect(memberNamed(offlineView.members, request.memberId).state).toBe(
+      "offline",
+    );
+    await expectNoMessage(admin, "member_left");
+
+    const { client: back, joinOk: again } = await rejoin(
+      port,
+      roomId,
+      joinOk.rejoinToken,
+    );
+    expect(again.selfId).toBe(request.memberId);
+    expect(again.name).toBe(joinOk.name);
+    const backView = await admin.next("members");
+    expect(memberNamed(backView.members, request.memberId).state).toBe(
+      "joined",
+    );
+
+    admin.send({
+      v: 2,
+      type: "signal",
+      to: request.memberId,
+      payload: { k: "offer", sdp: "v=0 after-rejoin" },
+    });
+    expect((await back.next("signal")).payload).toEqual({
+      k: "offer",
+      sdp: "v=0 after-rejoin",
+    });
+  });
+
+  it("lets the admin re-attach with its rejoinToken through join", async () => {
+    const { port } = await startServer();
+    const { admin, roomId, created } = await createRoom(port);
+    const member = await connect(port);
+    const request = await requestJoin(admin, member, roomId);
+    await admin.close();
+
+    const admin2 = await connect(port);
+    admin2.send({
+      v: 2,
+      type: "join",
+      roomId,
+      caps: ADMIN_CAPS,
+      nonce: "admin-rejoin-nonce-0123456789",
+      rejoinToken: created.rejoinToken,
+    });
+    const joinOk = await admin2.next("join_ok");
+    expect(joinOk.selfId).toBe(created.selfId);
+    expect(joinOk.name).toBe(created.name);
+    expect(memberNamed(joinOk.members, created.selfId).isAdmin).toBe(true);
+
+    // A re-attached admin is replayed the join requests it still has to decide on.
+    const replay = await admin2.next("join_request");
+    expect(replay.memberId).toBe(request.memberId);
+    admin2.send({ v: 2, type: "approve", memberId: request.memberId });
+    expect((await member.next("join_ok")).selfId).toBe(request.memberId);
+  });
+
+  it("rejects an unknown rejoin token", async () => {
+    const { port } = await startServer();
+    const { roomId } = await createRoom(port);
+    const stale = await connect(port);
+    stale.send({
+      v: 2,
+      type: "join",
+      roomId,
+      caps: MEMBER_CAPS,
+      nonce: "member-nonce-0123456789",
+      rejoinToken: "not-a-real-token",
+    });
+    expect((await stale.next("error")).code).toBe("ROOM_NOT_FOUND");
+  });
+
+  it("removes an offline member after the reconnect window and tells the admin", async () => {
+    const { port } = await startServer({ reconnectWindowMs: 120 });
+    const { admin, member, roomId, request } = await joinedPair(port);
+
+    await member.close();
+    const offlineView = await admin.next("members");
+    expect(memberNamed(offlineView.members, request.memberId).state).toBe(
+      "offline",
+    );
+
+    const left = await admin.next("member_left", 2_000);
+    expect(left.memberId).toBe(request.memberId);
+    const afterExpiry = await admin.next("members");
+    expect(
+      afterExpiry.members.some((entry) => entry.id === request.memberId),
+    ).toBe(false);
+
+    // The freed slot accepts a new join request.
+    const late = await connect(port);
+    const lateRequest = await requestJoin(admin, late, roomId);
+    expect(lateRequest.memberId).not.toBe(request.memberId);
+  });
+});
+
+describe("profile (ADR 0010 §names)", () => {
+  it("broadcasts a rename to every member, admin included", async () => {
+    const { port } = await startServer();
+    const { admin, member, request } = await joinedPair(port);
+
+    member.send({ v: 2, type: "profile", name: "客厅的电脑" });
+    const adminView = await admin.next("members");
+    const memberView = await member.next("members");
+    expect(memberNamed(adminView.members, request.memberId).name).toBe(
+      "客厅的电脑",
+    );
+    expect(memberNamed(memberView.members, request.memberId).name).toBe(
+      "客厅的电脑",
+    );
+
+    admin.send({ v: 2, type: "profile", name: "书房电脑" });
+    const renamed = await member.next("members");
+    expect(renamed.members[0]!.isAdmin).toBe(true);
+    expect(renamed.members[0]!.name).toBe("书房电脑");
+  });
+
+  it("rejects an invalid name with BAD_MESSAGE", async () => {
+    const { port } = await startServer();
+    const { member } = await joinedPair(port);
+    member.send({ v: 2, type: "profile", name: "   " });
+    expect((await member.next("error")).code).toBe("BAD_MESSAGE");
+  });
+
+  it("rate limits profile updates per connection", async () => {
+    const { port } = await startServer();
+    const { member } = await joinedPair(port);
+    for (let index = 0; index < 10; index += 1) {
+      member.send({ v: 2, type: "profile", name: `名称${index}` });
+      await sleep(2);
+    }
+    member.send({ v: 2, type: "profile", name: "太快了" });
+    expect((await member.next("error")).code).toBe("RATE_LIMITED");
+  });
+
+  it("refuses a rename before the member is approved", async () => {
+    const { port } = await startServer();
+    const { admin, roomId } = await createRoom(port);
+    const member = await connect(port);
+    await requestJoin(admin, member, roomId);
+    member.send({ v: 2, type: "profile", name: "太早了" });
+    expect((await member.next("error")).code).toBe("PEER_GONE");
+  });
+});
+
+describe("remove / close (docs/02 §3.2, docs/01 AC7)", () => {
+  it("removes a joined member on admin request", async () => {
+    const { port } = await startServer();
+    const { admin, member, roomId, request } = await joinedPair(port);
+
+    admin.send({ v: 2, type: "remove", memberId: request.memberId });
+    const closed = await member.next("room_closed");
+    expect(closed.reason).toBe("error");
+    expect((await member.closed()).code).toBe(1000);
+
+    const left = await admin.next("member_left");
+    expect(left.memberId).toBe(request.memberId);
+    const view = await admin.next("members");
+    expect(view.members.some((entry) => entry.id === request.memberId)).toBe(
+      false,
+    );
+
+    // The room itself is still alive.
+    const nextMember = await connect(port);
+    await requestJoin(admin, nextMember, roomId);
+  });
+
+  it("answers NOT_ADMIN for admin-only operations sent by a member", async () => {
+    const { port } = await startServer();
+    const { admin, member, roomId, request, created } = await joinedPair(port);
+
+    member.send({ v: 2, type: "approve", memberId: "someone" });
+    expect((await member.next("error")).code).toBe("NOT_ADMIN");
+    member.send({ v: 2, type: "deny", memberId: "someone" });
+    expect((await member.next("error")).code).toBe("NOT_ADMIN");
+    member.send({ v: 2, type: "remove", memberId: "someone" });
+    expect((await member.next("error")).code).toBe("NOT_ADMIN");
+    member.send({ v: 2, type: "close", roomId });
+    expect((await member.next("error")).code).toBe("NOT_ADMIN");
+
+    // The room is untouched.
+    member.send({
+      v: 2,
+      type: "signal",
+      to: created.selfId,
+      payload: { k: "offer", sdp: "v=0" },
+    });
+    expect((await admin.next("signal")).from).toBe(request.memberId);
+  });
+
+  it("closes the room for every member and destroys it immediately", async () => {
+    const { port } = await startServer();
+    const { admin, member, roomId } = await joinedPair(port);
+    admin.send({ v: 2, type: "close", roomId });
+    const closed = await member.next("room_closed");
+    expect(closed.reason).toBe("admin_close");
+    await member.closed();
+
+    const late = await connect(port);
+    late.send({
+      v: 2,
+      type: "join",
+      roomId,
+      caps: MEMBER_CAPS,
+      nonce: "member-nonce-0123456789",
+    });
+    expect((await late.next("error")).code).toBe("ROOM_NOT_FOUND");
+  });
+
+  it("silently drops a pending join request whose socket goes away", async () => {
+    const { port } = await startServer();
+    const { admin, roomId } = await createRoom(port);
+    const member = await connect(port);
+    await requestJoin(admin, member, roomId);
+    await member.close();
+    await sleep(30);
+    // No members broadcast: the pending request never entered the visible list.
+    await expectNoMessage(admin, "members");
+    const late = await connect(port);
+    await requestJoin(admin, late, roomId);
   });
 });
 
 describe("six digit code (docs/02 §3.5)", () => {
   it("maps the code to the room and consumes it on the first successful join", async () => {
     const { port } = await startServer();
-    const { host, code } = await createRoom(port);
+    const { admin, code } = await createRoom(port);
 
     const first = await connect(port);
-    const request = await requestJoin(host, first, code, GUEST_CAPS, null);
-    expect(request.guestCaps).toEqual(GUEST_CAPS);
+    const request = await requestJoin(admin, first, code, { proof: null });
+    expect(request.caps).toEqual(MEMBER_CAPS);
     expect(request.proof).toBeUndefined();
+    await approve(admin, first, request);
 
     const second = await connect(port);
     second.send({
-      v: 1,
+      v: 2,
       type: "join",
       roomId: code,
-      guestCaps: GUEST_CAPS,
-      guestNonce: "guest-nonce-0123456789",
+      caps: MEMBER_CAPS,
+      nonce: "member-nonce-0123456789",
     });
     expect((await second.next("error")).code).toBe("ROOM_NOT_FOUND");
   });
@@ -388,120 +832,76 @@ describe("six digit code (docs/02 §3.5)", () => {
     const issuedAt = Date.now();
     vi.spyOn(Date, "now").mockReturnValue(issuedAt + SHORTCODE_TTL_MS + 1);
 
-    const guest = await connect(port);
-    guest.send({
-      v: 1,
+    const member = await connect(port);
+    member.send({
+      v: 2,
       type: "join",
       roomId: code,
-      guestCaps: GUEST_CAPS,
-      guestNonce: "guest-nonce-0123456789",
+      caps: MEMBER_CAPS,
+      nonce: "member-nonce-0123456789",
     });
-    expect((await guest.next("error")).code).toBe("ROOM_NOT_FOUND");
+    expect((await member.next("error")).code).toBe("ROOM_NOT_FOUND");
   });
 });
 
 describe("heartbeat and TTL (docs/01 D7, docs/02 §3.2)", () => {
   it("expires an idle room, notifies both sides and deletes it from memory", async () => {
     const { port } = await startServer({ roomTtlMs: 100 });
-    const { host, guest, roomId } = await joinedPair(port);
+    const { admin, member, roomId } = await joinedPair(port);
 
-    const guestClosed = await guest.next("room_closed", 2_000);
-    expect(guestClosed.reason).toBe("ttl");
-    const hostClosed = await host.next("room_closed", 2_000);
-    expect(hostClosed.reason).toBe("ttl");
+    const memberClosed = await member.next("room_closed", 2_000);
+    expect(memberClosed.reason).toBe("ttl");
+    const adminClosed = await admin.next("room_closed", 2_000);
+    expect(adminClosed.reason).toBe("ttl");
 
-    // Gone from memory: joining again finds nothing.
     const late = await connect(port);
     late.send({
-      v: 1,
+      v: 2,
       type: "join",
       roomId,
-      guestCaps: GUEST_CAPS,
-      guestNonce: "guest-nonce-0123456789",
+      caps: MEMBER_CAPS,
+      nonce: "member-nonce-0123456789",
     });
     expect((await late.next("error")).code).toBe("ROOM_NOT_FOUND");
   });
 
-  it("extends the room lifetime on host heartbeat", async () => {
+  it("extends the room lifetime on admin heartbeat", async () => {
     const { port } = await startServer({ roomTtlMs: 150 });
-    const { host, roomId } = await createRoom(port);
-    for (let i = 0; i < 5; i += 1) {
-      host.send({ v: 1, type: "heartbeat", roomId });
+    const { admin, roomId } = await createRoom(port);
+    for (let index = 0; index < 5; index += 1) {
+      admin.send({ v: 2, type: "heartbeat", roomId });
       await sleep(40);
     }
-    // 200 ms elapsed with a 150 ms TTL: the heartbeats kept it alive, so nothing expired yet.
-    await expectNoMessage(host, "room_closed", 60);
+    // 200 ms elapsed with a 150 ms TTL: the admin heartbeats kept it alive.
+    await expectNoMessage(admin, "room_closed", 60);
   });
 
-  it("ignores guest heartbeats so a silent host still expires the room", async () => {
+  it("ignores member heartbeats so a silent admin still expires the room (phase 1)", async () => {
     const { port } = await startServer({ roomTtlMs: 120 });
-    const { host, guest, roomId } = await joinedPair(port);
-    for (let i = 0; i < 5; i += 1) {
+    const { admin, member, roomId } = await joinedPair(port);
+    for (let index = 0; index < 5; index += 1) {
       try {
-        guest.send({ v: 1, type: "heartbeat", roomId });
+        member.send({ v: 2, type: "heartbeat", roomId });
       } catch {
         break;
       }
       await sleep(40);
     }
-    const hostClosed = await host.next("room_closed", 2_000);
-    expect(hostClosed.reason).toBe("ttl");
-    await guest.next("room_closed", 2_000);
+    const adminClosed = await admin.next("room_closed", 2_000);
+    expect(adminClosed.reason).toBe("ttl");
+    await member.next("room_closed", 2_000);
   });
 });
 
-describe("remove / peer_left / close (docs/02 §3.2, docs/01 AC7)", () => {
-  it("notifies the host with peer_left when a guest socket drops", async () => {
-    const { port } = await startServer();
-    const { host, guest, request } = await joinedPair(port);
-    await guest.close();
-    const left = await host.next("peer_left");
-    expect(left.guestId).toBe(request.guestId);
-  });
-
-  it("removes a joined guest on host request", async () => {
-    const { port } = await startServer();
-    const { host, guest, roomId, request } = await joinedPair(port);
-    host.send({ v: 1, type: "remove", guestId: request.guestId });
-    const closed = await guest.next("room_closed");
-    expect(closed.reason).toBe("error");
-    expect((await guest.closed()).code).toBe(1000);
-    const left = await host.next("peer_left");
-    expect(left.guestId).toBe(request.guestId);
-    // The room itself is still alive.
-    const nextGuest = await connect(port);
-    await requestJoin(host, nextGuest, roomId);
-  });
-
-  it("closes the room for every guest and destroys it immediately", async () => {
-    const { port } = await startServer();
-    const { host, guest, roomId } = await joinedPair(port);
-    host.send({ v: 1, type: "close", roomId });
-    const closed = await guest.next("room_closed");
-    expect(closed.reason).toBe("host_close");
-    await guest.closed();
-
-    const late = await connect(port);
-    late.send({
-      v: 1,
-      type: "join",
-      roomId,
-      guestCaps: GUEST_CAPS,
-      guestNonce: "guest-nonce-0123456789",
-    });
-    expect((await late.next("error")).code).toBe("ROOM_NOT_FOUND");
-  });
-});
-
-describe("robustness (docs/02 §3.1, §3.6)", () => {
+describe("robustness (docs/02 §3.1, §3.7)", () => {
   it("answers BAD_MESSAGE for unknown types and keeps the connection usable", async () => {
     const { port } = await startServer();
     const client = await connect(port);
-    client.send({ v: 1, type: "hello" });
-    client.send({ v: 1, type: "not-a-message" });
+    client.send({ v: 2, type: "hello" });
+    client.send({ v: 2, type: "not-a-message" });
     expect((await client.next("error")).code).toBe("BAD_MESSAGE");
 
-    client.send({ v: 1, type: "hello" });
+    client.send({ v: 2, type: "hello" });
     await expectNoMessage(client, "error");
   });
 
@@ -509,7 +909,8 @@ describe("robustness (docs/02 §3.1, §3.6)", () => {
     const { port } = await startServer();
     const client = await connect(port);
     client.sendText("not json at all");
-    for (let i = 0; i < 5; i += 1) client.send({ v: 1, type: "broken", i });
+    for (let index = 0; index < 5; index += 1)
+      client.send({ v: 2, type: "broken", index });
     const closed = await client.closed(2_000);
     expect(closed.code).toBe(1008);
   });
@@ -527,15 +928,16 @@ describe("robustness (docs/02 §3.1, §3.6)", () => {
       rateLimit: { windowMs: 60_000, max: 3 },
     });
     const client = await connect(port);
-    for (let i = 0; i < 3; i += 1) client.send({ v: 1, type: "hello" });
-    client.send({ v: 1, type: "hello" });
+    for (let index = 0; index < 3; index += 1)
+      client.send({ v: 2, type: "hello" });
+    client.send({ v: 2, type: "hello" });
     expect((await client.next("error")).code).toBe("RATE_LIMITED");
     expect((await client.closed(2_000)).code).toBe(1008);
   });
 });
 
-describe("TURN credentials (docs/02 §6.7)", () => {
-  it("issues coturn static-auth credentials on created and join_ok", async () => {
+describe("TURN credentials (docs/02 §6.8)", () => {
+  it("issues coturn static-auth credentials per member", async () => {
     const secret = "static-auth-secret-for-tests";
     const uris = [
       "turn:turn.example.org:3478?transport=udp",
@@ -543,7 +945,7 @@ describe("TURN credentials (docs/02 §6.7)", () => {
     ];
     const ttl = 600;
     const { port } = await startServer({ turn: { uris, secret, ttl } });
-    const { host, roomId, created } = await createRoom(port);
+    const { admin, roomId, created } = await createRoom(port);
 
     expect(created.turn).toBeDefined();
     const credential = created.turn!;
@@ -554,21 +956,20 @@ describe("TURN credentials (docs/02 §6.7)", () => {
     const expiry = Number(match![1]);
     const nowSeconds = Math.floor(Date.now() / 1_000);
     expect(Math.abs(expiry - (nowSeconds + ttl))).toBeLessThanOrEqual(2);
+    expect(credential.username.split(":")[1]).toBe(created.selfId);
     const expected = createHmac("sha1", secret)
       .update(credential.username)
       .digest("base64");
     expect(credential.credential).toBe(expected);
 
-    // join_ok carries a credential per peer: one for the guest, one for the host.
-    const guest = await connect(port);
-    const request = await requestJoin(host, guest, roomId);
-    const { guestOk, hostOk } = await approve(host, guest, request);
-    expect(guestOk.turn).toBeDefined();
-    expect(hostOk.turn).toBeDefined();
-    expect(guestOk.turn!.username.split(":")[1]).toBe(request.guestId);
-    expect(hostOk.turn!.username.split(":")[1]).not.toBe(request.guestId);
-    expect(hostOk.turn!.credential).toBe(
-      createHmac("sha1", secret).update(hostOk.turn!.username).digest("base64"),
+    // join_ok carries a credential for the approved member.
+    const member = await connect(port);
+    const request = await requestJoin(admin, member, roomId);
+    const { joinOk } = await approve(admin, member, request);
+    expect(joinOk.turn).toBeDefined();
+    expect(joinOk.turn!.username.split(":")[1]).toBe(request.memberId);
+    expect(joinOk.turn!.credential).toBe(
+      createHmac("sha1", secret).update(joinOk.turn!.username).digest("base64"),
     );
   });
 });

@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoomIdentity } from "@crossfile/core/ids";
 import { createSignalingServer } from "./index.js";
 import { redactIp } from "./log.js";
-import { GUEST_CAPS, HOST_CAPS, sleep, TestClient } from "./test-support.js";
+import { ADMIN_CAPS, MEMBER_CAPS, sleep, TestClient } from "./test-support.js";
 
 const SRC_DIR = dirname(fileURLToPath(import.meta.url));
 const EXCLUDED_FILES = new Set(["dev.ts", "test-support.ts"]);
@@ -120,30 +120,36 @@ describe("zero storage (docs/02 §7)", () => {
     const guest = await TestClient.open(port);
     try {
       const { roomId } = createRoomIdentity();
-      host.send({ v: 1, type: "hello", clientCaps: HOST_CAPS });
-      host.send({ v: 1, type: "create", roomId, hostCaps: HOST_CAPS });
+      host.send({ v: 2, type: "hello", clientCaps: ADMIN_CAPS });
+      host.send({
+        v: 2,
+        type: "create",
+        roomId,
+        caps: ADMIN_CAPS,
+        name: "地检机",
+      });
       const created = await host.next("created");
       guest.send({
-        v: 1,
+        v: 2,
         type: "join",
         roomId: created.roomId,
-        guestCaps: GUEST_CAPS,
-        guestNonce: "guest-nonce-0123456789",
+        caps: MEMBER_CAPS,
+        nonce: "member-nonce-0123456789",
       });
       const request = await host.next("join_request");
-      host.send({ v: 1, type: "approve", guestId: request.guestId });
+      host.send({ v: 2, type: "approve", memberId: request.memberId });
       await guest.next("join_ok");
-      await host.next("join_ok");
+      await host.next("members");
       host.send({
-        v: 1,
+        v: 2,
         type: "signal",
-        to: request.guestId,
+        to: request.memberId,
         payload: { k: "offer", sdp: "v=0" },
       });
       await guest.next("signal");
-      host.send({ v: 1, type: "heartbeat", roomId });
+      host.send({ v: 2, type: "heartbeat", roomId });
       await sleep(20);
-      host.send({ v: 1, type: "close", roomId });
+      host.send({ v: 2, type: "close", roomId });
       await guest.next("room_closed");
       await guest.closed();
     } finally {

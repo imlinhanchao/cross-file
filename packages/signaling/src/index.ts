@@ -2,7 +2,8 @@
  * Public surface of `@crossfile/signaling`. The web app imports these names directly, so the
  * shape is frozen: createSignalingServer(options) → { start(), stop() }.
  *
- * Sources: docs/02-protocol.md §3 (room protocol), §6.7 (TURN credentials), §7 (zero storage).
+ * Sources: docs/02-protocol.md §3 (room protocol), §6.8 (TURN credentials), §7 (zero storage),
+ * ADR 0010 (admin + members, v2).
  */
 import { createSignalingServer as create } from "./server.js";
 
@@ -22,12 +23,20 @@ export interface SignalingServerOptions {
   host?: string;
   /** TURN config; when absent the server never hands out TURN credentials. */
   turn?: TurnOptions;
-  /** Maximum guests per room, pending + joined. Default 4 (official instance uses 2). */
+  /**
+   * Maximum members per room (the admin is not counted), pending + joined + offline.
+   * Default MAX_MEMBERS (4); the official instance uses 2 (docs/01 D6).
+   */
   maxGuests?: number;
   /** Idle-room TTL. Default ROOM_TTL_MS from @crossfile/core. */
   roomTtlMs?: number;
   /** Socket keepalive cadence. Default HEARTBEAT_MS from @crossfile/core. */
   heartbeatMs?: number;
+  /**
+   * How long a member's socket may stay gone before it is removed from the room
+   * (docs/02 §6.6 "对称续传"). Default RECONNECT_WINDOW_MS from @crossfile/core (60 s).
+   */
+  reconnectWindowMs?: number;
   /** Per-IP signaling budget. Default 60_000 ms / 120 messages. */
   rateLimit?: { windowMs: number; max: number };
   /**

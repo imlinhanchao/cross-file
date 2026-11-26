@@ -1,8 +1,9 @@
 /**
- * In-memory signaling server for CrossFile (docs/02-protocol.md §3, §6.7, §7).
+ * In-memory signaling server for CrossFile v2 (docs/02-protocol.md §3, ADR 0010).
  *
- * Everything lives in process memory: rooms, peer ids, join codes, rate-limit counters.
- * No database, no disk writes, no cookies, no access logs, and no IP/UA stored on a room.
+ * A room is an admin plus its members (docs/02 §3.3). Everything lives in process memory:
+ * rooms, member ids, rejoin tokens, join codes, rate-limit counters. No database, no disk
+ * writes, no cookies, no access logs, and no IP/UA stored on a room.
  */
 import {
   createServer,
@@ -15,20 +16,35 @@ import { WebSocket, WebSocketServer, type RawData } from "ws";
 import {
   ERROR_CODES,
   HEARTBEAT_MS,
-  MAX_GUESTS,
+  MAX_MEMBERS,
+  RECONNECT_WINDOW_MS,
   ROOM_TTL_MS,
+  VersionMismatchError,
   parseClientMessage,
-  type Caps,
   type ClientMessage,
   type ErrorCode,
   type ServerMessage,
   type TurnCredential,
 } from "@crossfile/core/protocol";
+import {
+  defaultDisplayName,
+  normalizeDisplayName,
+} from "@crossfile/core/identity";
 import { base64urlEncode, randomBytes } from "@crossfile/core/bytes";
 import type { SignalingServer, SignalingServerOptions } from "./index.js";
 import { logError } from "./log.js";
 import { RateLimiter } from "./ratelimit.js";
-import { RoomStore, type GuestRecord, type RoomRecord } from "./rooms.js";
+import {
+  RoomStore,
+  clearMemberTimer,
+  effectiveAdminName,
+  effectiveMemberName,
+  memberInfos,
+  pendingName,
+  visibleMembers,
+  type MemberRecord,
+  type RoomRecord,
+} from "./rooms.js";
 import { ShortCodeStore } from "./shortcode.js";
 import { createStaticHandler } from "./static.js";
 import { issueTurnCredential } from "./turn.js";
@@ -44,6 +60,10 @@ const DEFAULT_RATE_LIMIT = { windowMs: 60_000, max: 120 } as const;
 /** docs/02 §7: periodic sweep; never later than a quarter of the room TTL. */
 const SWEEP_MIN_MS = 10;
 const SWEEP_MAX_MS = 5_000;
+/** ADR 0010 risk note: `profile` is rate limited per connection, not only per IP. */
+const PROFILE_RATE = { windowMs: 60_000, max: 10 } as const;
+/** Version gate answer for v1 pages: the client shows this text and asks for a refresh. */
+const VERSION_OUTDATED_MSG = "版本过旧，请刷新页面";
 /** `ws` readyState OPEN; kept local so the server never imports a browser WebSocket global. */
 const WS_OPEN = WebSocket.OPEN;
 
@@ -53,18 +73,33 @@ type ApproveMessage = Extract<ClientMessage, { type: "approve" }>;
 type DenyMessage = Extract<ClientMessage, { type: "deny" }>;
 type RemoveMessage = Extract<ClientMessage, { type: "remove" }>;
 type SignalMessage = Extract<ClientMessage, { type: "signal" }>;
+type ProfileMessage = Extract<ClientMessage, { type: "profile" }>;
 type HeartbeatMessage = Extract<ClientMessage, { type: "heartbeat" }>;
 type CloseMessage = Extract<ClientMessage, { type: "close" }>;
+
+interface ProfileWindow {
+  start: number;
+  count: number;
+}
 
 interface ConnectionState {
   /** docs/02 §7: used only as the in-memory rate-limit key; never copied onto a room. */
   readonly ip: string;
   violations: number;
-  role: "host" | "guest" | null;
+  role: "admin" | "member" | null;
   roomId: string | null;
-  guestId: string | null;
+  memberId: string | null;
   /** ping/pong liveness for half-open sockets, driven by the keepalive timer. */
   alive: boolean;
+  /** Per-connection `profile` budget (ADR 0010 risk note). */
+  profileWindow: ProfileWindow | null;
+}
+
+/** What the connection is inside the room: the admin, or one member record. */
+interface Participant {
+  id: string;
+  joined: boolean;
+  socket: WebSocket | null;
 }
 
 type PreparedShortCode =
@@ -77,9 +112,14 @@ function toBuffer(data: RawData): Buffer {
   return Buffer.from(data);
 }
 
-/** 8 random bytes, base64url (docs/02 §1 `peerId`). */
+/** 8 random bytes, base64url (docs/02 §1 `memberId`). */
 function createPeerId(): string {
   return base64urlEncode(randomBytes(8));
+}
+
+/** Opaque rejoin secret (docs/02 §3.2): 16 random bytes, base64url. */
+function createRejoinToken(): string {
+  return base64urlEncode(randomBytes(16));
 }
 
 export function createSignalingServer(
@@ -87,9 +127,10 @@ export function createSignalingServer(
 ): SignalingServer {
   const listenPort = options.port ?? DEFAULT_PORT;
   const listenHost = options.host ?? DEFAULT_HOST;
-  const maxGuests = options.maxGuests ?? MAX_GUESTS;
+  const maxGuests = options.maxGuests ?? MAX_MEMBERS;
   const roomTtlMs = options.roomTtlMs ?? ROOM_TTL_MS;
   const heartbeatMs = options.heartbeatMs ?? HEARTBEAT_MS;
+  const reconnectWindowMs = options.reconnectWindowMs ?? RECONNECT_WINDOW_MS;
   const rateLimit = options.rateLimit ?? DEFAULT_RATE_LIMIT;
   const turn = options.turn;
   const sweepMs = Math.min(
@@ -127,127 +168,171 @@ export function createSignalingServer(
     code: ErrorCode,
     msg: string,
   ): void {
-    send(socket, { v: 1, type: "error", code, msg });
+    send(socket, { v: 2, type: "error", code, msg });
   }
 
   function sendRoomClosed(
     socket: WebSocket | null,
-    reason: "host_close" | "ttl" | "error",
+    reason: "admin_close" | "ttl" | "error",
   ): void {
-    send(socket, { v: 1, type: "room_closed", reason });
+    send(socket, { v: 2, type: "room_closed", reason });
   }
 
-  /** docs/02 §6.7: one credential per peer per connection; nothing when TURN is unconfigured. */
-  function turnFor(peerId: string): TurnCredential | undefined {
-    return turn ? issueTurnCredential(turn, peerId) : undefined;
+  /** docs/02 §6.8: one credential per member per connection; nothing when TURN is unconfigured. */
+  function turnFor(memberId: string): TurnCredential | undefined {
+    return turn ? issueTurnCredential(turn, memberId) : undefined;
   }
 
   function createdMessage(room: RoomRecord): ServerMessage {
-    const credential = turnFor(room.hostPeerId);
-    return credential
-      ? {
-          v: 1,
-          type: "created",
-          roomId: room.roomId,
-          code: room.code,
-          turn: credential,
-        }
-      : { v: 1, type: "created", roomId: room.roomId, code: room.code };
+    const credential = turnFor(room.adminId);
+    const base = {
+      v: 2 as const,
+      type: "created" as const,
+      roomId: room.roomId,
+      code: room.code,
+      selfId: room.adminId,
+      name: effectiveAdminName(room),
+      members: memberInfos(room),
+      rejoinToken: room.adminRejoinToken,
+    };
+    return credential ? { ...base, turn: credential } : base;
   }
 
-  /**
-   * `peerCaps` always means "the other side's capabilities": hostCaps for a guest,
-   * guestCaps for the host (web contract, docs/02 §3.2/§3.4).
-   */
-  function joinOk(
-    guestId: string,
-    peerCaps: Caps,
-    credentialPeerId: string,
+  function joinOkMessage(
+    room: RoomRecord,
+    selfId: string,
+    name: string,
+    rejoinToken: string,
   ): ServerMessage {
-    const credential = turnFor(credentialPeerId);
-    if (!credential) {
-      // impl-note: core's type marks join_ok.turn required, but docs/02 §6.7 only hands out
-      // TURN credentials when coturn is configured; without a secret the field is omitted
-      // instead of sending unusable placeholder credentials.
-      return { v: 1, type: "join_ok", guestId, peerCaps } as ServerMessage;
+    const credential = turnFor(selfId);
+    const base = {
+      v: 2 as const,
+      type: "join_ok" as const,
+      roomId: room.roomId,
+      selfId,
+      name,
+      members: memberInfos(room),
+      rejoinToken,
+    };
+    return credential ? { ...base, turn: credential } : base;
+  }
+
+  function joinRequestMessage(
+    room: RoomRecord,
+    member: MemberRecord,
+  ): ServerMessage {
+    return {
+      v: 2,
+      type: "join_request",
+      memberId: member.id,
+      caps: member.caps,
+      nonce: member.nonce,
+      ...(member.proof ? { proof: member.proof } : {}),
+      name: pendingName(room, member),
+    };
+  }
+
+  /** docs/02 §3.2: `members` is always a full snapshot, never an increment. */
+  function broadcastMembers(room: RoomRecord): void {
+    const message: ServerMessage = {
+      v: 2,
+      type: "members",
+      members: memberInfos(room),
+    };
+    send(room.adminSocket, message);
+    for (const member of room.members) {
+      if (member.state === "pending") continue;
+      send(member.socket, message);
     }
-    return { v: 1, type: "join_ok", guestId, peerCaps, turn: credential };
+  }
+
+  /** Replay pending join requests to an admin that just re-attached. */
+  function replayPendingRequests(room: RoomRecord): void {
+    for (const member of room.members) {
+      if (member.state === "pending")
+        send(room.adminSocket, joinRequestMessage(room, member));
+    }
   }
 
   // --- connection helpers ---------------------------------------------------
 
   function bind(
     state: ConnectionState,
-    role: "host" | "guest",
+    role: "admin" | "member",
     roomId: string,
-    guestId: string | null,
+    memberId: string,
   ): void {
     state.role = role;
     state.roomId = roomId;
-    state.guestId = guestId;
+    state.memberId = memberId;
   }
 
   function unbind(state: ConnectionState): void {
     state.role = null;
     state.roomId = null;
-    state.guestId = null;
+    state.memberId = null;
   }
 
-  function roomForHost(
-    ws: WebSocket,
-    state: ConnectionState,
-  ): RoomRecord | null {
-    if (state.role !== "host" || !state.roomId) {
-      sendError(ws, "BAD_MESSAGE", "only the host can do that");
+  function adminRoom(ws: WebSocket, state: ConnectionState): RoomRecord | null {
+    if (state.role !== "admin" || !state.roomId) {
+      sendError(ws, "NOT_ADMIN", "only the admin can do that");
       return null;
     }
     const room = rooms.get(state.roomId);
-    if (!room || room.hostSocket !== ws) {
-      sendError(ws, "ROOM_NOT_FOUND", "host room is gone");
+    if (!room || room.adminSocket !== ws) {
+      sendError(ws, "ROOM_NOT_FOUND", "admin room is gone");
       return null;
     }
     return room;
   }
 
   function recomputeRoomState(room: RoomRecord): void {
-    if (rooms.hasJoinedGuest(room)) room.state = "joined";
-    else if (room.guests.length > 0) room.state = "awaiting_approval";
+    if (rooms.hasJoinedMember(room)) room.state = "joined";
+    else if (room.members.length > 0) room.state = "awaiting_approval";
     else room.state = "created";
   }
 
-  function detachGuest(room: RoomRecord, guest: GuestRecord): void {
-    rooms.removeGuest(room, guest);
-    if (guest.socket) {
-      const state = connections.get(guest.socket);
-      if (state) unbind(state);
+  /** Who this socket is inside the room (admin or member), if it is still bound to it. */
+  function participant(
+    room: RoomRecord,
+    state: ConnectionState,
+    ws: WebSocket,
+  ): Participant | null {
+    if (state.role === "admin" && room.adminSocket === ws) {
+      return { id: room.adminId, joined: !room.adminOffline, socket: ws };
+    }
+    if (state.role === "member" && state.memberId) {
+      const member = rooms.findMember(room, state.memberId);
+      if (member && member.socket === ws) {
+        return {
+          id: member.id,
+          joined: member.state === "joined",
+          socket: ws,
+        };
+      }
+    }
+    return null;
+  }
+
+  /** Close and unbind a socket that was superseded by a rejoin from the same member. */
+  function retireSocket(socket: WebSocket): void {
+    const state = connections.get(socket);
+    if (state) unbind(state);
+    try {
+      socket.close(1000, "superseded by a reconnect");
+    } catch {
+      // already closed
     }
   }
 
-  function joinRequestMessage(guest: GuestRecord): ServerMessage {
-    return {
-      v: 1,
-      type: "join_request",
-      guestId: guest.guestId,
-      guestCaps: guest.caps,
-      guestNonce: guest.nonce,
-      ...(guest.proof ? { proof: guest.proof } : {}),
-    };
-  }
-
-  /**
-   * impl-note: docs/02 §3.2/§3.4 do not say what a reconnecting host socket learns about the
-   * room it re-attached to. We replay the state it needs to act (pending join requests and
-   * joined peers), otherwise the guests kept across the reconnect could never be served.
-   */
-  function replayRoomState(room: RoomRecord): void {
-    for (const guest of room.guests) {
-      if (guest.state === "pending")
-        send(room.hostSocket, joinRequestMessage(guest));
-      else
-        send(
-          room.hostSocket,
-          joinOk(guest.guestId, guest.caps, room.hostPeerId),
-        );
+  /** Detach a member record: cancel its timer, forget it and unbind its socket. */
+  function detachMember(room: RoomRecord, member: MemberRecord): void {
+    const socket = member.socket;
+    rooms.removeMember(room, member);
+    member.socket = null;
+    if (socket) {
+      const state = connections.get(socket);
+      if (state) unbind(state);
     }
   }
 
@@ -292,6 +377,18 @@ export function createSignalingServer(
     }
   }
 
+  function takeProfileBudget(state: ConnectionState): boolean {
+    const at = Date.now();
+    const window = state.profileWindow;
+    if (!window || at >= window.start + PROFILE_RATE.windowMs) {
+      state.profileWindow = { start: at, count: 1 };
+      return true;
+    }
+    if (window.count >= PROFILE_RATE.max) return false;
+    window.count += 1;
+    return true;
+  }
+
   function handleFrame(
     ws: WebSocket,
     state: ConnectionState,
@@ -333,7 +430,13 @@ export function createSignalingServer(
     let message: ClientMessage;
     try {
       message = parseClientMessage(prepared.value);
-    } catch {
+    } catch (error) {
+      // ADR 0010 §版本门禁: a page speaking v1 must be told to refresh, not left half-broken.
+      if (error instanceof VersionMismatchError) {
+        sendError(ws, "VERSION_MISMATCH", VERSION_OUTDATED_MSG);
+        ws.close(1008, "protocol version mismatch");
+        return;
+      }
       rejectMessage(ws, state, "message does not match the protocol");
       return;
     }
@@ -373,6 +476,9 @@ export function createSignalingServer(
       case "signal":
         handleSignal(ws, state, message);
         return;
+      case "profile":
+        handleProfile(ws, state, message);
+        return;
       case "heartbeat":
         handleHeartbeat(ws, message);
         return;
@@ -393,43 +499,55 @@ export function createSignalingServer(
       sendError(ws, "BAD_MESSAGE", "connection is already bound to a room");
       return;
     }
+    const name = normalizeDisplayName(message.name);
+    if (!name) {
+      sendError(ws, "BAD_MESSAGE", "display name must be 1-16 characters");
+      return;
+    }
     const existing = rooms.get(message.roomId);
     if (existing) {
-      const hostOnline =
-        existing.hostSocket !== null &&
-        existing.hostSocket !== ws &&
-        existing.hostSocket.readyState === WS_OPEN;
-      if (hostOnline) {
-        sendError(ws, "ROOM_CLOSED", "room already has a connected host");
+      const adminOnline =
+        existing.adminSocket !== null &&
+        existing.adminSocket !== ws &&
+        existing.adminSocket.readyState === WS_OPEN;
+      if (adminOnline) {
+        sendError(ws, "ROOM_CLOSED", "room already has a connected admin");
         return;
       }
-      // impl-note: host reconnect — the room, its code and its guest list survive host socket
-      // loss, so a repeated create with the same roomId re-attaches the new socket.
-      existing.hostSocket = ws;
-      existing.hostOffline = false;
-      existing.hostPeerId = createPeerId();
-      existing.hostCaps = message.hostCaps;
+      // impl-note: admin reconnect — the room, its code and its members survive admin socket
+      // loss, so a repeated create with the same roomId re-attaches the new socket
+      // (docs/02 §3.3, 60 s reconnect window).
+      if (existing.adminSocket && existing.adminSocket !== ws) {
+        retireSocket(existing.adminSocket);
+      }
+      existing.adminSocket = ws;
+      existing.adminOffline = false;
+      existing.adminCaps = message.caps;
+      existing.adminName = name;
       existing.lastActivity = Date.now();
-      bind(state, "host", existing.roomId, null);
+      bind(state, "admin", existing.roomId, existing.adminId);
       send(ws, createdMessage(existing));
-      replayRoomState(existing);
+      broadcastMembers(existing);
+      replayPendingRequests(existing);
       return;
     }
     const at = Date.now();
     const room: RoomRecord = {
       roomId: message.roomId,
-      hostPeerId: createPeerId(),
-      hostCaps: message.hostCaps,
-      hostSocket: ws,
-      hostOffline: false,
-      guests: [],
+      adminId: createPeerId(),
+      adminName: name,
+      adminCaps: message.caps,
+      adminRejoinToken: createRejoinToken(),
+      adminSocket: ws,
+      adminOffline: false,
+      members: [],
       createdAt: at,
       lastActivity: at,
       code: codes.issue(message.roomId),
       state: "created",
     };
     rooms.set(room);
-    bind(state, "host", room.roomId, null);
+    bind(state, "admin", room.roomId, room.adminId);
     send(ws, createdMessage(room));
   }
 
@@ -448,11 +566,15 @@ export function createSignalingServer(
       sendError(ws, "ROOM_NOT_FOUND", "room not found");
       return;
     }
-    if (!room.hostSocket || room.hostSocket.readyState !== WS_OPEN) {
-      sendError(ws, "ROOM_CLOSED", "host is offline");
+    if (message.rejoinToken) {
+      rejoin(ws, state, room, message, message.rejoinToken);
       return;
     }
-    if (room.guests.length >= maxGuests) {
+    if (!room.adminSocket || room.adminSocket.readyState !== WS_OPEN) {
+      sendError(ws, "ROOM_CLOSED", "admin is offline");
+      return;
+    }
+    if (room.members.length >= maxGuests) {
       sendError(ws, "ROOM_FULL", "room is full");
       return;
     }
@@ -460,22 +582,87 @@ export function createSignalingServer(
       sendError(ws, "ROOM_NOT_FOUND", "join code is invalid or expired");
       return;
     }
-    const guestId = createPeerId();
-    const guest: GuestRecord = {
-      guestId,
-      caps: message.guestCaps,
-      nonce: message.guestNonce,
+    const member: MemberRecord = {
+      id: createPeerId(),
+      // impl-note: `join` carries no display name (ADR 0010 §协议增量); the server seeds a
+      // default from the capabilities and the client may rename itself via `profile`
+      // right after join_ok (remembered device name, ADR 0010 §names).
+      name: normalizeDisplayName(defaultDisplayName(message.caps)) ?? "设备",
+      caps: message.caps,
+      nonce: message.nonce,
       state: "pending",
       socket: ws,
+      rejoinToken: createRejoinToken(),
       ...(message.proof ? { proof: message.proof } : {}),
     };
-    room.guests.push(guest);
-    room.state = "awaiting_approval";
+    room.members.push(member);
     room.lastActivity = Date.now();
-    bind(state, "guest", room.roomId, guestId);
+    recomputeRoomState(room);
+    bind(state, "member", room.roomId, member.id);
     // docs/02 §3.4: the proof (QR path) is opaque to S — no roomKey exists server side — so it
-    // is forwarded verbatim and the host validates it.
-    send(room.hostSocket, joinRequestMessage(guest));
+    // is forwarded verbatim and the admin validates it.
+    send(room.adminSocket, joinRequestMessage(room, member));
+  }
+
+  /**
+   * 60 s reconnect (docs/02 §6.6, ADR 0010): a member — or the admin — presenting its
+   * `rejoinToken` re-attaches to its existing record without a new approval.
+   */
+  function rejoin(
+    ws: WebSocket,
+    state: ConnectionState,
+    room: RoomRecord,
+    message: JoinMessage,
+    rejoinToken: string,
+  ): void {
+    if (rejoinToken === room.adminRejoinToken) {
+      // `create` is the documented admin reconnect (docs/02 §3.3); accept the token path too.
+      if (room.adminSocket && room.adminSocket !== ws) {
+        retireSocket(room.adminSocket);
+      }
+      room.adminSocket = ws;
+      room.adminOffline = false;
+      room.adminCaps = message.caps;
+      room.lastActivity = Date.now();
+      bind(state, "admin", room.roomId, room.adminId);
+      send(
+        ws,
+        joinOkMessage(
+          room,
+          room.adminId,
+          effectiveAdminName(room),
+          room.adminRejoinToken,
+        ),
+      );
+      broadcastMembers(room);
+      replayPendingRequests(room);
+      return;
+    }
+    const member = rooms.findRejoinMember(room, rejoinToken);
+    if (!member) {
+      sendError(ws, "ROOM_NOT_FOUND", "rejoin token is invalid or expired");
+      return;
+    }
+    if (member.socket && member.socket !== ws) {
+      retireSocket(member.socket);
+    }
+    clearMemberTimer(member);
+    member.socket = ws;
+    member.state = "joined";
+    member.caps = message.caps;
+    room.lastActivity = Date.now();
+    bind(state, "member", room.roomId, member.id);
+    recomputeRoomState(room);
+    send(
+      ws,
+      joinOkMessage(
+        room,
+        member.id,
+        effectiveMemberName(room, member),
+        member.rejoinToken,
+      ),
+    );
+    broadcastMembers(room);
   }
 
   function handleApprove(
@@ -483,20 +670,26 @@ export function createSignalingServer(
     state: ConnectionState,
     message: ApproveMessage,
   ): void {
-    const room = roomForHost(ws, state);
+    const room = adminRoom(ws, state);
     if (!room) return;
-    const guest = rooms.findGuest(room, message.guestId);
-    if (!guest) {
-      sendError(ws, "PEER_GONE", "guest is no longer waiting");
+    const member = rooms.findMember(room, message.memberId);
+    if (!member || member.state !== "pending") {
+      sendError(ws, "PEER_GONE", "member is no longer waiting");
       return;
     }
-    guest.state = "joined";
-    room.state = "joined";
+    member.state = "joined";
     room.lastActivity = Date.now();
-    // The guest learns the host's capabilities, the host learns the guest's; both also get
-    // their own TURN credential. The host needs join_ok too: it starts the PeerConnection.
-    send(guest.socket, joinOk(guest.guestId, room.hostCaps, guest.guestId));
-    send(room.hostSocket, joinOk(guest.guestId, guest.caps, room.hostPeerId));
+    recomputeRoomState(room);
+    send(
+      member.socket,
+      joinOkMessage(
+        room,
+        member.id,
+        effectiveMemberName(room, member),
+        member.rejoinToken,
+      ),
+    );
+    broadcastMembers(room);
   }
 
   /**
@@ -510,7 +703,7 @@ export function createSignalingServer(
   } {
     if (reason && (ERROR_CODES as readonly string[]).includes(reason))
       return { code: reason as ErrorCode, reason };
-    return { code: "ROOM_CLOSED", reason: reason ?? "denied by host" };
+    return { code: "ROOM_CLOSED", reason: reason ?? "denied by admin" };
   }
 
   function handleDeny(
@@ -518,21 +711,21 @@ export function createSignalingServer(
     state: ConnectionState,
     message: DenyMessage,
   ): void {
-    const room = roomForHost(ws, state);
+    const room = adminRoom(ws, state);
     if (!room) return;
-    const guest = rooms.findGuest(room, message.guestId);
-    if (!guest) {
-      sendError(ws, "PEER_GONE", "guest is no longer waiting");
+    const member = rooms.findMember(room, message.memberId);
+    if (!member || member.state !== "pending") {
+      sendError(ws, "PEER_GONE", "member is no longer waiting");
       return;
     }
     const outcome = denyOutcome(message.reason);
-    send(guest.socket, {
-      v: 1,
+    send(member.socket, {
+      v: 2,
       type: "join_rejected",
       code: outcome.code,
       reason: outcome.reason,
     });
-    detachGuest(room, guest);
+    detachMember(room, member);
     recomputeRoomState(room);
     room.lastActivity = Date.now();
   }
@@ -542,22 +735,25 @@ export function createSignalingServer(
     state: ConnectionState,
     message: RemoveMessage,
   ): void {
-    const room = roomForHost(ws, state);
+    const room = adminRoom(ws, state);
     if (!room) return;
-    const guest = rooms.findGuest(room, message.guestId);
-    if (!guest) {
-      sendError(ws, "PEER_GONE", "guest is not in the room");
+    const member = rooms.findMember(room, message.memberId);
+    if (!member) {
+      sendError(ws, "PEER_GONE", "member is not in the room");
       return;
     }
-    const socket = guest.socket;
-    sendRoomClosed(socket, "error");
-    detachGuest(room, guest);
-    socket?.close(1000, "removed");
-    send(room.hostSocket, {
-      v: 1,
-      type: "peer_left",
-      guestId: message.guestId,
-    });
+    const socket = member.socket;
+    detachMember(room, member);
+    if (socket) {
+      sendRoomClosed(socket, "error");
+      try {
+        socket.close(1000, "removed");
+      } catch {
+        // already closed
+      }
+    }
+    broadcastMembers(room);
+    send(room.adminSocket, { v: 2, type: "member_left", memberId: member.id });
     recomputeRoomState(room);
     room.lastActivity = Date.now();
   }
@@ -576,56 +772,82 @@ export function createSignalingServer(
       sendError(ws, "ROOM_NOT_FOUND", "room is gone");
       return;
     }
-    // docs/02 §3.2: `payload` is forwarded with its three whitelisted fields only; zod has
-    // already dropped anything else (offer.sdp / answer.sdp / candidate fields).
-    if (state.role === "host") {
-      const guest = room.guests.find(
-        (candidate) =>
-          candidate.guestId === message.to && candidate.state === "joined",
-      );
-      if (!guest) {
-        sendError(ws, "PEER_GONE", "no such peer in the room");
-        return;
-      }
-      room.lastActivity = Date.now();
-      send(guest.socket, {
-        v: 1,
-        type: "signal",
-        from: room.hostPeerId,
-        payload: message.payload,
-      });
+    const me = participant(room, state, ws);
+    if (!me || !me.joined) {
+      sendError(ws, "PEER_GONE", "sender is not joined yet");
       return;
     }
-    const me = room.guests.find(
-      (candidate) => candidate.guestId === state.guestId,
-    );
-    if (!me || me.state !== "joined") {
-      sendError(ws, "PEER_GONE", "guest is not joined yet");
-      return;
+    // docs/02 §3.2/§3.6 (v2): `to` is any member id — the admin is a member too; there is no
+    // "host" sentinel anymore.
+    let target: WebSocket | null = null;
+    if (message.to === room.adminId) {
+      if (!room.adminOffline && room.adminSocket) target = room.adminSocket;
+    } else {
+      const member = rooms.findMember(room, message.to);
+      if (member && member.state === "joined" && member.socket)
+        target = member.socket;
     }
-    // impl-note (web contract): a guest cannot know the host's peerId, so it addresses the
-    // host with the sentinel "host"; both "host" and the actual hostPeerId route to the host.
-    if (message.to !== "host" && message.to !== room.hostPeerId) {
+    if (!target || target.readyState !== WS_OPEN) {
       sendError(ws, "PEER_GONE", "no such peer in the room");
       return;
     }
-    if (!room.hostSocket || room.hostSocket.readyState !== WS_OPEN) {
-      sendError(ws, "PEER_GONE", "host is offline");
-      return;
-    }
     room.lastActivity = Date.now();
-    send(room.hostSocket, {
-      v: 1,
+    send(target, {
+      v: 2,
       type: "signal",
-      from: me.guestId,
+      from: me.id,
       payload: message.payload,
     });
   }
 
+  function handleProfile(
+    ws: WebSocket,
+    state: ConnectionState,
+    message: ProfileMessage,
+  ): void {
+    if (!state.roomId || !state.memberId || state.role === null) {
+      sendError(ws, "ROOM_NOT_FOUND", "connection is not in a room");
+      return;
+    }
+    const room = rooms.get(state.roomId);
+    if (!room) {
+      sendError(ws, "ROOM_NOT_FOUND", "room is gone");
+      return;
+    }
+    const me = participant(room, state, ws);
+    if (!me || !me.joined) {
+      sendError(ws, "PEER_GONE", "member is not joined yet");
+      return;
+    }
+    const name = normalizeDisplayName(message.name);
+    if (!name) {
+      sendError(ws, "BAD_MESSAGE", "display name must be 1-16 characters");
+      return;
+    }
+    if (!takeProfileBudget(state)) {
+      sendError(ws, "RATE_LIMITED", "too many display name changes");
+      return;
+    }
+    if (state.role === "admin") {
+      room.adminName = name;
+    } else {
+      const member = rooms.findMember(room, state.memberId);
+      if (!member) {
+        sendError(ws, "PEER_GONE", "member is not in the room");
+        return;
+      }
+      member.name = name;
+    }
+    room.lastActivity = Date.now();
+    broadcastMembers(room);
+  }
+
   function handleHeartbeat(ws: WebSocket, message: HeartbeatMessage): void {
-    // docs/02 §3.2 marks heartbeat host-only; a guest heartbeat is ignored (no error).
+    // impl-note (phase 1): the room TTL is renewed by the admin's heartbeat, as in v1
+    // (`docs/02 §3.2` still describes any-member heartbeats; phase 1 keeps the admin as the
+    // session anchor, D8).
     const room = rooms.get(message.roomId);
-    if (room && room.hostSocket === ws) room.lastActivity = Date.now();
+    if (room && room.adminSocket === ws) room.lastActivity = Date.now();
   }
 
   function handleClose(
@@ -633,24 +855,32 @@ export function createSignalingServer(
     state: ConnectionState,
     message: CloseMessage,
   ): void {
+    if (state.role !== "admin") {
+      sendError(ws, "NOT_ADMIN", "only the admin can close the room");
+      return;
+    }
     const room = rooms.get(message.roomId);
     if (!room) {
       sendError(ws, "ROOM_NOT_FOUND", "room not found");
       return;
     }
-    if (room.hostSocket !== ws) {
-      sendError(ws, "BAD_MESSAGE", "only the host can close the room");
+    if (room.adminSocket !== ws) {
+      sendError(ws, "ROOM_NOT_FOUND", "admin room is gone");
       return;
     }
     // docs/01 AC7 / docs/02 §3.3: close destroys the room immediately and leaves memory.
-    for (const guest of room.guests) {
-      const socket = guest.socket;
-      sendRoomClosed(socket, "host_close");
+    for (const member of room.members) {
+      const socket = member.socket;
+      sendRoomClosed(socket, "admin_close");
       if (socket) {
-        const guestState = connections.get(socket);
-        if (guestState) unbind(guestState);
+        const memberState = connections.get(socket);
+        if (memberState) unbind(memberState);
+        try {
+          socket.close(1000, "admin closed the room");
+        } catch {
+          // already closed
+        }
       }
-      socket?.close(1000, "host closed the room");
     }
     rooms.delete(room.roomId);
     codes.revokeRoom(room.roomId);
@@ -664,46 +894,73 @@ export function createSignalingServer(
     if (!state.roomId) return;
     const room = rooms.get(state.roomId);
     if (!room) return;
-    if (state.role === "host") {
-      if (room.hostSocket === ws) {
-        // impl-note: host socket loss never destroys the room — the 60 s reconnect window
-        // (docs/02 §6.5) and the ≤30 min idle TTL (docs/01 D7) decide when it disappears.
-        room.hostSocket = null;
-        room.hostOffline = true;
+    if (state.role === "admin") {
+      if (room.adminSocket === ws) {
+        // impl-note: admin socket loss never destroys the room — the 60 s reconnect window
+        // (docs/02 §6.6) and the ≤30 min idle TTL (docs/01 D7) decide when it disappears.
+        room.adminSocket = null;
+        room.adminOffline = true;
+        broadcastMembers(room);
       }
       return;
     }
-    if (state.role === "guest" && state.guestId) {
-      const guest = rooms.findGuest(room, state.guestId);
-      if (!guest) return;
-      rooms.removeGuest(room, guest);
-      send(room.hostSocket, {
-        v: 1,
-        type: "peer_left",
-        guestId: guest.guestId,
-      });
-      recomputeRoomState(room);
+    if (state.role === "member" && state.memberId) {
+      const member = rooms.findMember(room, state.memberId);
+      if (!member || member.socket !== ws) return;
+      if (member.state === "pending") {
+        // A join request that never got approved leaves no trace in the member list.
+        detachMember(room, member);
+        recomputeRoomState(room);
+        return;
+      }
+      // docs/02 §6.6 (v2, symmetric): members get the same 60 s window as the admin.
+      member.socket = null;
+      member.state = "offline";
+      clearMemberTimer(member);
+      member.offlineTimer = setTimeout(
+        () => expireMember(room.roomId, member.id),
+        reconnectWindowMs,
+      );
+      member.offlineTimer.unref?.();
+      broadcastMembers(room);
     }
+  }
+
+  /** Reconnect window elapsed: forget the member and tell the admin (docs/02 §3.3). */
+  function expireMember(roomId: string, memberId: string): void {
+    const room = rooms.get(roomId);
+    if (!room) return;
+    const member = rooms.findMember(room, memberId);
+    if (!member || member.state !== "offline") return;
+    clearMemberTimer(member);
+    rooms.removeMember(room, member);
+    broadcastMembers(room);
+    send(room.adminSocket, { v: 2, type: "member_left", memberId });
+    recomputeRoomState(room);
   }
 
   function sweep(): void {
     const at = Date.now();
     for (const room of rooms.expire(at, roomTtlMs)) {
-      for (const guest of room.guests) {
-        const socket = guest.socket;
+      for (const member of room.members) {
+        const socket = member.socket;
         sendRoomClosed(socket, "ttl");
         if (socket) {
-          const guestState = connections.get(socket);
-          if (guestState) unbind(guestState);
+          const memberState = connections.get(socket);
+          if (memberState) unbind(memberState);
+          try {
+            socket.close(1000, "room expired");
+          } catch {
+            // already closed
+          }
         }
-        socket?.close(1000, "room expired");
       }
-      if (room.hostSocket) {
-        // impl-note: the host is notified that the room expired, but its socket stays open so
+      if (room.adminSocket) {
+        // impl-note: the admin is notified that the room expired, but its socket stays open so
         // it can create a fresh room without reconnecting.
-        sendRoomClosed(room.hostSocket, "ttl");
-        const hostState = connections.get(room.hostSocket);
-        if (hostState) unbind(hostState);
+        sendRoomClosed(room.adminSocket, "ttl");
+        const adminState = connections.get(room.adminSocket);
+        if (adminState) unbind(adminState);
       }
       codes.revokeRoom(room.roomId);
     }
@@ -774,8 +1031,9 @@ export function createSignalingServer(
         violations: 0,
         role: null,
         roomId: null,
-        guestId: null,
+        memberId: null,
         alive: true,
+        profileWindow: null,
       };
       connections.set(ws, state);
       ws.on("message", (data: RawData, isBinary: boolean) =>

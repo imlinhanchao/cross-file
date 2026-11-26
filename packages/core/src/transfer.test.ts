@@ -42,7 +42,7 @@ async function makeFile(
 
 async function keyFor(fileId: number): Promise<CryptoKey> {
   return importFileKey(
-    deriveFileKey(deriveSessionKey(roomKey, roomId), fileId),
+    deriveFileKey(deriveSessionKey(roomKey, roomId), "t1", fileId),
   );
 }
 

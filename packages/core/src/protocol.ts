@@ -1,9 +1,14 @@
 /**
- * Protocol v1: signaling messages, control messages, chunk frames.
+ * Protocol v2: signaling messages, control messages, chunk frames.
  *
- * Sources: docs/02-protocol.md §3 (signaling), §5 (capabilities), §6 (transfer).
- * Field names not fixed by that document are declared here and recorded as an
- * implementation note in docs/05-development-plan.md §7.
+ * Sources: docs/02-protocol.md §3 (signaling), §5 (capabilities), §6 (transfer),
+ * and ADR 0010 (rooms whose members may transfer to each other, two phases).
+ *
+ * v2 is deliberately **not** backwards compatible with v1 (ADR 0010): the
+ * signaling server rejects v1 connections with `VERSION_MISMATCH` instead of
+ * degrading silently. `MemberInfo` replaces the v1 host/guest split, and every
+ * transfer-scoped control message carries a `transferId` so two members can
+ * exchange files in both directions over one pair of data channels.
  */
 import { z } from "zod";
 import {
@@ -16,7 +21,7 @@ import {
   writeU32le,
 } from "./bytes.js";
 
-export const PROTOCOL_VERSION = 1 as const;
+export const PROTOCOL_VERSION = 2 as const;
 
 // --- constants (docs/02 §1) -------------------------------------------------
 export const CHUNK_MIN = 64 * 1024;
@@ -49,7 +54,10 @@ export const RECONNECT_WINDOW_MS = 60_000;
 export const ROOM_TTL_MS = 30 * 60_000;
 export const HEARTBEAT_MS = 20_000;
 export const TURN_TTL_SEC = 3_600;
-export const MAX_GUESTS = 4;
+/** Room capacity: the admin plus up to MAX_MEMBERS - 1 joiners (docs/01 D6, ADR 0010). */
+export const MAX_MEMBERS = 4;
+/** @deprecated v1 name; kept so packages mid-migration keep compiling. */
+export const MAX_GUESTS = MAX_MEMBERS;
 
 // --- error codes (docs/02 §3.6) --------------------------------------------
 export const ERROR_CODES = [
@@ -65,6 +73,11 @@ export const ERROR_CODES = [
   "PEER_GONE",
   "RATE_LIMITED",
   "BAD_MESSAGE",
+  "VERSION_MISMATCH",
+  "NOT_ADMIN",
+  /** ctrl-level: the receiving side is already running a transfer on this pair; the
+   *  sender queues and retries once the pair is idle (docs/02 §6.3). */
+  "BUSY",
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -122,6 +135,34 @@ export const capsSchema: z.ZodType<Caps> = z.object({
   screen: z.enum(["phone", "tablet", "desktop"]),
 });
 
+// --- room membership (ADR 0010) ---------------------------------------------
+/** A member whose socket is gone but whose 60 s reconnect window is still open. */
+export type MemberState = "joined" | "offline";
+
+/**
+ * One entry of the room's member list, as broadcast by the signaling server.
+ * `isAdmin` marks the room's current admin (the creator in phase 1; after a
+ * hand-over in phase 2 it is the earliest-joined online member).
+ */
+export interface MemberInfo {
+  id: string;
+  name: string;
+  caps: Caps;
+  isAdmin: boolean;
+  state: MemberState;
+}
+
+export const memberInfoSchema: z.ZodType<MemberInfo> = z.object({
+  id: z.string().min(1).max(64),
+  name: z.string().min(1).max(64),
+  caps: capsSchema,
+  isAdmin: z.boolean(),
+  state: z.enum(["joined", "offline"]),
+});
+
+/** Signaling display name: 1-16 code points, normalised client side (identity.ts). */
+const displayNameSchema = z.string().min(1).max(64);
+
 // --- signaling (client <-> S, docs/02 §3.2) ---------------------------------
 export type SignalPayload =
   | { k: "offer"; sdp: string }
@@ -143,59 +184,91 @@ export interface TurnCredential {
 }
 
 export type ClientMessage =
-  | { v: 1; type: "hello"; clientCaps?: Caps }
-  | { v: 1; type: "create"; roomId: string; hostCaps: Caps }
+  | { v: 2; type: "hello"; clientCaps?: Caps }
+  | { v: 2; type: "create"; roomId: string; caps: Caps; name: string }
   | {
-      v: 1;
+      v: 2;
       type: "join";
       roomId: string;
-      guestCaps: Caps;
-      guestNonce: string;
+      caps: Caps;
+      nonce: string;
       proof?: string;
+      /** set when a member reconnects inside the 60 s window (ADR 0010 §reconnect) */
+      rejoinToken?: string;
     }
-  | { v: 1; type: "approve"; guestId: string }
-  | { v: 1; type: "deny"; guestId: string; reason?: string }
-  | { v: 1; type: "remove"; guestId: string }
-  | { v: 1; type: "signal"; to: string; payload: SignalPayload }
-  | { v: 1; type: "heartbeat"; roomId: string }
-  | { v: 1; type: "close"; roomId: string; reason?: string };
+  | { v: 2; type: "approve"; memberId: string }
+  | { v: 2; type: "deny"; memberId: string; reason?: string }
+  | { v: 2; type: "remove"; memberId: string }
+  | { v: 2; type: "signal"; to: string; payload: SignalPayload }
+  | { v: 2; type: "profile"; name: string }
+  | { v: 2; type: "heartbeat"; roomId: string }
+  | { v: 2; type: "close"; roomId: string; reason?: string };
 
 export type ServerMessage =
   | {
-      v: 1;
+      v: 2;
       type: "created";
       roomId: string;
       /** 6 digit join code */ code: string;
+      /** the creator's own peer id */
+      selfId: string;
+      name: string;
+      members: MemberInfo[];
+      /** opaque token used to reconnect with the same identity inside 60 s */
+      rejoinToken: string;
       turn?: TurnCredential;
     }
   | {
-      v: 1;
+      v: 2;
       type: "join_request";
-      guestId: string;
-      guestCaps: Caps;
-      guestNonce: string;
+      memberId: string;
+      caps: Caps;
+      nonce: string;
       proof?: string;
+      name: string;
     }
   | {
-      v: 1;
+      v: 2;
       type: "join_ok";
-      guestId: string;
-      peerCaps: Caps;
+      roomId: string;
+      selfId: string;
+      name: string;
+      members: MemberInfo[];
+      rejoinToken: string;
       turn?: TurnCredential;
     }
-  | { v: 1; type: "join_rejected"; code: ErrorCode; reason: string }
-  | { v: 1; type: "signal"; from: string; payload: SignalPayload }
-  | { v: 1; type: "peer_left"; guestId: string }
-  | { v: 1; type: "room_closed"; reason: "host_close" | "ttl" | "error" }
+  | { v: 2; type: "join_rejected"; code: ErrorCode; reason: string }
+  /** full member list after any join/leave/name change/state change */
+  | { v: 2; type: "members"; members: MemberInfo[] }
+  | { v: 2; type: "signal"; from: string; payload: SignalPayload }
+  | { v: 2; type: "member_left"; memberId: string }
   | {
-      v: 1;
+      v: 2;
+      type: "room_closed";
+      reason: "admin_close" | "ttl" | "error";
+    }
+  | {
+      v: 2;
       type: "turn";
       uris: string[];
       username: string;
       credential: string;
       ttl: number;
     }
-  | { v: 1; type: "error"; code: ErrorCode; msg: string };
+  | { v: 2; type: "error"; code: ErrorCode; msg: string };
+
+/** Thrown by {@link parseClientMessage} when a peer speaks a different protocol version. */
+export class VersionMismatchError extends Error {
+  readonly received: unknown;
+
+  constructor(received: unknown) {
+    super(
+      `unsupported protocol version: ${String(received)} (expected ${PROTOCOL_VERSION})`,
+    );
+    this.name = "VersionMismatchError";
+    this.received = received;
+  }
+}
 
 const signalPayloadSchema = z.discriminatedUnion("k", [
   z.object({ k: z.literal("offer"), sdp: z.string().min(1) }),
@@ -211,7 +284,7 @@ const signalPayloadSchema = z.discriminatedUnion("k", [
   }),
 ]);
 
-const base = { v: z.literal(1) } as const;
+const base = { v: z.literal(2) } as const;
 
 export const clientMessageSchema: z.ZodType<ClientMessage> =
   z.discriminatedUnion("type", [
@@ -224,37 +297,44 @@ export const clientMessageSchema: z.ZodType<ClientMessage> =
       ...base,
       type: z.literal("create"),
       roomId: z.string().regex(/^[a-z2-7]{26}$/),
-      hostCaps: capsSchema,
+      caps: capsSchema,
+      name: displayNameSchema,
     }),
     z.object({
       ...base,
       type: z.literal("join"),
       roomId: z.string().regex(/^[a-z2-7]{26}$/),
-      guestCaps: capsSchema,
-      guestNonce: z.string().min(8).max(64),
+      caps: capsSchema,
+      nonce: z.string().min(8).max(64),
       proof: z.string().min(1).max(128).optional(),
+      rejoinToken: z.string().min(1).max(128).optional(),
     }),
     z.object({
       ...base,
       type: z.literal("approve"),
-      guestId: z.string().min(1),
+      memberId: z.string().min(1),
     }),
     z.object({
       ...base,
       type: z.literal("deny"),
-      guestId: z.string().min(1),
+      memberId: z.string().min(1),
       reason: z.string().max(200).optional(),
     }),
     z.object({
       ...base,
       type: z.literal("remove"),
-      guestId: z.string().min(1),
+      memberId: z.string().min(1),
     }),
     z.object({
       ...base,
       type: z.literal("signal"),
       to: z.string().min(1),
       payload: signalPayloadSchema,
+    }),
+    z.object({
+      ...base,
+      type: z.literal("profile"),
+      name: displayNameSchema,
     }),
     z.object({
       ...base,
@@ -270,6 +350,10 @@ export const clientMessageSchema: z.ZodType<ClientMessage> =
   ]) as z.ZodType<ClientMessage>;
 
 export function parseClientMessage(raw: unknown): ClientMessage {
+  if (raw !== null && typeof raw === "object" && "v" in raw) {
+    const version = (raw as { v?: unknown }).v;
+    if (version !== PROTOCOL_VERSION) throw new VersionMismatchError(version);
+  }
   return clientMessageSchema.parse(raw);
 }
 
@@ -285,34 +369,69 @@ export interface FileManifestEntry {
   salt: string;
 }
 
+/**
+ * Transfer-scoped id. Two members may exchange files in both directions over the
+ * same pair of data channels (ADR 0010 §concurrency), so `fileId` — allocated by
+ * each sender from 1 — is only unique inside one transfer.
+ */
+const transferIdSchema = z.string().min(1).max(128);
+
 export interface Manifest {
-  v: 1;
+  v: 2;
   type: "manifest";
+  transferId: string;
   files: FileManifestEntry[];
   totalSize: number;
   chunkNegotiation: { min: number; max: number };
 }
 
 export type CtrlMessage =
-  | { v: 1; type: "hello"; guestCaps: Caps }
+  | { v: 2; type: "hello"; caps: Caps }
   | Manifest
-  | { v: 1; type: "accept"; fileIds: number[] }
-  | { v: 1; type: "bitmap"; fileId: number; bits: string }
-  | { v: 1; type: "progress"; fileId: number; seq: number }
-  | { v: 1; type: "done"; fileId: number; sha256: string; chunkCount: number }
-  | { v: 1; type: "ack"; fileId: number; ok: boolean; error?: string }
-  | { v: 1; type: "error"; code: ErrorCode; msg: string; fileId?: number }
-  | { v: 1; type: "pause" }
-  | { v: 1; type: "resume" }
+  | { v: 2; type: "accept"; transferId: string; fileIds: number[] }
+  | { v: 2; type: "bitmap"; transferId: string; fileId: number; bits: string }
+  | {
+      v: 2;
+      type: "progress";
+      transferId: string;
+      fileId: number;
+      seq: number;
+    }
+  | {
+      v: 2;
+      type: "done";
+      transferId: string;
+      fileId: number;
+      sha256: string;
+      chunkCount: number;
+    }
+  | {
+      v: 2;
+      type: "ack";
+      transferId: string;
+      fileId: number;
+      ok: boolean;
+      error?: string;
+    }
+  | {
+      v: 2;
+      type: "error";
+      transferId?: string;
+      code: ErrorCode;
+      msg: string;
+      fileId?: number;
+    }
+  | { v: 2; type: "pause"; transferId: string }
+  | { v: 2; type: "resume"; transferId: string }
   /**
    * 6-digit-code path only (docs/02 §3.5): the guest joins without the roomKey in
    * the fragment, so the key is handed over the encrypted data channel after both
    * sides confirm the 4-emoji SAS. These message shapes are not fixed by docs/02
    * and are recorded as an implementation note in docs/05 §7.
    */
-  | { v: 1; type: "sas-confirm" }
-  | { v: 1; type: "room-key"; key: string; roomId: string }
-  | { v: 1; type: "key-ok" };
+  | { v: 2; type: "sas-confirm" }
+  | { v: 2; type: "room-key"; key: string; roomId: string }
+  | { v: 2; type: "key-ok" };
 
 const manifestEntrySchema = z.object({
   id: z.number().int().min(1).max(65535),
@@ -325,8 +444,9 @@ const manifestEntrySchema = z.object({
 });
 
 export const manifestSchema = z.object({
-  v: z.literal(1),
+  v: z.literal(2),
   type: z.literal("manifest"),
+  transferId: transferIdSchema,
   files: z.array(manifestEntrySchema).min(1).max(256),
   totalSize: z.number().int().nonnegative(),
   chunkNegotiation: z.object({
@@ -337,59 +457,73 @@ export const manifestSchema = z.object({
 
 export const ctrlMessageSchema: z.ZodType<CtrlMessage> = z.union([
   z.object({
-    v: z.literal(1),
+    v: z.literal(2),
     type: z.literal("hello"),
-    guestCaps: capsSchema,
+    caps: capsSchema,
   }),
   manifestSchema as unknown as z.ZodType<Manifest>,
   z.object({
-    v: z.literal(1),
+    v: z.literal(2),
     type: z.literal("accept"),
+    transferId: transferIdSchema,
     fileIds: z.array(z.number().int()).max(256),
   }),
   z.object({
-    v: z.literal(1),
+    v: z.literal(2),
     type: z.literal("bitmap"),
+    transferId: transferIdSchema,
     fileId: z.number().int(),
     bits: z.string(),
   }),
   z.object({
-    v: z.literal(1),
+    v: z.literal(2),
     type: z.literal("progress"),
+    transferId: transferIdSchema,
     fileId: z.number().int(),
     seq: z.number().int(),
   }),
   z.object({
-    v: z.literal(1),
+    v: z.literal(2),
     type: z.literal("done"),
+    transferId: transferIdSchema,
     fileId: z.number().int(),
     sha256: z.string().length(64),
     chunkCount: z.number().int(),
   }),
   z.object({
-    v: z.literal(1),
+    v: z.literal(2),
     type: z.literal("ack"),
+    transferId: transferIdSchema,
     fileId: z.number().int(),
     ok: z.boolean(),
     error: z.string().max(200).optional(),
   }),
   z.object({
-    v: z.literal(1),
+    v: z.literal(2),
     type: z.literal("error"),
+    transferId: transferIdSchema.optional(),
     code: z.enum(ERROR_CODES),
     msg: z.string().max(500),
     fileId: z.number().int().optional(),
   }),
-  z.object({ v: z.literal(1), type: z.literal("pause") }),
-  z.object({ v: z.literal(1), type: z.literal("resume") }),
-  z.object({ v: z.literal(1), type: z.literal("sas-confirm") }),
   z.object({
-    v: z.literal(1),
+    v: z.literal(2),
+    type: z.literal("pause"),
+    transferId: transferIdSchema,
+  }),
+  z.object({
+    v: z.literal(2),
+    type: z.literal("resume"),
+    transferId: transferIdSchema,
+  }),
+  z.object({ v: z.literal(2), type: z.literal("sas-confirm") }),
+  z.object({
+    v: z.literal(2),
     type: z.literal("room-key"),
     key: z.string().min(1).max(128),
     roomId: z.string().min(1).max(64),
   }),
-  z.object({ v: z.literal(1), type: z.literal("key-ok") }),
+  z.object({ v: z.literal(2), type: z.literal("key-ok") }),
 ]) as z.ZodType<CtrlMessage>;
 
 export function parseCtrlMessage(raw: unknown): CtrlMessage {

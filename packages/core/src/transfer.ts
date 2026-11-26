@@ -1,4 +1,13 @@
-/** Chunk sending / receiving over an ordered reliable data channel (docs/02 §6). */
+/**
+ * Chunk sending / receiving over an ordered reliable data channel (docs/02 §6).
+ *
+ * v2 (ADR 0010): the wire frame still carries only `fileId`/`seq` because one
+ * peer pair serialises its transfers (one direction at a time), so `fileId` is
+ * only ambiguous across two different `transferId`s. The transfer id lives in the
+ * ctrl messages (manifest/accept/bitmap/done/ack) and in the caller's state —
+ * these helpers stay transfer-agnostic and are instantiated per transfer by the
+ * web layer, keyed by `transferId`.
+ */
 import { coerceBytes } from "./bytes.js";
 import { IncrementalSha256, openChunk, sealChunk } from "./crypto.js";
 import {
@@ -16,9 +25,20 @@ export interface DataChannelLike {
   readonly bufferedAmount: number;
   bufferedAmountLowThreshold: number;
   send(data: ArrayBuffer | Uint8Array): void;
-  addEventListener?(type: "bufferedamountlow", listener: () => void): void;
-  removeEventListener?(type: "bufferedamountlow", listener: () => void): void;
+  addEventListener?(
+    type: "bufferedamountlow" | "close",
+    listener: () => void,
+  ): void;
+  removeEventListener?(
+    type: "bufferedamountlow" | "close",
+    listener: () => void,
+  ): void;
   readonly readyState?: string;
+}
+
+/** A closed channel never drains, so every wait below must give up when it is gone. */
+function isChannelOpen(channel: DataChannelLike): boolean {
+  return !channel.readyState || channel.readyState === "open";
 }
 
 export function sleep(ms: number): Promise<void> {
@@ -32,6 +52,9 @@ export function waitForDrain(
   timeoutMs = 15_000,
 ): Promise<void> {
   if (channel.bufferedAmount <= lowWaterMark) return Promise.resolve();
+  // The pair went away mid-transfer (AC12): stop waiting, the caller re-checks
+  // readyState and retries on the rebuilt channel instead of polling forever.
+  if (!isChannelOpen(channel)) return Promise.resolve();
   const addListener = channel.addEventListener;
   if (!addListener) {
     return sleep(5).then(() => waitForDrain(channel, lowWaterMark, timeoutMs));
@@ -43,12 +66,14 @@ export function waitForDrain(
       if (done) return;
       done = true;
       removeListener?.("bufferedamountlow", finish);
+      removeListener?.("close", finish);
       clearTimeout(timer);
       resolve();
     };
     const timer = setTimeout(finish, timeoutMs);
     channel.bufferedAmountLowThreshold = lowWaterMark;
     addListener.call(channel, "bufferedamountlow", finish);
+    addListener.call(channel, "close", finish);
   });
 }
 
@@ -57,8 +82,10 @@ export async function waitForCapacity(
   highWaterMark = HWM,
 ): Promise<void> {
   while (channel.bufferedAmount > highWaterMark) {
+    if (!isChannelOpen(channel)) throw new Error("data channel closed");
     await waitForDrain(channel);
   }
+  if (!isChannelOpen(channel)) throw new Error("data channel closed");
 }
 
 export interface SendFileOptions {
@@ -166,6 +193,9 @@ export async function sendFile(
     // let the channel drain before the control message `done` follows
     await waitForDrain(channel, lowWaterMark);
   }
+  // The final drain resolves immediately on a closed pair; report it so the
+  // caller resumes on the rebuilt channel (AC12) instead of sending `done`.
+  if (!isChannelOpen(channel)) throw new Error("data channel closed");
   return {
     sha256: computeHash ? hasher.digestHex() : "",
     chunkCount,

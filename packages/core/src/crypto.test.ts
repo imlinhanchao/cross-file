@@ -35,8 +35,22 @@ describe("key derivation", () => {
 
   it("derives a distinct key per file", () => {
     const session = deriveSessionKey(roomKey, roomIdBytes);
-    expect(bytesToHex(deriveFileKey(session, 1))).not.toBe(
-      bytesToHex(deriveFileKey(session, 2)),
+    expect(bytesToHex(deriveFileKey(session, "t1", 1))).not.toBe(
+      bytesToHex(deriveFileKey(session, "t1", 2)),
+    );
+  });
+
+  it("derives a distinct key per transfer (both directions of a pair)", () => {
+    const session = deriveSessionKey(roomKey, roomIdBytes);
+    expect(bytesToHex(deriveFileKey(session, "t1", 1))).not.toBe(
+      bytesToHex(deriveFileKey(session, "t2", 1)),
+    );
+  });
+
+  it("is deterministic for the same transfer and file", () => {
+    const session = deriveSessionKey(roomKey, roomIdBytes);
+    expect(bytesToHex(deriveFileKey(session, "alpha:1", 7))).toBe(
+      bytesToHex(deriveFileKey(session, "alpha:1", 7)),
     );
   });
 });
@@ -46,7 +60,7 @@ describe("chunk AEAD", () => {
 
   async function keyFor(fileId: number): Promise<CryptoKey> {
     return importFileKey(
-      deriveFileKey(deriveSessionKey(roomKey, roomIdBytes), fileId),
+      deriveFileKey(deriveSessionKey(roomKey, roomIdBytes), "t1", fileId),
     );
   }
 

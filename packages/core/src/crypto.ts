@@ -3,8 +3,8 @@
  *
  * Key hierarchy:
  *   roomKey  = 32 random bytes, lives only in the URL fragment / SAS-authenticated channel
- *   sessionKey = HKDF-SHA256(roomKey, salt=roomId, info="crossfile/v1/session", 32)
- *   fileKey    = HKDF-SHA256(sessionKey, info="file:<id>", 32)
+ *   sessionKey = HKDF-SHA256(roomKey, salt=roomId, info="crossfile/v2/session", 32)
+ *   fileKey    = HKDF-SHA256(sessionKey, info="crossfile/v2/file:<transferId>:<id>", 32)
  *
  * Chunk AEAD: AES-256-GCM
  *   nonce = fileSalt(4) || chunkSeq(8, big endian)
@@ -25,8 +25,8 @@ import {
   bytesToHex,
 } from "./bytes.js";
 
-const SESSION_INFO = "crossfile/v1/session";
-const SAS_INFO = "crossfile/v1/sas";
+const SESSION_INFO = "crossfile/v2/session";
+const SAS_INFO = "crossfile/v2/sas";
 const JOIN_PREFIX = "join:";
 const KEY_BYTES = 32;
 const TAG_BYTES = 16;
@@ -39,15 +39,21 @@ export function deriveSessionKey(
   return hkdf(sha256, roomKey, roomIdBytes, utf8(SESSION_INFO), KEY_BYTES);
 }
 
+/**
+ * Per-file key. The transfer id is part of the HKDF info so the two directions of
+ * a bidirectional pairing (and any later concurrent pair) can never derive the
+ * same key for the same numeric `fileId` (ADR 0010 §keys).
+ */
 export function deriveFileKey(
   sessionKey: Uint8Array,
+  transferId: string,
   fileId: number,
 ): Uint8Array {
   return hkdf(
     sha256,
     sessionKey,
     new Uint8Array(0),
-    utf8(`file:${fileId}`),
+    utf8(`crossfile/v2/file:${transferId}:${fileId}`),
     KEY_BYTES,
   );
 }

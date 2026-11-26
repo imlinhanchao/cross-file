@@ -82,6 +82,7 @@ interface RtcDiagnostics {
 
 function exposeDiagnostics(
   pc: RTCPeerConnection,
+  /** legacy debug label: "host" = offerer, "guest" = answerer (unchanged on purpose) */
   role: "host" | "guest",
 ): void {
   if (typeof location === "undefined" || !location.search.includes("debug"))
@@ -143,7 +144,11 @@ function exposeDiagnostics(
   };
 }
 
-export function createHostPeer(options: PeerOptions): Peer {
+/**
+ * The side that creates the data channels and offers: the room admin in phase 1,
+ * the lower peer id of a pair in phase 2 (ADR 0010 §reconnect).
+ */
+export function createOffererPeer(options: PeerOptions): Peer {
   const pc = new RTCPeerConnection({
     iceServers: options.iceServers ?? [],
     ...(options.relayOnly
@@ -198,7 +203,11 @@ export function createHostPeer(options: PeerOptions): Peer {
   };
 }
 
-export function createGuestPeer(options: PeerOptions): Peer {
+/**
+ * The side that answers an incoming offer and adopts the data channels the
+ * offerer created.
+ */
+export function createAnswererPeer(options: PeerOptions): Peer {
   const pc = new RTCPeerConnection({
     iceServers: options.iceServers ?? [],
     ...(options.relayOnly
@@ -264,6 +273,12 @@ export function createGuestPeer(options: PeerOptions): Peer {
     close: () => pc.close(),
   };
 }
+
+/** @deprecated v1 name, use {@link createOffererPeer}. */
+export const createHostPeer: (options: PeerOptions) => Peer = createOffererPeer;
+/** @deprecated v1 name, use {@link createAnswererPeer}. */
+export const createGuestPeer: (options: PeerOptions) => Peer =
+  createAnswererPeer;
 
 async function addCandidate(
   pc: RTCPeerConnection,

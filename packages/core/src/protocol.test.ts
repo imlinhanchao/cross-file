@@ -2,9 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   CHUNK_MAX_CIPHERTEXT,
   FRAME_MAX_BYTES,
+  MAX_GUESTS,
+  MAX_MEMBERS,
+  PROTOCOL_VERSION,
+  VersionMismatchError,
   chunkCountFor,
   decodeChunkFrame,
   encodeChunkFrame,
+  memberInfoSchema,
   parseClientMessage,
   parseCtrlMessage,
 } from "./protocol.js";
@@ -82,49 +87,192 @@ describe("chunk counting", () => {
   });
 });
 
-describe("signaling message validation", () => {
-  it("accepts a well-formed create", () => {
+describe("protocol constants", () => {
+  it("is protocol v2", () => {
+    expect(PROTOCOL_VERSION).toBe(2);
+  });
+
+  it("keeps the room capacity at 4 and the v1 alias in sync", () => {
+    expect(MAX_MEMBERS).toBe(4);
+    expect(MAX_GUESTS).toBe(MAX_MEMBERS);
+  });
+});
+
+describe("signaling message validation (v2)", () => {
+  it("accepts a well-formed create with caps and a display name", () => {
     const message = parseClientMessage({
-      v: 1,
+      v: 2,
       type: "create",
       roomId: "a".repeat(26),
-      hostCaps: capsStub(),
+      caps: capsStub(),
+      name: "MacBook · 7K2F",
     });
     expect(message.type).toBe("create");
+  });
+
+  it("rejects a create without a display name", () => {
+    expect(() =>
+      parseClientMessage({
+        v: 2,
+        type: "create",
+        roomId: "a".repeat(26),
+        caps: capsStub(),
+      }),
+    ).toThrow();
+  });
+
+  it("accepts a join with proof and rejoin token", () => {
+    const message = parseClientMessage({
+      v: 2,
+      type: "join",
+      roomId: "a".repeat(26),
+      caps: capsStub(),
+      nonce: "abcdefgh12345678",
+      proof: "proof-value",
+      rejoinToken: "token-value",
+    });
+    expect(message.type).toBe("join");
+  });
+
+  it("rejects a join without a nonce", () => {
+    expect(() =>
+      parseClientMessage({
+        v: 2,
+        type: "join",
+        roomId: "a".repeat(26),
+        caps: capsStub(),
+      }),
+    ).toThrow();
+  });
+
+  it("addresses members by memberId on approve/deny/remove", () => {
+    for (const message of [
+      { v: 2, type: "approve", memberId: "peer-1" },
+      { v: 2, type: "deny", memberId: "peer-1", reason: "nope" },
+      { v: 2, type: "remove", memberId: "peer-1" },
+    ]) {
+      expect(parseClientMessage(message).type).toBe(message.type);
+    }
+  });
+
+  it("rejects the v1 guestId field", () => {
+    expect(() =>
+      parseClientMessage({ v: 2, type: "approve", guestId: "guest-1" }),
+    ).toThrow();
+  });
+
+  it("accepts a profile rename and arbitrary peer addressing", () => {
+    expect(
+      parseClientMessage({ v: 2, type: "profile", name: "客厅的电脑" }).type,
+    ).toBe("profile");
+    expect(
+      parseClientMessage({
+        v: 2,
+        type: "signal",
+        to: "peer-2",
+        payload: { k: "offer", sdp: "v=0" },
+      }).type,
+    ).toBe("signal");
+  });
+
+  it("accepts hello/heartbeat/close", () => {
+    expect(parseClientMessage({ v: 2, type: "hello" }).type).toBe("hello");
+    expect(
+      parseClientMessage({ v: 2, type: "heartbeat", roomId: "room" }).type,
+    ).toBe("heartbeat");
+    expect(
+      parseClientMessage({ v: 2, type: "close", roomId: "room" }).type,
+    ).toBe("close");
+  });
+
+  it("rejects unknown message types", () => {
+    expect(() => parseClientMessage({ v: 2, type: "exfiltrate" })).toThrow();
   });
 
   it("rejects a non base32 roomId", () => {
     expect(() =>
       parseClientMessage({
-        v: 1,
+        v: 2,
         type: "create",
         roomId: "not-a-room-id",
-        hostCaps: capsStub(),
+        caps: capsStub(),
+        name: "设备",
       }),
     ).toThrow();
-  });
-
-  it("rejects unknown message types", () => {
-    expect(() => parseClientMessage({ v: 1, type: "exfiltrate" })).toThrow();
   });
 
   it("rejects signals with unexpected fields", () => {
     expect(() =>
       parseClientMessage({
-        v: 1,
+        v: 2,
         type: "signal",
         to: "x",
         payload: { k: "offer", sdp: "", extra: 1 },
       }),
     ).toThrow();
   });
+
+  it("rejects v1 clients with VersionMismatchError (no compatibility layer)", () => {
+    expect(() =>
+      parseClientMessage({
+        v: 1,
+        type: "create",
+        roomId: "a".repeat(26),
+        caps: capsStub(),
+        name: "old",
+      }),
+    ).toThrow(VersionMismatchError);
+    try {
+      parseClientMessage({ v: 1, type: "hello" });
+    } catch (error) {
+      expect((error as VersionMismatchError).received).toBe(1);
+    }
+  });
 });
 
-describe("control message validation", () => {
-  it("accepts a manifest", () => {
+describe("member info", () => {
+  it("accepts a joined and an offline member", () => {
+    const joined = memberInfoSchema.parse({
+      id: "peer-1",
+      name: "MacBook · 7K2F",
+      caps: capsStub(),
+      isAdmin: true,
+      state: "joined",
+    });
+    const offline = memberInfoSchema.parse({
+      ...joined,
+      isAdmin: false,
+      state: "offline",
+    });
+    expect(joined.state).toBe("joined");
+    expect(offline.state).toBe("offline");
+  });
+
+  it("rejects unknown member states", () => {
+    expect(() =>
+      memberInfoSchema.parse({
+        id: "peer-1",
+        name: "设备",
+        caps: capsStub(),
+        isAdmin: false,
+        state: "banned",
+      }),
+    ).toThrow();
+  });
+});
+
+describe("control message validation (v2)", () => {
+  it("accepts a hello carrying caps", () => {
+    expect(
+      parseCtrlMessage({ v: 2, type: "hello", caps: capsStub() }).type,
+    ).toBe("hello");
+  });
+
+  it("accepts a manifest with a transfer id", () => {
     const message = parseCtrlMessage({
-      v: 1,
+      v: 2,
       type: "manifest",
+      transferId: "peer-1:1",
       files: [
         {
           id: 1,
@@ -142,11 +290,34 @@ describe("control message validation", () => {
     expect(message.type).toBe("manifest");
   });
 
+  it("rejects a manifest without a transfer id", () => {
+    expect(() =>
+      parseCtrlMessage({
+        v: 2,
+        type: "manifest",
+        files: [
+          {
+            id: 1,
+            name: "a",
+            size: 1,
+            mime: "",
+            chunk: 65536,
+            chunkCount: 1,
+            salt: "AAAAAA==",
+          },
+        ],
+        totalSize: 1,
+        chunkNegotiation: { min: 65536, max: 262144 },
+      }),
+    ).toThrow();
+  });
+
   it("rejects a manifest with a chunk size outside the negotiated bounds", () => {
     expect(() =>
       parseCtrlMessage({
-        v: 1,
+        v: 2,
         type: "manifest",
+        transferId: "t1",
         files: [
           {
             id: 1,
@@ -164,13 +335,74 @@ describe("control message validation", () => {
     ).toThrow();
   });
 
-  it("accepts error codes from the documented set only", () => {
+  it("requires a transfer id on every transfer-scoped message", () => {
+    const scoped = [
+      { v: 2, type: "accept", fileIds: [1] },
+      { v: 2, type: "bitmap", fileId: 1, bits: "AA==" },
+      { v: 2, type: "progress", fileId: 1, seq: 0 },
+      { v: 2, type: "done", fileId: 1, sha256: "a".repeat(64), chunkCount: 1 },
+      { v: 2, type: "ack", fileId: 1, ok: true },
+      { v: 2, type: "pause" },
+      { v: 2, type: "resume" },
+    ];
+    for (const message of scoped) {
+      expect(() => parseCtrlMessage(message)).toThrow();
+      expect(parseCtrlMessage({ ...message, transferId: "t1" }).type).toBe(
+        message.type,
+      );
+    }
+  });
+
+  it("accepts an error with or without a transfer id", () => {
     expect(
-      parseCtrlMessage({ v: 1, type: "error", code: "HASH_MISMATCH", msg: "x" })
+      parseCtrlMessage({ v: 2, type: "error", code: "HASH_MISMATCH", msg: "x" })
         .type,
     ).toBe("error");
+    expect(
+      parseCtrlMessage({
+        v: 2,
+        type: "error",
+        transferId: "t1",
+        code: "PEER_GONE",
+        msg: "x",
+        fileId: 2,
+      }).type,
+    ).toBe("error");
+  });
+
+  it("accepts the documented error codes only, including the v2 additions", () => {
+    for (const code of ["VERSION_MISMATCH", "NOT_ADMIN"]) {
+      expect(
+        parseCtrlMessage({ v: 2, type: "error", code, msg: "x" }).type,
+      ).toBe("error");
+    }
     expect(() =>
-      parseCtrlMessage({ v: 1, type: "error", code: "WHATEVER", msg: "x" }),
+      parseCtrlMessage({ v: 2, type: "error", code: "WHATEVER", msg: "x" }),
+    ).toThrow();
+  });
+
+  it("keeps the SAS / room-key handshake unchanged", () => {
+    expect(parseCtrlMessage({ v: 2, type: "sas-confirm" }).type).toBe(
+      "sas-confirm",
+    );
+    expect(
+      parseCtrlMessage({
+        v: 2,
+        type: "room-key",
+        key: "a2V5",
+        roomId: "room",
+      }).type,
+    ).toBe("room-key");
+    expect(parseCtrlMessage({ v: 2, type: "key-ok" }).type).toBe("key-ok");
+  });
+
+  it("rejects v1 control messages", () => {
+    expect(() =>
+      parseCtrlMessage({
+        v: 1,
+        type: "hello",
+        guestCaps: capsStub(),
+      }),
     ).toThrow();
   });
 });

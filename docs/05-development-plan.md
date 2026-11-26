@@ -1,7 +1,7 @@
 # CrossFile 开发计划（执行版）
 
 > 本文件是开发期间**唯一活文档**：计划 + 实际进度 + 偏差记录。
-> 上游事实源：`01-design.md`（决策 D1–D18、验收 AC1–AC9）、`02-protocol.md`、`03-roadmap.md`、`04-design-system.md`、附录 A/B/C。
+> 上游事实源：`01-design.md`（决策 D1–D24、验收 AC1–AC15）、`02-protocol.md`、`03-roadmap.md`、`04-design-system.md`、附录 A/B/C。
 > 目标：达到 §1 的 U1–U8「开发完成并可用」。
 
 ## 1. 完成定义（DoD）
@@ -14,7 +14,7 @@
 | U4 | 断流续传（50% 断开、60 s 内重连、只补缺片、哈希一致） | ✅ 本机 20 MB：传输中强断通道 → 重连 → 只补 295 片 → 哈希一致（Playwright AC3） |
 | U5 | 6 位码 + 4 emoji SAS；结束房间即销毁 | ✅ 6 位码 + SAS 后经 ctrl 通道下发 roomKey（哈希一致）；结束房间后 guest 立即收 room_closed、房间从内存删除、迟到 join 被拒（Playwright AC7） |
 | U6 | 零存储审计（无 DB / 无写盘 / 无访问日志） | ✅ `tests/audit/zero-storage.sh` 两种模式 RESULT PASS（本机 strace：0 写文件、0 DB、stdout 仅启动行；容器：read-only/非 root/无 mount/healthy/EROFS 写入失败） |
-| U7 | 门禁全绿（typecheck / 单测 core ≥80% / 对比度 24/24 / 零硬编码色值 / e2e） | ✅ typecheck / 82 单测 / 对比度 24/24 / 零硬编码色值 / 默认 e2e 4 个通过（AC2 relay 用例按 `E2E_RELAY=1` 单独跑，已通过）；覆盖率阈值待核对 |
+| U7 | 门禁全绿（typecheck / 单测 core ≥80% / 对比度 33/33 / 零硬编码色值 / e2e） | ✅ typecheck / 82 单测 / 对比度 33/33（2026-11-26 从 25 组扩至 33 组）/ 零硬编码色值 / 默认 e2e 4 个通过（AC2 relay 用例按 `E2E_RELAY=1` 单独跑，已通过）；覆盖率阈值待核对 |
 | U8 | 文档齐（README 可照做、自托管、隐私页、LICENSE） | ⚠️ README 命令可照做、`docs/self-host.md` 已由 infra-dev 交付并含实跑输出；隐私说明页与 LICENSE 文件待补 |
 
 ## 2. 已采纳决策（不再逐项确认）
@@ -302,6 +302,38 @@ https://room.net.time-pack.com  --TLS-->  nginx (既有反代)  -->  Vite :5173
 4. **M3 打磨**：统一 Dialog（结束房间/风险确认/踢人）、axe 无障碍扫描与键盘走查、错误态文案全覆盖。
 5. **真实网络验收**：跨机同 LAN 500 MB ≥60 Mbps、仅中继 10 Mbps 下 500 MB <10 分钟、netem 弱网用例。
 6. **手机壳后续**：MediaStore 导出、分享 intent 的 JS 桥、iOS 壳（需 macOS/Xcode 构建）。
+
+## 7.4 任意互传（阶段 1）变更记录（2026-11-26）
+
+**决策来源**：ADR 0010；`docs/01` 修订 D6–D9/D18 并新增 D19–D24；`docs/02` 升 v2（不兼容 v1）。
+
+**范围（本次实现）**
+- 房间模型改为「管理员 + 成员」；Web 端 Host/Guest 两页合并为统一 Room 页，首页改为「创建房间 / 加入房间」。
+- 协议 v2：`members` 广播、`profile` 昵称、`transferId`、任意成员间 `signal` 的形状、`rejoinToken`（成员 60 秒
+  重连）、版本门禁 `VERSION_MISMATCH`；阶段 1 只启用「管理员↔成员」。
+- 传输：管理员↔成员双向；同一对设备串行（`BUSY` 排队）、不同对可并发；对称续传（接收方发 bitmap、
+  发送方补片）。
+- 显示名：默认 `平台 · 4 位代号`、入房前/会话中可改、房内查重、本地记忆、可「忘记」。
+- 隐私：S 可见元数据新增成员数、显示名、平台、连接关系（不落盘）；`docs/01` §5、`/privacy`、README 同步；
+  零存储审计标准不变。
+- **不在范围**：阶段 2（成员↔成员互传、懒建连 mesh、管理权移交、自动接收开关）。
+
+**门禁（2026-11-26 实测）**
+- ✅ `pnpm gate`：prettier / typecheck（core、ui、signaling、web 全过）/ **173 单测（13 文件，core 覆盖率 92.46% stmts / 85.44% branch）** / 对比度 33/33 / 零硬编码色值。
+- ✅ `pnpm e2e`：**20 passed / 1 skipped**（跳过项为 AC2 relay：本机无 coturn），约 2.0 min；AC10 另跑 `E2E_FILE_MB=500` → 双向 500 MB 1 passed (2.0 min)。AC10–AC15 证据见 `docs/06-acceptance.md`。
+- ✅ `bash tests/audit/zero-storage.sh` → RESULT PASS：8 步真实 v2 会话（create → 2×join/approve → members 广播 → profile 改名广播 → 任意成员信令 → close），0 写盘 / 0 DB / stdout 仅 1 行启动日志。
+- ✅ `bash tests/audit/zero-storage.sh --container` → RESULT PASS：只读 rootfs、非 root（1000:1000）、无 volume/mount、CapDrop ALL、no-new-privileges、健康检查、同一 8 步 v2 会话、容器内写盘 EROFS、`down -v` 干净。本机沙箱需 `DOCKER_BUILDKIT=0`（buildx 活动文件只读）；构建需 Dockerfile 的 `--ignore-scripts`（见偏差记录）。
+- ✅ `pnpm build`（Web 生产构建 465 kB / gzip 145 kB）。
+
+**偏差记录（2026-11-26）**
+- **AC6 断言调整**：v2 修订 D9 后「不同对可并发、同一对串行」，原「guest1 完成前 guest2 不开始」不再成立；同对串行改由 AC11 覆盖，AC6 只断言矩阵与两人哈希一致。
+- **AC12b 暴露 core bug 并已修**：`waitForCapacity()` 在已关闭 data channel 上死循环（`bufferedAmount` 不下降）导致发送方重建后永久卡 paused；`waitForDrain` 监听 `close`、`waitForCapacity`/`sendFile` 关闭即抛错，发送循环在新通道重试。
+- **AC13 暴露 Web bug 并已修**：成员端 `join_ok` 先 `applyMembers()` 覆盖 `selfName` 再发 `profile`，本地记忆名永远发不到服务端；改为先保存 `localName` 再广播。
+- **e2e 限流逃生口**：`dev.ts` 新增 `RATE_LIMIT_MAX`/`RATE_LIMIT_WINDOW_MS`（仅测试 webServer 设为 100000；生产默认 120/60 s 不变）。
+- **沙箱 inotify 兜底**：`tests/e2e/fs-watch-fallback.cjs` 在 EMFILE/ENOSPC 时退化为轮询，`playwright.config.ts` 自动加载，正常机器 no-op。
+- **容器构建修复**：pnpm 12 对 workspace root 的 electron-builder 链（即使 `--filter` 也会安装）报 `ERR_PNPM_IGNORED_BUILDS`；`infra/signaling/Dockerfile` 的 `pnpm install` 加 `--ignore-scripts`（bundle 与 Vite 构建不需要 lifecycle script），容器审计重建后 PASS。
+- **未验证项**：AC2 relay（本机无 coturn）；管理员 WS 断线/成员 `rejoinToken` 重连只有服务端单测、无浏览器实测钩子；壳层（Tauri/Electron/手机）仍靠人工 AC9（本次未重跑，壳加载同一 Web 产物）；阶段 2 未实现（协议/状态已按 member 化预留）。
+- **AC11 用例依赖大文件窗口**：默认用 80 MB 制造排队窗口（本机稳定），极快机器可用 `E2E_QUEUE_MB` 放大。
 
 ## 8. 待办（需外部输入）
 

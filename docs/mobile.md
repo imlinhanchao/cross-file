@@ -227,6 +227,23 @@ pnpm --filter @crossfile/mobile ios:dev
 
 配置已按跨平台写（identifier、图标、capabilities 通用）；iOS 的保活能力与 Android 不同，见 §4.3。
 
+### 2.7 统一 Room 页与路由（v2）
+
+手机壳与桌面壳一样**不做路由**，直接复用 Web 的统一 Room 页（管理员与成员共用，收发都在同一页）：
+
+| 路由 | 作用 |
+|---|---|
+| `/` | 首页入口：「创建房间」/「加入房间」 |
+| `/room` | 直接创建房间（新建房间入口） |
+| `/r/<roomId>#<roomKey>` | 扫码 / 邀请链接加入 |
+| `/j/<code>` | 输入 6 位房间码加入 |
+| `/code` | 旧输码入口的别名（与 `/j/<code>` 等价，聚焦输码框） |
+| `/privacy` | 隐私说明 |
+
+- 分享面板（`ACTION_SEND`，骨架见 §5）收到的文件进入当前房间的发送条；尚无房间时先回到 `/` 建/加房间。
+- 房间内任何成员都能收发；同一对设备一次只传一条，不同对之间可同时传。手机端离开前台会断流，
+  回到前台后 60 秒内续传（§4 保活）。
+
 ## 3. 原生保存命令（与桌面壳同一契约）
 
 ### 3.1 命令签名（JS 侧不变）
@@ -365,7 +382,7 @@ window.__CROSSFILE_SIGNALING_URL__ ||= 'wss://room.net.time-pack.com/v1/ws'
 | ------------------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Rust 编译（Android）| `cd apps/mobile/src-tauri && cargo check --target aarch64-linux-android` | ✅ `Finished dev profile [unoptimized + debuginfo] target(s) in 0.45s`，0 warning（首次含依赖约 1 分钟）                                                                                             |
 | Rust 编译（链接）   | `cargo build --lib --target aarch64-linux-android`（带 NDK linker 环境） | ✅ `Finished dev profile … in 17.89s`，产出 `libcrossfile_mobile_lib.so`                                                                                                                            |
-| 单元测试（host）    | `cargo test`                                                          | ✅ 3 passed / 0 failed（文件名穿越、同名去重、信令注入脚本）                                                                                                                                         |
+| 单元测试（Rust 侧） | `cargo test`                                                          | ✅ 3 passed / 0 failed（文件名穿越、同名去重、信令注入脚本）                                                                                                                                         |
 | Android 工程生成    | `tauri android init`                                                  | ✅ `Project generated successfully!`；自动安装 armv7/i686 等 4 个 rust target                                                                                                                        |
 | CLI 构建            | `tauri android build --debug`                                         | ❌ 沙箱阻断：`failed to watch …/Cargo.toml: OS file watch limit reached`（`inotify_add_watch` 对任意路径返回 ENOSPC，Python syscall 复现；非工程问题）。普通开发机应可正常跑                         |
 | 等价构建（Gradle）  | `./gradlew :app:assembleArm64Debug -PtargetList=aarch64 -PabiList=arm64-v8a -x :app:rustBuildArm64Debug` | ✅ `BUILD SUCCESSFUL in 1m 17s`，`app-arm64-debug.apk` 116 MB                                                                                                                                       |
@@ -454,8 +471,8 @@ xcrun simctl get_app_container booted <bundle-id> data
 Tauri ACL 不允许远程 https 页面调用自定义命令。
 
 已实测（mac-mini + iPhone 17 模拟器 + Linux 主机）：强制两端 `?relay=1` 时，iOS 壳经 TURN 收下
-**100 MB 与 500 MB**，落盘 sha256 均与发送方一致（500 MB：`f5b7ea08…`）。模拟器 ↔ Linux 的直连 ICE 不通，
+**100 MB 与 500 MB**，落盘 sha256 均与发送端一致（500 MB：`f5b7ea08…`）。模拟器 ↔ Linux 的直连 ICE 不通，
 验收脚本请带 `relay=1`。
 
 安全说明：`CROSSFILE_DEV_AUTOACCEPT` 只在 `cfg!(debug_assertions)` 下生效，且必须链接里带 `autoaccept=1`；
-release 包即使设置该变量也不会绕过接收方的同意步骤。
+release 包即使设置该变量也不会绕过接收端的同意步骤。

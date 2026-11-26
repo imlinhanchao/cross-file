@@ -80,6 +80,23 @@ pnpm --filter @crossfile/desktop dev:attach
   `pnpm --filter @crossfile/desktop …` 仍能跑脚本（Tauri CLI 从根 `node_modules/.bin` 解析），但
   `pnpm install --frozen-lockfile` 会报 lockfile 过期，且可能在工作区根生成临时 `.pnpm-store/`。
 
+### 2.1 统一 Room 页与路由（v2）
+
+Web 端只有一个统一 Room 页（管理员与成员共用同一套界面）；桌面壳不做路由，只透传 Web：
+
+| 路由 | 作用 |
+|---|---|
+| `/` | 首页入口：「创建房间」/「加入房间」 |
+| `/room` | 直接创建房间（原生菜单「新建房间」的目标页） |
+| `/r/<roomId>#<roomKey>` | 扫码 / 邀请链接加入 |
+| `/j/<code>` | 输入 6 位房间码加入 |
+| `/code` | 旧输码入口的别名（与 `/j/<code>` 等价，聚焦输码框） |
+| `/privacy` | 隐私说明 |
+
+- 原生菜单「新建房间」（Ctrl/Cmd+N）只 `emit("menu-action", "new-room")`；前端收到后导航到 `/room`
+  创建新房间（若已在房间内，先结束或离开当前房间再进入）。
+- 桌面壳没有自己的房间状态机；`CROSSFILE_URL`、`CROSSFILE_DEV_JOIN` 等深链直接指向上述任一地址即可。
+
 ## 3. 构建与打包
 
 ```bash
@@ -167,7 +184,7 @@ const invoke = (window as any).__TAURI__.core.invoke as <T = unknown>(
   args?: Record<string, unknown>,
 ) => Promise<T>;
 
-// 接收方保存一个文件：Tauri 2 的 IPC 是 JSON，Vec<u8> 用数字数组（不要直接传 Uint8Array）
+// 接收端保存一个文件：Tauri 2 的 IPC 是 JSON，Vec<u8> 用数字数组（不要直接传 Uint8Array）
 const handle = await invoke<number>("save_open", { name: file.name });
 for (const chunk of chunks) {
   await invoke("save_write", { handle, offset, bytes: Array.from(chunk) });
@@ -209,7 +226,7 @@ Web: 传输结束/取消 ── invoke set_transfer_active({ active: false })
 
 | 菜单  | 菜单项                                  | 行为                                                                                                          |
 | ----- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| 房间  | 新建房间（Ctrl/Cmd+N）                  | 向前端 `emit("menu-action", "new-room")`                                                                      |
+| 房间  | 新建房间（Ctrl/Cmd+N）                  | 向前端 `emit("menu-action", "new-room")`；前端导航到 `/room` 创建新房间                                      |
 | 房间  | 结束房间（Ctrl/Cmd+Shift+E）            | 向前端 `emit("menu-action", "end-room")`                                                                      |
 | 房间  | 退出 CrossFile（Ctrl/Cmd+Q）            | 关窗保护流程（§5），非传输中直接 `app.exit(0)`                                                                |
 | 编辑  | 撤销 / 重做 / 剪切 / 复制 / 粘贴 / 全选 | 系统预定义项（输入框可用）                                                                                    |
@@ -254,14 +271,15 @@ xvfb-run -a pnpm --filter @crossfile/desktop dev:attach   # 5 秒后 Ctrl-C
 1. **信令地址（已接线）**：壳提供 `get_shell_config` 命令，返回 `signaling_url`
    （`CROSSFILE_SIGNALING_URL` 覆盖，默认 `ws://127.0.0.1:8788/v1/ws`）；Web 侧
    `resolveSignalingUrl()` 在原生壳无注入/存储配置时向壳索取后再建连。
-   实测 macOS 100 MB / 500 MB 均通过（落盘 sha256 与发送方一致）。
+   实测 macOS 100 MB / 500 MB 均通过（落盘 sha256 与发送端一致）。
 2. **`__CROSSFILE_NATIVE__` 需 JS 侧设置**（§4.3）；不设置则能力包仍按浏览器算，不会走 `native` 保存策略，500MB 限制也会按浏览器阈值判定。
 3. **无代码签名 / 公证**；Linux 上双击 AppImage 可能需要 `chmod +x` 并信任。
 4. **无自动更新**（未接 `tauri-plugin-updater`）。
 5. **未做单实例**（`tauri-plugin-single-instance`）：多开会各自独立。
 6. **CSP 为 null**（`app.security.csp`）：与 Web 现状一致；正式发布前建议按实际信令/TURN 域名收紧。
 7. **原生文件拖放关闭**（`dragDropEnabled: false`）：保证 Web 的 HTML5 拖拽/选择文件在壳内照常工作；后续若要做「拖到窗口即发送」，需改回原生拖放并接 Tauri drag-drop 事件。
-8. **菜单「新建/结束房间」未接线**：只发事件，JS 消费后才有行为。
+8. **菜单「新建/结束房间」未接线**：只发事件，JS 消费后才有行为（`new-room` → 导航到 `/room`；
+   `end-room` → 结束当前房间）。
 9. 只在 Linux 验证；macOS/Windows 需在对应系统复跑 `cargo check` / `tauri build`（配置文件已按跨平台写）。
 10. `save_write` 走 JSON IPC（数字数组），大文件比二进制通道多一层编码开销；AC9 的 500MB 用例需实测吞吐后决定是否加 raw 通道。
 11. **工作区接入（Lead 处理）**：新增 `@crossfile/desktop` 后根 `pnpm-lock.yaml` 还没有该 importer；请在根跑一次
@@ -301,7 +319,7 @@ Ubuntu 24.04 的 `webkit2gtk-4.1` 构建默认关闭 WebRTC，所以 **Linux 桌
 相同的 `__TAURI__` 桥，所以 Web 代码无需分支。IPC 与本文 §4 命令完全一致，保存目录为系统「下载」目录。
 
 ```bash
-# 作为接收方（示例：带开发钩子的房间链接）
+# 作为接收端（示例：带开发钩子的房间链接）
 CROSSFILE_URL='http://127.0.0.1:5173/r/<id>?debug=1&autoaccept=1#<key>' \
   HOME=$PWD/.cache/app-home ./node_modules/.bin/electron apps/desktop-electron --no-sandbox
 
@@ -309,7 +327,7 @@ CROSSFILE_URL='http://127.0.0.1:5173/r/<id>?debug=1&autoaccept=1#<key>' \
 CROSSFILE_URL='http://127.0.0.1:8788' ./node_modules/.bin/electron apps/desktop-electron
 ```
 
-实测：100 MB 与 **500 MB** 均通过，落盘文件 sha256 与发送方一致（AC9 Linux 侧）。
+实测：100 MB 与 **500 MB** 均通过，落盘文件 sha256 与发送端一致（AC9 Linux 侧）。
 
 打包 Linux 安装包（AppImage）：
 
@@ -322,7 +340,7 @@ pnpm --filter @crossfile/desktop-electron exec electron-builder --linux AppImage
 ```
 
 已验证：构建成功、`--appimage-extract` 可解出 `app.asar` 与启动器；并**用解包后的 AppImage 实跑接收 100 MB**：
-路径「局域网直连」，host `HASH MATCHES EXPECTED: true`（sha256 `4feb8ba7…`），落盘文件 104 857 600 B、
+路径「局域网直连」，发送端上报 `HASH MATCHES EXPECTED: true`（sha256 `4feb8ba7…`），落盘文件 104 857 600 B、
 sha256 完全一致，同名文件自动去重为 `ac4-100mb (1).bin`。
 注意：AppImage 运行需要 FUSE（或 `--appimage-extract-and-run`）；当前未设置自定义图标（Electron 默认图标），
 需要品牌图标时放 `build/icon.png`（512×512）再打包。

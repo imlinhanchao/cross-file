@@ -10,7 +10,7 @@
 ```
 cross-file/
 ├── apps/
-│   ├── web/                 # React + Vite，发送方/接收方全部 UI（唯一一套 UI 代码）
+│   ├── web/                 # React + Vite，统一 Room 页 UI（管理员/成员共用；/ 入口、/room 创建、/r/<id>、/j/<code>）
 │   ├── desktop/             # Tauri 2，Win/macOS/Linux；内嵌 web 构建 + 原生保存/保活
 │   └── mobile/              # Tauri 2，iOS/Android；分享面板、写盘、前台服务
 ├── packages/
@@ -31,7 +31,7 @@ cross-file/
 │   └── perf/                # 500MB 吞吐与续传压测
 ├── design/                  # 设计稿与设计系统实现（tokens / base.css / screens / tools）
 │   ├── tokens/tokens.css    # 唯一 token 来源，Web 与三端壳共用
-│   └── screens/             # 5 张自包含设计稿 + screenshots/
+│   └── screens/             # 6 张自包含设计稿（统一 Room 页）+ screenshots/
 ├── docs/
 │   ├── 01-design.md
 │   ├── 02-protocol.md
@@ -88,7 +88,7 @@ cross-file/
 - **验收**：AC4、AC9；桌面壳 500MB 完整跑通。
 
 ### M3 — 产品化（≈3–4 天）
-- 房间页完整交互：多接收方队列、文件×人矩阵、加入审批、移除成员、结束房间、空闲过期。
+- 房间页完整交互：多成员队列（同一对设备串行）、文件×成员矩阵、加入审批、移除成员、结束房间、空闲过期。
 - 6 位码路径 + SAS emoji 比对。
 - 错误与降级文案（中英双语待定）、空状态、加载态、无障碍基础（键盘/焦点/对比度）。
 - **验收**：AC5、AC6 + 手工走查全流程。
@@ -111,7 +111,7 @@ cross-file/
 | 壳 | 无壳（Web）、桌面壳（Win/macOS/Linux）、手机壳（iOS/Android） |
 | 网络 | 同网直连、跨网打洞、仅中继（本地 coturn）、弱网（netem 丢包 1%/延迟 80ms）、断流重连 |
 | 文件 | 10MB、100MB、300MB、500MB；单文件、多文件；中文/emoji 文件名 |
-| 场景 | 单接收方、多接收方顺序、加入审批、踢人、房间过期、发送方崩溃 |
+| 场景 | 单成员、多成员顺序、加入审批、移除成员、房间过期、管理员崩溃 |
 
 自动化：Playwright 双上下文跑 AC1/AC3/AC5/AC6；AC2/AC8 在 CI 里用 docker-compose 起 coturn + strace 审计；性能脚本输出吞吐表格留档。
 
@@ -124,7 +124,7 @@ cross-file/
 | R3 | 移动端后台/锁屏挂起导致传输中断 | 体验断崖 | 原生壳前台服务 + 会话内续传；Web 端显式提示 |
 | R4 | 数据通道真实局域网吞吐未知（实测 loopback 仅 111–161 Mbps） | 500MB 可能要 1 分钟以上 | M1 实测调参（分片/HWM）；必要时 LAN 路径改用本地 HTTPS 流（后续优化） |
 | R5 | 浏览器未来把 WebRTC 纳入 Local Network Access 权限（Chrome 142 起已有该权限） | 局域网连接需授权，或被打断 | 关注 crbug 421223919；UI 预留权限引导 |
-| R6 | 官方实例被白嫖中继 | 成本失控 | 限速、按 IP 内存限频、每会话总量上限、官方实例接收方上限 2 |
+| R6 | 官方实例被白嫖中继 | 成本失控 | 限速、按 IP 内存限频、每会话总量上限、官方实例成员上限 2 |
 | R7 | App Store 审核（iOS 壳） | 上架延迟 | 提前准备隐私说明；iOS 先走 TestFlight；把壳做成可选的加分项 |
 | R8 | TURN 成为合法风险点（匿名 + 任意内容 + 无记录） | 运营合规 | 官方实例只做限速兜底、明确 ToS、提供举报/关停机制；自托管为主 |
 | R9 | 无数据库意味着服务器重启丢房间 | 传输中断 | 可接受（设计如此）；客户端给出清晰错误 |

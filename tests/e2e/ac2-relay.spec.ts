@@ -1,7 +1,18 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import {
+  acceptIncoming,
+  createRoom,
+  expectHashes,
+  fixtureFile,
+  joinByLink,
+  pickFiles,
+  startSend,
+  waitForSnapshot,
+  waitIncoming,
+  waitOthersJoined,
+  waitPending,
+} from "./support.js";
 
 /**
  * AC2: force ICE onto TURN (relay-only) and prove the transfer still verifies.
@@ -19,91 +30,48 @@ test.skip(
 const SIZE_MB = Number(process.env.E2E_RELAY_MB ?? 20);
 const SIZE = SIZE_MB * 1024 * 1024;
 
-interface Snapshot {
-  phase: string;
-  link?: string;
-  guests: Array<{ id: string; status: string; path?: string }>;
-  files: Array<{ name: string; size: number }>;
-  transfer?: { sentBytes: number; totalBytes: number; path?: string };
-  result?: { ok: boolean; sha256?: string };
-  error?: string;
-}
-
-function snapshot(page: Page): Promise<Snapshot> {
-  return page.evaluate(() => {
-    const hook = (
-      window as unknown as { __crossfile?: { snapshot?: () => Snapshot } }
-    ).__crossfile;
-    if (!hook?.snapshot) throw new Error("__crossfile hook missing");
-    return hook.snapshot();
-  });
-}
-
 test("AC2: relay-only (TURN) transfer of a file verifies end to end", async ({
   browser,
 }) => {
   const bytes = randomBytes(SIZE);
   const expected = createHash("sha256").update(bytes).digest("hex");
-  const dir = resolve(".cache/fixtures");
-  mkdirSync(dir, { recursive: true });
-  const filePath = resolve(dir, `relay-${SIZE_MB}mb.bin`);
-  writeFileSync(filePath, bytes);
+  const file = fixtureFile(bytes, `relay-${SIZE_MB}mb.bin`);
 
-  const hostContext = await browser.newContext();
-  const guestContext = await browser.newContext();
-  const host = await hostContext.newPage();
-  const guest = await guestContext.newPage();
+  const adminContext = await browser.newContext();
+  const memberContext = await browser.newContext();
+  const admin = await adminContext.newPage();
+  const member = await memberContext.newPage();
 
-  await host.goto("/?relay=1");
-  await expect
-    .poll(async () => (await snapshot(host)).phase, { timeout: 30_000 })
-    .toBe("waiting");
-  const link = (await snapshot(host)).link!;
-  await guest.goto(link.replace("#", "?relay=1#"));
-  await expect
-    .poll(async () => (await snapshot(host)).guests.length, { timeout: 30_000 })
-    .toBe(1);
-  await host.getByTestId("approve").click();
-  await expect
-    .poll(async () => (await snapshot(host)).guests[0]?.status, {
-      timeout: 30_000,
-    })
-    .toBe("joined");
+  // `?relay=1` is read by the controller: only TURN candidates are gathered.
+  const created = await createRoom(admin, "relay=1");
+  await joinByLink(member, created.link, "relay=1");
+  await waitPending(admin);
+  await admin.getByTestId("approve").click();
+  await waitOthersJoined(admin, 1);
+  await waitOthersJoined(member, 1);
 
-  await host.getByTestId("file-input").setInputFiles(filePath);
-  await expect
-    .poll(async () => (await snapshot(guest)).files.length, { timeout: 30_000 })
-    .toBe(1);
-  await guest.getByTestId("accept").click();
+  await pickFiles(admin, file);
+  await startSend(admin);
+  await waitIncoming(member);
+  await acceptIncoming(member);
 
-  await expect
-    .poll(async () => (await snapshot(host)).phase, { timeout: 180_000 })
-    .toBe("done");
-  await expect
-    .poll(async () => (await snapshot(guest)).phase, { timeout: 180_000 })
-    .toBe("done");
+  await expectHashes([admin, member], expected);
 
   // Every path report must say relay: ICE was restricted to relay candidates.
   // The path label resolves from getStats shortly after the channels open, so poll it.
-  await expect
-    .poll(async () => (await snapshot(host)).guests[0]?.path, {
-      timeout: 30_000,
-    })
-    .toBe("relay");
-  await expect
-    .poll(async () => (await snapshot(guest)).transfer?.path, {
-      timeout: 30_000,
-    })
-    .toBe("relay");
-
-  const guestHash = await guest.evaluate(
-    () =>
-      (window as unknown as { __crossfile?: { sha256?: string } }).__crossfile
-        ?.sha256,
+  await waitForSnapshot(
+    admin,
+    (view) => view.guests[0]?.path === "relay",
+    30_000,
+    "admin relay path",
   );
-  expect(guestHash).toBe(expected);
-  expect((await snapshot(host)).result?.sha256).toBe(expected);
+  await waitForSnapshot(
+    member,
+    (view) => view.transfer?.path === "relay",
+    30_000,
+    "member relay path",
+  );
 
-  await hostContext.close();
-  await guestContext.close();
+  await adminContext.close();
+  await memberContext.close();
 });

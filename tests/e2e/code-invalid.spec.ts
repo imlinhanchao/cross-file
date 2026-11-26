@@ -1,20 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
-
-interface Snapshot {
-  phase: string;
-  error?: string;
-}
-
-function snapshot(page: Page): Promise<Snapshot> {
-  // During the redirect to /j/<code> the document may still be loading; treat that as unknown.
-  return page.evaluate(() => {
-    const hook = (
-      window as unknown as { __crossfile?: { snapshot?: () => Snapshot } }
-    ).__crossfile;
-    if (!hook?.snapshot) return { phase: "loading" };
-    return hook.snapshot();
-  });
-}
+import { expect, test } from "@playwright/test";
 
 test("6-digit code entry: unknown code is rejected with a clear message", async ({
   page,
@@ -25,9 +9,28 @@ test("6-digit code entry: unknown code is rejected with a clear message", async 
 
   // The room page joins with the code; the server answers ROOM_NOT_FOUND.
   await expect
-    .poll(async () => (await snapshot(page)).phase, { timeout: 30_000 })
+    .poll(
+      async () =>
+        page.evaluate(
+          () =>
+            (
+              window as unknown as {
+                __crossfile?: { snapshot?: () => { phase: string } };
+              }
+            ).__crossfile?.snapshot?.().phase ?? "loading",
+        ),
+      { timeout: 30_000 },
+    )
     .toBe("error");
-  expect((await snapshot(page)).error ?? "").toMatch(/ROOM_NOT_FOUND|房间/);
+  const error = await page.evaluate(
+    () =>
+      (
+        window as unknown as {
+          __crossfile?: { snapshot?: () => { error?: string } };
+        }
+      ).__crossfile?.snapshot?.().error ?? "",
+  );
+  expect(error).toMatch(/ROOM_NOT_FOUND|房间/);
   await expect(page.getByRole("link", { name: "返回首页" })).toBeVisible();
 });
 

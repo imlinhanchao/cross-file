@@ -1,5 +1,6 @@
 /**
- * End-to-end signaling smoke test (no browser): create → join → approve → signal → close.
+ * End-to-end signaling smoke test (no browser, protocol v2): create → join → approve
+ * → members broadcast → signal both ways → close.
  * Run: pnpm exec tsx scripts/smoke-signaling.mts
  */
 import WebSocket from "ws";
@@ -27,7 +28,7 @@ function client(port: number, label: string) {
     console.log(
       `[${label}] <-`,
       message.type,
-      JSON.stringify(message).slice(0, 120),
+      JSON.stringify(message).slice(0, 140),
     );
   });
   return {
@@ -42,10 +43,14 @@ function client(port: number, label: string) {
     send(message: unknown): void {
       ws.send(JSON.stringify(message));
     },
-    async waitFor(type: string, timeoutMs = 3000): Promise<any> {
+    async waitFor(
+      type: string,
+      predicate: (message: any) => boolean = () => true,
+      timeoutMs = 3000,
+    ): Promise<any> {
       const started = Date.now();
       for (;;) {
-        const found = messages.find((m) => m.type === type);
+        const found = messages.find((m) => m.type === type && predicate(m));
         if (found) return found;
         if (Date.now() - started > timeoutMs)
           throw new Error(
@@ -61,63 +66,76 @@ const server = createSignalingServer({ port: 0, maxGuests: 4 });
 const { port } = await server.start();
 console.log(`signaling on :${port}`);
 
-const host = client(port, "host");
-const guest = client(port, "guest");
-await host.open();
-await guest.open();
+const admin = client(port, "admin");
+const member = client(port, "member");
+await admin.open();
+await member.open();
 
 const roomId = base32Encode(randomBytes(16));
-host.send({ v: 1, type: "hello", clientCaps: caps });
-host.send({ v: 1, type: "create", roomId, hostCaps: caps });
-const created = await host.waitFor("created");
-console.log("OK roomId", created.roomId, "code", created.code);
+admin.send({ v: 2, type: "hello", clientCaps: caps });
+admin.send({ v: 2, type: "create", roomId, caps, name: "Smoke 管理员" });
+const created = await admin.waitFor("created");
+console.log("OK created roomId", created.roomId, "code", created.code);
 
-guest.send({ v: 1, type: "hello", clientCaps: caps });
-guest.send({
-  v: 1,
+member.send({ v: 2, type: "hello", clientCaps: caps });
+member.send({
+  v: 2,
   type: "join",
   roomId,
-  guestCaps: { ...caps, screen: "phone", platform: "ios", uaFamily: "safari" },
-  guestNonce: "smoke-nonce-123",
+  caps: { ...caps, screen: "phone", platform: "ios", uaFamily: "safari" },
+  nonce: "smoke-nonce-123",
 });
-const joinRequest = await host.waitFor("join_request");
-console.log("OK join_request guestId", joinRequest.guestId);
+const joinRequest = await admin.waitFor("join_request");
+console.log("OK join_request memberId", joinRequest.memberId);
 
-host.send({ v: 1, type: "approve", guestId: joinRequest.guestId });
-const [hostJoinOk, guestJoinOk] = await Promise.all([
-  host.waitFor("join_ok"),
-  guest.waitFor("join_ok"),
+admin.send({ v: 2, type: "approve", memberId: joinRequest.memberId });
+const [adminMembers, memberJoinOk] = await Promise.all([
+  admin.waitFor("members", (message: any) =>
+    message.members.some((entry: any) => entry.id === joinRequest.memberId),
+  ),
+  member.waitFor("join_ok"),
 ]);
 console.log(
-  "OK join_ok host peerCaps",
-  hostJoinOk.peerCaps.uaFamily,
-  "guest peerCaps",
-  guestJoinOk.peerCaps.uaFamily,
+  "OK approved members",
+  adminMembers.members.length,
+  "member selfId",
+  memberJoinOk.selfId,
 );
 
-host.send({
-  v: 1,
+member.send({ v: 2, type: "profile", name: "Smoke 成员" });
+await admin.waitFor("members", (message: any) =>
+  message.members.some((entry: any) => entry.name === "Smoke 成员"),
+);
+console.log("OK profile -> members broadcast");
+
+admin.send({
+  v: 2,
   type: "signal",
-  to: joinRequest.guestId,
+  to: joinRequest.memberId,
   payload: { k: "offer", sdp: "v=0\r\n" },
 });
-const offer = await guest.waitFor("signal");
-console.log("OK host->guest signal", offer.payload.k, offer.from.length > 0);
+const offer = await member.waitFor("signal");
+console.log("OK admin->member signal", offer.payload.k, offer.from.length > 0);
 
-guest.send({
-  v: 1,
+member.send({
+  v: 2,
   type: "signal",
-  to: "host",
+  to: created.selfId,
   payload: { k: "answer", sdp: "v=0\r\n" },
 });
-const answer = await host.waitFor("signal");
-console.log("OK guest->host sentinel signal", answer.payload.k);
+const answer = await admin.waitFor("signal");
+console.log("OK member->admin signal", answer.payload.k);
 
-host.send({ v: 1, type: "close", roomId });
-const closed = await guest.waitFor("room_closed");
+admin.send({ v: 2, type: "close", roomId });
+const closed = await member.waitFor("room_closed");
 console.log("OK room_closed", closed.reason);
 
-host.ws.close();
-guest.ws.close();
+admin.ws.close();
+member.ws.close();
 await server.stop();
+
+if (closed.reason !== "admin_close") {
+  console.error("SMOKE FAIL: room_closed reason", closed.reason);
+  process.exit(1);
+}
 console.log("SMOKE PASS");

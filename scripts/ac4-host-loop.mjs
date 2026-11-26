@@ -1,10 +1,10 @@
 /**
- * AC4 cross-machine host loop: keeps a room alive and publishes the join link on
- * the LAN so a remote guest can fetch it at any time.
+ * AC4 cross-machine admin loop: keeps a room alive and publishes the join link on
+ * the LAN so a remote member can fetch it at any time.
  *
  * - writes .cache/ac4-link.txt and .cache/share/link.txt (served on :8099)
- * - waits for exactly one guest, approves, sends the file, prints the result
- * - if no guest arrives within the window, closes the room and opens a new one
+ * - waits for exactly one member, approves it, sends the file, prints the result
+ * - if no member arrives within the window, closes the room and opens a new one
  *
  * Run: node scripts/ac4-host-loop.mjs [sizeMB]
  */
@@ -52,7 +52,7 @@ function clearPublished() {
 console.log(`expected sha256: ${expected} (${SIZE} bytes)`);
 
 // Cross-machine ICE needs a real LAN host candidate: Chrome otherwise obfuscates
-// local IPs as mDNS "*.local", which a guest on another machine cannot resolve
+// local IPs as mDNS "*.local", which a member on another machine cannot resolve
 // (no TURN / same public IP => no srflx fallback). Opt out of that obfuscation.
 // Playwright (1.65.1) already injects its own --disable-features list; Chromium
 // keeps only the last occurrence, so replay Playwright's entries here and append
@@ -75,7 +75,7 @@ const CHROME_DISABLED_FEATURES = [
   "PreconnectToSearch",
   "msForceBrowserSignIn",
   "msEdgeUpdateLaunchServicesPreferredVersion",
-  // AC4: expose 192.168.50.200:port as a host candidate for the iOS guest.
+  // AC4: expose 192.168.50.200:port as a host candidate for the iOS member.
   "WebRtcHideLocalIpsWithMdns",
 ];
 
@@ -87,68 +87,67 @@ const browser = await chromium.launch({
 for (let round = 1; round <= 20; round++) {
   // Chrome only offers WebRTC host candidates from *all* interfaces (instead of
   // just the default route, 198.18.0.1 from the Clash TUN here) when camera/mic
-  // permission is granted; without it the guest can never see 192.168.50.200.
+  // permission is granted; without it the member can never see 192.168.50.200.
   // Nothing in this harness calls getUserMedia, so no capture happens.
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
     permissions: ["camera"],
   });
-  const host = await context.newPage();
-  host.on("pageerror", (error) =>
-    console.log("[host] PAGEERROR", String(error).slice(0, 200)),
+  const admin = await context.newPage();
+  admin.on("pageerror", (error) =>
+    console.log("[admin] PAGEERROR", String(error).slice(0, 200)),
   );
   try {
-    await host.goto(`${BASE}/?${QUERY}`);
-    await host.waitForFunction(
+    // v2: `/room` is the create route; diagnostics ride along in the query string.
+    await admin.goto(`${BASE}/room${QUERY ? `?${QUERY}` : ""}`);
+    await admin.waitForFunction(
       () => window.__crossfile?.snapshot?.().phase === "waiting",
       null,
       {
         timeout: 60_000,
       },
     );
-    const link = await host.evaluate(() => window.__crossfile.snapshot().link);
+    const link = await admin.evaluate(() => window.__crossfile.snapshot().link);
     // Query string carries diagnostics; report URLs must be URL-encoded inside it.
     publish(link.replace("#", `?${QUERY}#`));
     console.log(`round ${round}: ROOM LINK ${link}`);
 
-    await host.waitForFunction(
-      () => (window.__crossfile?.snapshot?.().guests ?? []).length >= 1,
+    await admin.waitForFunction(
+      () => (window.__crossfile?.snapshot?.().members ?? []).length >= 2,
       null,
       {
         timeout: GUEST_WAIT_MS,
       },
     );
-    console.log(`round ${round}: guest joined, approving`);
-    await host.getByTestId("approve").first().click();
-    await host.waitForFunction(
+    console.log(`round ${round}: member joined, approving`);
+    await admin.getByTestId("approve").first().click();
+    await admin.waitForFunction(
       () =>
-        window.__crossfile
-          ?.snapshot?.()
-          .guests?.some((guest) => guest.status === "joined"),
+        (window.__crossfile?.snapshot?.().members ?? []).some(
+          (member) => !member.isAdmin && member.state === "joined",
+        ),
       null,
       { timeout: 60_000 },
     );
 
-    await host.getByTestId("file-input").setInputFiles(fixture);
+    await admin.getByTestId("file-input").setInputFiles(fixture);
     console.log(`round ${round}: file offered, waiting for transfer`);
     const diag = setInterval(() => {
-      void host
-        .evaluate(async () => {
-          const rtc = window.__crossfileRtc?.host;
-          const snap = window.__crossfile?.snapshot?.();
+      void admin
+        .evaluate(() => {
+          const snapshot = window.__crossfile?.snapshot?.();
           return {
-            phase: snap?.phase,
-            transfer: snap?.transfer,
-            guests: snap?.guests,
-            rtc: rtc ? rtc.state() : null,
-            stats: rtc ? await rtc.stats() : null,
+            phase: snapshot?.phase,
+            transfer: snapshot?.transfers,
+            members: snapshot?.members,
+            notice: snapshot?.notice,
           };
         })
-        .then((info) => console.log("HOST DIAG", JSON.stringify(info)))
+        .then((info) => console.log("ADMIN DIAG", JSON.stringify(info)))
         .catch(() => undefined);
     }, 15_000);
     try {
-      await host.waitForFunction(
+      await admin.waitForFunction(
         () => window.__crossfile?.snapshot?.().phase === "done",
         null,
         {
@@ -158,21 +157,22 @@ for (let round = 1; round <= 20; round++) {
     } finally {
       clearInterval(diag);
     }
-    const result = await host.evaluate(
+    const result = await admin.evaluate(
       () => window.__crossfile.snapshot().result,
     );
-    const guests = await host.evaluate(
-      () => window.__crossfile.snapshot().guests,
+    const members = await admin.evaluate(
+      () => window.__crossfile.snapshot().members,
     );
+    const peer = members.find((member) => !member.isAdmin);
     console.log(
-      `HOST DONE sha256=${result?.sha256} bytes=${result?.bytes} path=${guests?.[0]?.path}`,
+      `ADMIN DONE sha256=${result?.sha256} bytes=${result?.bytes} path=${peer?.path}`,
     );
-    console.log(`HOST HASH MATCHES EXPECTED: ${result?.sha256 === expected}`);
+    console.log(`ADMIN HASH MATCHES EXPECTED: ${result?.sha256 === expected}`);
     await context.close();
     break;
   } catch (error) {
     console.log(
-      `round ${round}: no guest / failed (${String(error).slice(0, 120)}) — opening a new room`,
+      `round ${round}: no member / failed (${String(error).slice(0, 120)}) — opening a new room`,
     );
     await context.close().catch(() => undefined);
     clearPublished();

@@ -1,10 +1,12 @@
 /**
- * Real signaling session for the zero-storage audit (docs/01 AC8, docs/02 §7).
+ * Real signaling session for the zero-storage audit (docs/01 AC8, docs/02 §7, v2).
  *
  * Unlike `scripts/smoke-signaling.mts` (which starts an in-process server on port 0), this
  * client only speaks to a *separate* server over `ws://127.0.0.1:<port>/v1/ws`, so the audit
- * script can strace the server process while a complete create → join → approve → signal →
- * close session runs through it.
+ * script can strace the server process while a complete v2 session runs through it:
+ * create → join ×2 → approve → profile (members broadcast) → arbitrary-member signals →
+ * close. It exercises every message shape that touches room state, which is exactly what
+ * the zero-storage claim has to survive (ADR 0010 §AC15: `members`/`profile` stay in memory).
  *
  * Run: node --import tsx tests/audit/signal-client.mts [ws-url]
  * Env: AUDIT_WS_URL (default ws://127.0.0.1:18787/v1/ws)
@@ -31,7 +33,7 @@ interface Caps {
   screen: string;
 }
 
-const HOST_CAPS: Caps = {
+const ADMIN_CAPS: Caps = {
   platform: "linux",
   uaFamily: "chrome",
   nativeShell: false,
@@ -45,7 +47,7 @@ const HOST_CAPS: Caps = {
   screen: "desktop",
 };
 
-const GUEST_CAPS: Caps = {
+const MEMBER_CAPS: Caps = {
   platform: "ios",
   uaFamily: "safari",
   nativeShell: false,
@@ -61,8 +63,8 @@ const GUEST_CAPS: Caps = {
 
 type Message = { type: string } & Record<string, unknown>;
 
-const STEP_TIMEOUT_MS = 5_000;
-const SESSION_TIMEOUT_MS = 20_000;
+const STEP_TIMEOUT_MS = 8_000;
+const SESSION_TIMEOUT_MS = 40_000;
 
 function fail(message: string): never {
   console.error(`CLIENT FAIL ${message}`);
@@ -77,6 +79,7 @@ class Client {
   readonly label: string;
   readonly messages: Message[] = [];
   private readonly ws: WebSocket;
+  private closed = false;
 
   constructor(label: string) {
     this.label = label;
@@ -87,6 +90,9 @@ class Client {
       } catch {
         fail(`${label}: server sent non-JSON frame`);
       }
+    });
+    this.ws.on("close", () => {
+      this.closed = true;
     });
     this.ws.on("error", (error) =>
       fail(`${label}: socket error: ${error.message}`),
@@ -112,14 +118,25 @@ class Client {
   }
 
   send(message: Record<string, unknown>): void {
-    this.ws.send(JSON.stringify({ v: 1, ...message }));
+    this.ws.send(JSON.stringify({ v: 2, ...message }));
   }
 
-  async waitFor(type: string, timeoutMs = STEP_TIMEOUT_MS): Promise<Message> {
+  async waitFor(
+    type: string,
+    predicate: (message: Message) => boolean = () => true,
+    timeoutMs = STEP_TIMEOUT_MS,
+  ): Promise<Message> {
     const started = Date.now();
     for (;;) {
-      const found = this.messages.find((message) => message.type === type);
+      const found = this.messages.find(
+        (message) => message.type === type && predicate(message),
+      );
       if (found) return found;
+      if (this.closed && type !== "room_closed") {
+        fail(
+          `${this.label}: socket closed while waiting for ${type}; got [${this.messages.map((m) => m.type).join(", ")}]`,
+        );
+      }
       if (Date.now() - started > timeoutMs) {
         fail(
           `${this.label}: timeout waiting for ${type}; got [${this.messages.map((m) => m.type).join(", ")}]`,
@@ -140,21 +157,34 @@ const overall = setTimeout(
 );
 overall.unref?.();
 
-const host = new Client("host");
-const guest = new Client("guest");
+const admin = new Client("admin");
+const memberA = new Client("memberA");
+const memberB = new Client("memberB");
 
 try {
-  await host.open();
-  await guest.open();
+  await Promise.all([admin.open(), memberA.open(), memberB.open()]);
   ok(`connected ${WS_URL}`);
 
+  // 1. create -----------------------------------------------------------------
   const roomId = base32Encode(randomBytes(16));
-  host.send({ type: "hello", clientCaps: HOST_CAPS });
-  host.send({ type: "create", roomId, hostCaps: HOST_CAPS });
-  const created = await host.waitFor("created");
+  admin.send({ type: "hello", clientCaps: ADMIN_CAPS });
+  admin.send({
+    type: "create",
+    roomId,
+    caps: ADMIN_CAPS,
+    name: "审计管理员",
+  });
+  const created = await admin.waitFor("created");
   if (created.roomId !== roomId)
     fail(`created.roomId mismatch: ${String(created.roomId)}`);
-  ok(`created roomId=${roomId} code=${String(created.code)}`);
+  const adminId = String(created.selfId);
+  if (!adminId) fail("created.selfId missing");
+  const code = String(created.code);
+  if (!/^[0-9]{6}$/.test(code)) fail(`created.code invalid: ${code}`);
+  if (typeof created.rejoinToken !== "string" || created.rejoinToken === "")
+    fail("created.rejoinToken missing");
+  ok(`created roomId=${roomId} code=${code} adminId=${adminId}`);
+
   const turn = created.turn as
     | { uris?: string[]; username?: string; credential?: string; ttl?: number }
     | undefined;
@@ -166,50 +196,101 @@ try {
     ok("no turn credential (TURN_URIS unset on this server)");
   }
 
-  guest.send({ type: "hello", clientCaps: GUEST_CAPS });
-  guest.send({
+  // 2. two members join and are approved by the admin --------------------------
+  memberA.send({ type: "hello", clientCaps: MEMBER_CAPS });
+  memberA.send({
     type: "join",
     roomId,
-    guestCaps: GUEST_CAPS,
-    guestNonce: "audit-nonce-0123456789",
+    caps: MEMBER_CAPS,
+    nonce: "audit-nonce-aaaaaaaa",
   });
-  const joinRequest = await host.waitFor("join_request");
-  ok(`join_request guestId=${String(joinRequest.guestId)}`);
-
-  host.send({ type: "approve", guestId: joinRequest.guestId });
-  const [hostJoinOk, guestJoinOk] = await Promise.all([
-    host.waitFor("join_ok"),
-    guest.waitFor("join_ok"),
+  const requestA = await admin.waitFor("join_request");
+  const memberAId = String(requestA.memberId);
+  admin.send({ type: "approve", memberId: memberAId });
+  // The admin is not sent join_ok: it observes the approval through the members
+  // broadcast; only the joining member receives join_ok (docs/02 v2 §3.4).
+  const [adminMembersA, memberAJoinOk] = await Promise.all([
+    admin.waitFor("members", (m) =>
+      (m.members as Array<{ id: string }>).some(
+        (entry) => entry.id === memberAId,
+      ),
+    ),
+    memberA.waitFor("join_ok"),
   ]);
   ok(
-    `join_ok host↔guest peerCaps=${String(hostJoinOk.peerCaps?.constructor?.name ?? "object")}/${String((guestJoinOk.peerCaps as Caps | undefined)?.uaFamily)}`,
+    `member A approved (members=${String((adminMembersA.members as unknown[]).length)}, member selfId=${String(memberAJoinOk.selfId)})`,
   );
 
-  // A few messages in both directions, comparable to the real trickle-ICE traffic.
-  for (const seq of [1, 2, 3]) {
-    host.send({
-      type: "signal",
-      to: joinRequest.guestId,
-      payload: { k: "offer", sdp: `v=0\r\na=audit-host-${seq}\r\n` },
-    });
-    await guest.waitFor("signal");
-    guest.send({
-      type: "signal",
-      to: "host",
-      payload: { k: "answer", sdp: `v=0\r\na=audit-guest-${seq}\r\n` },
-    });
-    await host.waitFor("signal");
-  }
-  ok("signaled host→guest and guest→host (3 each)");
+  // profile rename -> the server rebroadcasts the member list (no storage).
+  memberA.send({ type: "profile", name: "审计成员 A" });
+  const renamed = await admin.waitFor("members", (m) =>
+    (m.members as Array<{ name: string }>).some(
+      (entry) => entry.name === "审计成员 A",
+    ),
+  );
+  ok(
+    `profile broadcast (${String((renamed.members as unknown[]).length)} members inc. admin)`,
+  );
 
-  host.send({ type: "close", roomId });
-  const closed = await guest.waitFor("room_closed");
-  ok(`room_closed reason=${String(closed.reason)}`);
+  memberB.send({ type: "hello", clientCaps: MEMBER_CAPS });
+  memberB.send({
+    type: "join",
+    roomId,
+    caps: MEMBER_CAPS,
+    nonce: "audit-nonce-bbbbbbbb",
+  });
+  const requestB = await admin.waitFor(
+    "join_request",
+    (m) => m.memberId !== memberAId,
+  );
+  const memberBId = String(requestB.memberId);
+  admin.send({ type: "approve", memberId: memberBId });
+  await admin.waitFor("members", (m) =>
+    (m.members as Array<{ id: string }>).some(
+      (entry) => entry.id === memberBId,
+    ),
+  );
+  ok(`second member approved (memberB id=${memberBId})`);
+
+  // 3. arbitrary-member signaling: admin→A, A→admin, A→B -----------------------
+  const signal = (from: Client, to: string, tag: string, kind: string) =>
+    from.send({
+      type: "signal",
+      to,
+      payload: { k: kind, sdp: `v=0\r\na=audit-${tag}\r\n` },
+    });
+  signal(admin, memberAId, "admin-a", "offer");
+  await memberA.waitFor(
+    "signal",
+    (m) =>
+      (m.payload as { sdp?: string }).sdp?.includes("audit-admin-a") === true,
+  );
+  signal(memberA, adminId, "a-admin", "answer");
+  await admin.waitFor(
+    "signal",
+    (m) =>
+      (m.payload as { sdp?: string }).sdp?.includes("audit-a-admin") === true,
+  );
+  signal(memberA, memberBId, "a-b", "offer");
+  await memberB.waitFor(
+    "signal",
+    (m) => (m.payload as { sdp?: string }).sdp?.includes("audit-a-b") === true,
+  );
+  ok("signaled admin→A, A→admin and A→B (arbitrary member routing)");
+
+  // 4. close: every member is told, room leaves memory -------------------------
+  admin.send({ type: "close", roomId });
+  const closedA = await memberA.waitFor("room_closed");
+  const closedB = await memberB.waitFor("room_closed");
+  if (closedA.reason !== "admin_close" || closedB.reason !== "admin_close")
+    fail(`room_closed reason mismatch: ${String(closedA.reason)}`);
+  ok(`room_closed reason=${String(closedA.reason)} (both members)`);
 } catch (error) {
   fail(error instanceof Error ? error.message : String(error));
 } finally {
-  host.close();
-  guest.close();
+  admin.close();
+  memberA.close();
+  memberB.close();
   clearTimeout(overall);
 }
 

@@ -1,23 +1,11 @@
-import { expect, test, type Page } from "@playwright/test";
-
-interface Snapshot {
-  phase: string;
-  code?: string;
-  guests: Array<{ id: string; status: string }>;
-  sas?: string[];
-  sasPending?: boolean;
-  error?: string;
-}
-
-function snapshot(page: Page): Promise<Snapshot> {
-  return page.evaluate(() => {
-    const hook = (
-      window as unknown as { __crossfile?: { snapshot?: () => Snapshot } }
-    ).__crossfile;
-    if (!hook?.snapshot) return { phase: "loading", guests: [] };
-    return hook.snapshot();
-  });
-}
+import { expect, test } from "@playwright/test";
+import {
+  createRoom,
+  joinByCode,
+  snapshot,
+  waitForSnapshot,
+  waitPending,
+} from "./support.js";
 
 /**
  * docs/02 §4.5: the 4-emoji SAS must be confirmed within 60 s. Both sides use a
@@ -26,38 +14,44 @@ function snapshot(page: Page): Promise<Snapshot> {
 test("SAS confirmation timeout aborts the pairing on both sides", async ({
   browser,
 }) => {
-  const hostContext = await browser.newContext();
-  const guestContext = await browser.newContext();
-  const host = await hostContext.newPage();
-  const guest = await guestContext.newPage();
+  const adminContext = await browser.newContext();
+  const memberContext = await browser.newContext();
+  const admin = await adminContext.newPage();
+  const member = await memberContext.newPage();
 
-  await host.goto("/?sasTimeoutMs=800");
-  await expect
-    .poll(async () => (await snapshot(host)).phase, { timeout: 30_000 })
-    .toBe("waiting");
-  const code = (await snapshot(host)).code!;
-  expect(code).toMatch(/^[0-9]{6}$/);
+  const created = await createRoom(admin, "sasTimeoutMs=800");
 
-  await guest.goto(`/j/${code}?debug=1&sasTimeoutMs=800`);
-  await expect
-    .poll(async () => (await snapshot(host)).guests.length, { timeout: 30_000 })
-    .toBe(1);
-  await host.getByTestId("approve").first().click();
-  await expect
-    .poll(async () => (await snapshot(guest)).sasPending, { timeout: 30_000 })
-    .toBe(true);
-  expect((await snapshot(guest)).sas).toHaveLength(4);
+  await joinByCode(member, created.code, "sasTimeoutMs=800");
+  await waitPending(admin);
+  await admin.getByTestId("approve").first().click();
+  await waitForSnapshot(
+    member,
+    (view) => view.sasPending === true,
+    30_000,
+    "member SAS",
+  );
+  expect((await snapshot(member)).sas).toHaveLength(4);
 
   // Nobody confirms: both sides must give up with an actionable message.
-  await expect
-    .poll(async () => (await snapshot(guest)).phase, { timeout: 20_000 })
-    .toBe("error");
-  expect((await snapshot(guest)).error ?? "").toMatch(/超时|安全码/);
-  await expect
-    .poll(async () => (await snapshot(host)).phase, { timeout: 20_000 })
-    .toBe("error");
-  expect((await snapshot(host)).error ?? "").toMatch(/超时|安全码/);
+  await waitForSnapshot(
+    member,
+    (view) => view.phase === "error",
+    20_000,
+    "member SAS timeout",
+  );
+  // The admin aborts and closes the room, so the member sees either the SAS hint
+  // (its own timer) or the room-closed message (the admin's close wins the race).
+  expect((await snapshot(member)).error ?? "").toMatch(
+    /超时|安全码|房间已结束/,
+  );
+  await waitForSnapshot(
+    admin,
+    (view) => view.phase === "error",
+    20_000,
+    "admin SAS timeout",
+  );
+  expect((await snapshot(admin)).error ?? "").toMatch(/超时|安全码/);
 
-  await hostContext.close();
-  await guestContext.close();
+  await adminContext.close();
+  await memberContext.close();
 });

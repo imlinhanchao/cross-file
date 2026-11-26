@@ -1,5 +1,5 @@
 /**
- * Instrumented M0 debug run (not part of CI): streams both pages' state while a
+ * Instrumented M0 debug run (v2, not part of CI): streams both pages' state while a
  * file moves end to end, so a hang or hash mismatch can be localised quickly.
  *
  * Usage: node scripts/debug-transfer.mjs [sizeMB]
@@ -19,33 +19,31 @@ const expected = createHash("sha256").update(bytes).digest("hex");
 console.log("expected sha256:", expected, "size:", bytes.length);
 
 const browser = await chromium.launch({ channel: "chrome" });
-const hostContext = await browser.newContext({
+const adminContext = await browser.newContext({
   ignoreHTTPSErrors: process.env.DEBUG_IGNORE_TLS === "1",
 });
-const guestContext = await browser.newContext({
+const memberContext = await browser.newContext({
   ignoreHTTPSErrors: process.env.DEBUG_IGNORE_TLS === "1",
 });
-const host = await hostContext.newPage();
-const guest = await guestContext.newPage();
+const admin = await adminContext.newPage();
+const member = await memberContext.newPage();
 
 const snap = (page) =>
   page.evaluate(() => {
     const state = window.__crossfile?.snapshot?.();
-    const extra = {
-      sha256: window.__crossfile?.sha256,
-      expected: window.__crossfile?.expected,
-      complete: window.__crossfile?.complete,
-    };
     return {
       phase: state?.phase,
-      guests: state?.guests?.map((g) => ({
-        id: g.id,
-        status: g.status,
-        path: g.path,
+      members: (state?.members ?? []).map((m) => ({
+        id: m.id,
+        admin: m.isAdmin,
+        state: m.state,
+        path: m.path,
       })),
       files: state?.files?.length,
+      incoming: state?.incoming?.files?.length,
       transfer: state?.transfer
         ? {
+            direction: state.transfer.direction,
             sent: state.transfer.sentBytes,
             total: state.transfer.totalBytes,
             path: state.transfer.path,
@@ -53,13 +51,12 @@ const snap = (page) =>
         : undefined,
       result: state?.result,
       error: state?.error,
-      extra,
     };
   });
 
 for (const [name, page] of [
-  ["host", host],
-  ["guest", guest],
+  ["admin", admin],
+  ["member", member],
 ]) {
   page.on("pageerror", (error) =>
     console.log(`[${name}] PAGEERROR`, String(error).slice(0, 400)),
@@ -77,32 +74,36 @@ for (const [name, page] of [
 
 const dump = async (label) => {
   console.log(`--- ${label}`);
-  console.log("host ", JSON.stringify(await snap(host)));
-  console.log("guest", JSON.stringify(await snap(guest)));
+  console.log("admin ", JSON.stringify(await snap(admin)));
+  console.log("member", JSON.stringify(await snap(member)));
 };
 
-await host.goto(BASE + "/" + (RELAY ? "?relay=1" : ""));
-await host.waitForFunction(
+// v2: `/room` creates the room.
+await admin.goto(BASE + "/room" + (RELAY ? "?relay=1" : ""));
+await admin.waitForFunction(
   () => window.__crossfile?.snapshot?.().phase === "waiting",
   null,
   { timeout: 30_000 },
 );
-const link = await host.evaluate(() => window.__crossfile.snapshot().link);
-const code = await host.evaluate(() => window.__crossfile.snapshot().code);
+const link = await admin.evaluate(() => window.__crossfile.snapshot().link);
+const code = await admin.evaluate(() => window.__crossfile.snapshot().code);
 console.log("room link:", link, "code:", code);
-await dump("host created");
+await dump("admin created");
 
-await guest.goto(RELAY ? link.replace("#", "?relay=1#") : link);
-await host.waitForFunction(
-  () => (window.__crossfile?.snapshot?.().guests ?? []).length === 1,
+await member.goto(RELAY ? link.replace("#", "?relay=1#") : link);
+await admin.waitForFunction(
+  () => (window.__crossfile?.snapshot?.().members ?? []).length === 2,
   null,
   { timeout: 30_000 },
 );
-await dump("guest joined (pending)");
+await dump("member joined (pending)");
 
-await host.getByTestId("approve").click();
-await host.waitForFunction(
-  () => window.__crossfile?.snapshot?.().guests?.[0]?.status === "joined",
+await admin.getByTestId("approve").click();
+await admin.waitForFunction(
+  () =>
+    (window.__crossfile?.snapshot?.().members ?? []).some(
+      (m) => !m.isAdmin && m.state === "joined",
+    ),
   null,
   { timeout: 30_000 },
 );
@@ -113,30 +114,30 @@ if (SIZE_MB > 40) {
   mkdirSync(dir, { recursive: true });
   const filePath = resolve(dir, `debug-${SIZE_MB}mb.bin`);
   writeFileSync(filePath, bytes);
-  await host.getByTestId("file-input").setInputFiles(filePath);
+  await admin.getByTestId("file-input").setInputFiles(filePath);
 } else {
-  await host.getByTestId("file-input").setInputFiles({
+  await admin.getByTestId("file-input").setInputFiles({
     name: `debug-${SIZE_MB}mb.bin`,
     mimeType: "application/octet-stream",
     buffer: bytes,
   });
 }
-await guest.waitForFunction(
-  () => (window.__crossfile?.snapshot?.().files ?? []).length === 1,
+await member.waitForFunction(
+  () => Boolean(window.__crossfile?.snapshot?.().incoming),
   null,
   { timeout: 30_000 },
 );
 await dump("manifest arrived");
 
-await guest.getByTestId("accept").click();
-console.log("guest accepted");
+await member.getByTestId("accept").click();
+console.log("member accepted");
 
 const started = Date.now();
 let last = "";
 for (;;) {
   await new Promise((r) => setTimeout(r, 500));
-  const state = await snap(guest);
-  const line = `[${((Date.now() - started) / 1000).toFixed(1)}s] guest phase=${state.phase} recv=${state.transfer?.sent ?? 0}/${state.transfer?.total ?? 0} err=${state.error ?? ""} hash=${state.extra?.sha256?.slice(0, 12) ?? ""} complete=${state.extra?.complete}`;
+  const state = await snap(member);
+  const line = `[${((Date.now() - started) / 1000).toFixed(1)}s] member phase=${state.phase} recv=${state.transfer?.sent ?? 0}/${state.transfer?.total ?? 0} err=${state.error ?? ""} hash=${state.result?.sha256?.slice(0, 12) ?? ""}`;
   if (line !== last) {
     console.log(line);
     last = line;
@@ -148,11 +149,13 @@ for (;;) {
   }
 }
 await dump("final");
-const guestHash = await guest.evaluate(() => window.__crossfile?.sha256);
+const memberHash = await member.evaluate(
+  () => window.__crossfile?.snapshot?.().result?.sha256,
+);
 console.log(
   "RESULT:",
-  guestHash === expected ? "PASS" : `FAIL (guest ${guestHash})`,
+  memberHash === expected ? "PASS" : `FAIL (member ${memberHash})`,
 );
 
 await browser.close();
-process.exit(guestHash === expected ? 0 : 1);
+process.exit(memberHash === expected ? 0 : 1);

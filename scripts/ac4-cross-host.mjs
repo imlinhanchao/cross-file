@@ -1,9 +1,9 @@
 /**
- * AC4 cross-machine host: create a room on the public dev origin, wait for the
- * remote guest, approve it, send a file and print both hashes.
+ * AC4 cross-machine admin: create a room on the public dev origin, wait for the
+ * remote member, approve it, send a file and print both hashes.
  *
  * Run: node scripts/ac4-cross-host.mjs [sizeMB]
- * The remote guest is driven separately (mac-mini, WebKit/Safari) — the join link
+ * The remote member is driven separately (mac-mini, WebKit/Safari) — the join link
  * is written to .cache/ac4-link.txt as soon as the room exists.
  */
 import { chromium } from "@playwright/test";
@@ -29,56 +29,56 @@ console.log(`file: ${fixture} (${SIZE} bytes)`);
 
 const browser = await chromium.launch({ channel: "chrome" });
 const context = await browser.newContext({ ignoreHTTPSErrors: true });
-const host = await context.newPage();
-host.on("pageerror", (error) =>
-  console.log("[host] PAGEERROR", String(error).slice(0, 300)),
+const admin = await context.newPage();
+admin.on("pageerror", (error) =>
+  console.log("[admin] PAGEERROR", String(error).slice(0, 300)),
 );
 
-await host.goto(`${BASE}/`);
-await host.waitForFunction(
+// v2: `/room` creates the room (the entry page is `/`).
+await admin.goto(`${BASE}/room`);
+await admin.waitForFunction(
   () => window.__crossfile?.snapshot?.().phase === "waiting",
   null,
   { timeout: 60_000 },
 );
-const link = await host.evaluate(() => window.__crossfile.snapshot().link);
+const link = await admin.evaluate(() => window.__crossfile.snapshot().link);
 writeFileSync(linkFile, link);
 console.log(`ROOM LINK: ${link}`);
-console.log("waiting for remote guest…");
+console.log("waiting for remote member…");
 
-await host.waitForFunction(
-  () => (window.__crossfile?.snapshot?.().guests ?? []).length >= 1,
+await admin.waitForFunction(
+  () => (window.__crossfile?.snapshot?.().members ?? []).length >= 2,
   null,
-  {
-    timeout: 600_000,
-  },
+  { timeout: 600_000 },
 );
-console.log("guest joined, approving");
-await host.getByTestId("approve").first().click();
-await host.waitForFunction(
+console.log("member joined, approving");
+await admin.getByTestId("approve").first().click();
+await admin.waitForFunction(
   () =>
-    window.__crossfile
-      ?.snapshot?.()
-      .guests?.some((guest) => guest.status === "joined"),
+    (window.__crossfile?.snapshot?.().members ?? []).some(
+      (member) => !member.isAdmin && member.state === "joined",
+    ),
   null,
   { timeout: 60_000 },
 );
 
 console.log("sending file");
-await host.getByTestId("file-input").setInputFiles(fixture);
+await admin.getByTestId("file-input").setInputFiles(fixture);
 
-// The remote guest accepts on its side; wait until this host reports the transfer done.
-await host.waitForFunction(
+// The remote member accepts on its side; wait until this admin reports the transfer done.
+await admin.waitForFunction(
   () => window.__crossfile?.snapshot?.().phase === "done",
   null,
   { timeout: 900_000 },
 );
-const result = await host.evaluate(() => window.__crossfile.snapshot().result);
-const guestInfo = await host.evaluate(
-  () => window.__crossfile.snapshot().guests,
+const result = await admin.evaluate(() => window.__crossfile.snapshot().result);
+const members = await admin.evaluate(
+  () => window.__crossfile.snapshot().members,
 );
+const peer = members.find((member) => !member.isAdmin);
 console.log(
-  `HOST DONE sha256=${result?.sha256} bytes=${result?.bytes} path=${guestInfo?.[0]?.path}`,
+  `ADMIN DONE sha256=${result?.sha256} bytes=${result?.bytes} path=${peer?.path}`,
 );
-console.log(`HOST HASH MATCHES EXPECTED: ${result?.sha256 === expected}`);
+console.log(`ADMIN HASH MATCHES EXPECTED: ${result?.sha256 === expected}`);
 
 await browser.close();

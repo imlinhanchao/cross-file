@@ -1,8 +1,17 @@
 import { expect, test } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import {
+  joinByLink,
+  snapshot,
+  waitForSnapshot,
+  waitIncoming,
+  waitOthersJoined,
+  waitPending,
+} from "./support.js";
 
 /**
- * Accessibility floor for the two main screens (docs/04 §13, WCAG 2.2 AA).
+ * Accessibility floor for the main screens (docs/04 §13, WCAG 2.2 AA):
+ * entry page, room page (both themes), member confirmation and the end-room dialog.
  * We fail on serious/critical violations only: cosmetic "best practice" rules are
  * reported in the HTML artifact instead of blocking.
  */
@@ -35,65 +44,59 @@ async function expectNoSeriousViolations(
   expect(blocking, `axe serious/critical violations on ${label}`).toEqual([]);
 }
 
-test("a11y: host room and guest confirmation have no serious axe violations", async ({
+test("a11y: entry, room, member confirmation and end-room dialog have no serious axe violations", async ({
   browser,
 }) => {
-  const hostContext = await browser.newContext();
-  const guestContext = await browser.newContext();
-  const host = await hostContext.newPage();
-  const guest = await guestContext.newPage();
+  const adminContext = await browser.newContext();
+  const memberContext = await browser.newContext();
+  const admin = await adminContext.newPage();
+  const member = await memberContext.newPage();
 
-  await host.goto("/");
-  await expect
-    .poll(() => host.evaluate(() => window.__crossfile?.snapshot?.().phase), {
-      timeout: 30_000,
-    })
-    .toBe("waiting");
-  await expectNoSeriousViolations(host, "host-room");
-  // The design system ships a dark theme; hold it to the same bar.
-  await host.evaluate(() => {
+  // 1. Entry page: create / join.
+  await admin.goto("/");
+  await expect(admin.getByTestId("create-room")).toBeVisible();
+  await expectNoSeriousViolations(admin, "entry");
+
+  // 2. Room page (admin, waiting for a member) in both themes.
+  await admin.goto("/room");
+  await waitForSnapshot(admin, (view) => view.phase === "waiting", 30_000);
+  await expectNoSeriousViolations(admin, "room-admin");
+  await admin.evaluate(() => {
     document.documentElement.dataset.theme = "dark";
   });
-  await expectNoSeriousViolations(host, "host-room-dark");
-  await host.evaluate(() => {
+  await expectNoSeriousViolations(admin, "room-admin-dark");
+  await admin.evaluate(() => {
     document.documentElement.dataset.theme = "light";
   });
 
-  const link = await host.evaluate(() => window.__crossfile.snapshot().link);
-  await guest.goto(link);
-  await expect
-    .poll(() =>
-      host.evaluate(() => window.__crossfile?.snapshot?.().guests?.length ?? 0),
-    )
-    .toBe(1);
-  await host.getByTestId("approve").first().click();
-  await host.getByTestId("file-input").setInputFiles({
+  // 3. Member confirmation card.
+  const link = (await snapshot(admin)).link as string;
+  await joinByLink(member, link);
+  await waitPending(admin);
+  await admin.getByTestId("approve").first().click();
+  await waitOthersJoined(admin, 1);
+
+  await admin.getByTestId("file-input").setInputFiles({
     name: "a11y.txt",
     mimeType: "text/plain",
     buffer: Buffer.from("hello crossfile"),
   });
-  await expect
-    .poll(
-      () =>
-        guest.evaluate(
-          () => window.__crossfile?.snapshot?.().files?.length ?? 0,
-        ),
-      { timeout: 30_000 },
-    )
-    .toBe(1);
-  await expectNoSeriousViolations(guest, "guest-confirm");
+  await admin.getByTestId("start-send").click();
+  await waitIncoming(member);
+  await expect(member.getByTestId("incoming-card")).toBeVisible();
+  await expectNoSeriousViolations(member, "member-confirm");
 
-  // The end-room dialog must also be accessible (focus moves into the dialog).
-  await host.getByRole("button", { name: "结束房间" }).click();
-  await expect(host.getByRole("dialog")).toBeVisible();
-  const focusedInDialog = await host.evaluate(() =>
+  // 4. The end-room dialog must be accessible (focus moves into the dialog).
+  await admin.getByRole("button", { name: "结束房间" }).click();
+  await expect(admin.getByRole("dialog")).toBeVisible();
+  const focusedInDialog = await admin.evaluate(() =>
     Boolean(document.activeElement?.closest('[role="dialog"]')),
   );
   expect(focusedInDialog).toBe(true);
-  await expectNoSeriousViolations(host, "end-room-dialog");
-  await host.keyboard.press("Escape");
-  await expect(host.getByRole("dialog")).toHaveCount(0);
+  await expectNoSeriousViolations(admin, "end-room-dialog");
+  await admin.keyboard.press("Escape");
+  await expect(admin.getByRole("dialog")).toHaveCount(0);
 
-  await hostContext.close();
-  await guestContext.close();
+  await adminContext.close();
+  await memberContext.close();
 });

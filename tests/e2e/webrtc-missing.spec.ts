@@ -17,6 +17,6 @@ test("preflight: a webview without WebRTC shows an honest blocking message", asy
   ).toBeVisible();
   await expect(page.getByText("请改用 Chrome / Edge / Safari")).toBeVisible();
   // No room is created and no failed handshake is attempted.
-  await expect(page.getByTestId("start-send")).toHaveCount(0);
+  await expect(page.getByTestId("create-room")).toHaveCount(0);
   await context.close();
 });

@@ -2,7 +2,11 @@ packages:
   - apps/*
   - packages/*
 
+# Build-script approvals for pnpm 12 (`pnpm approve-builds` writes this block).
+# electron-winstaller is only invoked when packaging a Windows installer, which neither CI nor
+# the Linux/macOS release flows do; denying it explicitly keeps `pnpm install --frozen-lockfile`
+# deterministic instead of failing with ERR_PNPM_IGNORED_BUILDS.
 allowBuilds:
   electron: true
-  electron-winstaller: set this to true or false
+  electron-winstaller: false
   esbuild: true

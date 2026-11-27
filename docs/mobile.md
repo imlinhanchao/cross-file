@@ -406,7 +406,28 @@ AC9 的手机侧仍缺一次真机（或用带 KVM 的机器/云端模拟器）�
 6. **`tauri android build` 在本沙箱不可用**（inotify），CI/其他机器需再验证一次；本机按 §2.4 等价流程出货。
 7. **JSON IPC 吞吐**：`save_write` 与桌面一样走 JSON 数字数组，500 MB 会有编码开销（`Array.from`）。
    手机 CPU/内存更紧，AC9 手机侧实测前建议评估加 raw 通道（Tauri 2 `Channel`/raw request）。
-8. **未签名**：debug 用 Gradle 默认调试签名；release 未配 keystore，`tauri android build` 的 release APK 不能直接分发。
+8. **签名**：debug 用 Gradle 默认调试签名；release 由 `gen/android/app/build.gradle.kts` 的 `signingConfigs.release` 从环境变量读取 release keystore（缺失时回退 debug 签名），CI 通过 GitHub Secrets 注入，详见下节「发布签名」。
+
+## 发布签名（release keystore）
+
+- **包名**：`org.hancel.file`（`apps/mobile/src-tauri/tauri.conf.json` 的 `identifier`、`gen/android` 的 `namespace`/`applicationId` 一致）。
+- **keystore**：只存在本地工作区 `.secrets/android-release.keystore`（gitignored）与 GitHub Secrets；alias `crossfile`，RSA 2048，10000 天。
+- **Gradle 读取的 4 个环境变量**（CI 里由 secrets 注入）：
+  `CROSSFILE_KEYSTORE_PATH`、`CROSSFILE_KEYSTORE_PASSWORD`、`CROSSFILE_KEY_ALIAS`、`CROSSFILE_KEY_PASSWORD`。
+- **GitHub Secrets**（release workflow 的 android job）：
+  `ANDROID_KEYSTORE_BASE64`（`base64 -w0 .secrets/android-release.keystore`）、`ANDROID_KEY_ALIAS`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_PASSWORD`。
+- **本地出 release APK**：
+  ```bash
+  source scripts/dev-env.sh
+  export RUSTUP_HOME=$PWD/.cache/rustup CARGO_HOME=$PWD/.cache/cargo-home
+  rustup target add aarch64-linux-android
+  export CROSSFILE_KEYSTORE_PATH=$PWD/.secrets/android-release.keystore
+  export CROSSFILE_KEYSTORE_PASSWORD=… CROSSFILE_KEY_ALIAS=crossfile CROSSFILE_KEY_PASSWORD=…
+  pnpm --filter @crossfile/web build
+  pnpm --filter @crossfile/mobile exec tauri android build --apk -t aarch64
+  # 产物：gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+  ```
+- 验证：`$ANDROID_HOME/build-tools/36.0.0/apksigner verify --print-certs <apk>`，`aapt2 dump badging` 应显示 `package: name='org.hancel.file'`、`versionName='<tag 版本>'`。
 9. **AGP 9 / Gradle 9 模板较新**：`gen/android` 是 Tauri CLI 2.12.6 生成的，Android Studio 版本过低会提示升级；
    模板警告 `testVariants/libraryVariants` 已废弃（Tauri 上游问题，不影响构建）。
 10. **未做单实例/深链**：`singleTask` 只保证分享复用 Activity；没有 `tauri-plugin-deep-link`。

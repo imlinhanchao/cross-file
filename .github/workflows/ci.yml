@@ -4,6 +4,8 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  # release.yml reuses the full gate suite before publishing a release.
+  workflow_call:
 
 jobs:
   gates:

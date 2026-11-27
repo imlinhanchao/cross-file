@@ -7,6 +7,8 @@
 
 **2026-11-26：任意互传阶段 1 已实现。** 房间模型从「发送方 + 接收方」改为「管理员 + 成员」，管理员与成员之间可以双向互传（成员之间互传留在阶段 2）；协议升 v2、不兼容 v1（旧页面会收到明确的 `VERSION_MISMATCH` 并提示刷新），Web 端 Host/Guest 两页合并为统一 Room 页。验收：`pnpm gate` 全绿（178 单测）、`pnpm e2e` 20 passed / 1 skipped（AC2 relay 需 TURN 环境）、AC10 双向 500 MB 哈希一致、零存储审计 PASS。生产实例：**https://file.time-pack.com**（GitHub Actions → PM2，部署与验收记录见 [docs/06-acceptance.md](docs/06-acceptance.md)）。决策见 [ADR 0010](docs/adr/0010-any-to-any-room.md)。
 
+**发布与下载：** GitHub Releases 提供服务器解压包 / 服务器单二进制、Linux AppImage、Windows MSI/EXE、macOS DMG、Android APK（`SHA256SUMS` 校验）；打 tag 即出 draft release，**发布 release 即部署生产**。流程见 [docs/release.md](docs/release.md)。
+
 ```bash
 pnpm install
 pnpm dev                   # 信令 :8788 + Web :5173（一起起）
@@ -55,7 +57,9 @@ E2E_NO_WS=1 E2E_BASE_URL=https://room.net.time-pack.com E2E_IGNORE_TLS=1 \
 | [docs/03-roadmap.md](docs/03-roadmap.md) | 仓库结构、技术栈、M0–M4 里程碑、测试矩阵、风险清单 |
 | [docs/04-design-system.md](docs/04-design-system.md) | 设计系统：设计意图、OKLCH token、排版、组件与状态、无障碍、平台适配、文案 |
 | [docs/deploy-official-instance.md](docs/deploy-official-instance.md) | 官方实例部署清单：前置条件、.env、反代、验收命令、运维边界、中继成本 |
-| [.github/workflows/deploy.yml](.github/workflows/deploy.yml) | 自动部署（无 Docker）：push 到 main → 门禁 → 打包 → scp → PM2 重载 + 健康检查 |
+| [docs/release.md](docs/release.md) | 发布流程：tag → draft release（server tarball/二进制、桌面、Android）→ 发布即部署 |
+| [.github/workflows/release.yml](.github/workflows/release.yml) | 打包：tag 驱动，构建全部产物 + SHA256SUMS，创建 draft release |
+| [.github/workflows/deploy.yml](.github/workflows/deploy.yml) | 部署：release published → 下载 release 资产 → scp → PM2 重载 + 健康检查 |
 | [docs/desktop.md](docs/desktop.md) | Tauri 2 桌面壳：依赖、开发/打包命令、原生写盘 IPC、关窗保护、菜单 |
 | [docs/mobile.md](docs/mobile.md) | Tauri 2 手机壳：Android 构建、原生写盘、前台保活、分享接收、限制 |
 | [design/](design/README.md) | 设计稿与出图流水线：6 个画面（统一 Room 页）、token、对比度校验、截图脚本 |

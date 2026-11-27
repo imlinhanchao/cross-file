@@ -420,20 +420,26 @@ INFO Total lost packets 0 (0.000000%), total send dropped 2 (16.666667%)
 
 ## GitHub Actions 自动部署（无 Docker：构建 → scp → PM2）
 
-适用于**服务器没有 Docker**、但有 Node.js 的情况。`.github/workflows/deploy.yml`：
+适用于**服务器没有 Docker**、但有 Node.js 的情况。发布与部署拆成两个 workflow：
 
-**触发**：push 到 `main`，或手动 `workflow_dispatch`；`concurrency` 防并发。
+**`.github/workflows/release.yml`（打包）**：push tag `v*`（或手动 `workflow_dispatch`）触发；跑门禁
+（lint/typecheck/单测/e2e/零存储）并校验 tag 与 6 个 manifest 的版本一致，然后构建全部产物：
+服务器解压包（`server.cjs + public + ecosystem + VERSION`）、服务器单二进制（Node SEA，Web 资源已嵌入）、
+Linux AppImage、Windows/macOS Tauri（无证书）、Android APK（release keystore 签名），最后创建
+**draft release** 并附 `SHA256SUMS`。产物清单见 `docs/release.md`。
 
-1. **build job**：`pnpm lint / typecheck / test` 门禁 → `vite build` 前端 → esbuild 打包
-   `infra/signaling/build/server.cjs`（单文件，含静态托管）→ 组装
-   `server.cjs + public/ + ecosystem.config.cjs + VERSION` → 打成 `crossfile-signaling.tar.gz`
-   并上传为 workflow artifact。
-2. **deploy job**（`environment: production`，可加人工审批）：
-   - SSH 建目录（`releases/<sha>`、`shared/`、`logs/`），检查 `shared/.env` 与 `pm2` 是否存在；
-   - `scp` 上传 tar 到 `releases/<sha>/`；
-   - SSH 解包 → 加载 `shared/.env` → `pm2 startOrReload releases/<sha>/ecosystem.config.cjs --update-env`
-     → `pm2 save` → 轮询 `http://127.0.0.1:${PORT}/`（默认 8788）直到 200，失败打印最近 40 行 PM2 日志并让 job 失败
-     → 更新 `current` 软链 → 可选 `PUBLIC_BASE_URL` 公网 smoke → 只保留最近 5 个 release。
+**`.github/workflows/deploy.yml`（部署）**：在 draft release 被 **Publish** 后触发（`release: published`），
+或手动 `workflow_dispatch` 指定 tag。它**不重新构建**，而是用 `gh release download` 下载该 release 的
+server tarball、校验 `SHA256SUMS`，然后：
+
+1. SSH 建目录（`releases/<tag>`、`shared/`、`logs/`），检查 `shared/.env` 与 `pm2` 是否存在；
+2. `scp` 上传 tarball → 解包 → 加载 `shared/.env` → `pm2 delete` + `pm2 start releases/<tag>/ecosystem.config.cjs`
+   （PM2 的 `startOrReload` 会沿用首次部署的 script path，所以这里用 delete+start 重新登记当前 release）
+   → `pm2 save` → 轮询 `http://127.0.0.1:${PORT}/`（默认 8788）直到 200；
+3. 更新 `current` 软链 → 可选 `PUBLIC_BASE_URL` 公网 smoke → 只保留最近 5 个 release。
+
+这样「发布的版本 = 线上跑的版本」；回滚只需重新部署旧 tag（手动跑 `deploy` 并输入旧 tag，或服务器上
+`pm2 start releases/<旧 tag>/ecosystem.config.cjs --update-env`）。
 
 ### 服务器一次性准备（只需要一次）
 

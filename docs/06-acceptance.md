@@ -117,7 +117,7 @@ bash tests/audit/zero-storage.sh --container   # 会重建镜像；SKIP_BUILD=1 
 | 项 | 值 / 证据 |
 |---|---|
 | 入口 | `https://file.time-pack.com`（DNS → 120.77.241.222；nginx 1.16.1 复用 `*.time-pack.com` 泛证书，2027-02-16 到期；80→443 跳转；HSTS / CSP / Referrer-Policy / X-Content-Type-Options / Permissions-Policy） |
-| 部署 | GitHub Actions `deploy`（build → scp → PM2）；push `master` 自动部署；`/var/www/rust/cross-file/releases/<sha>` + `current` 软链，保留最近 5 个 release |
+| 部署 | GitHub Actions `release`（tag → draft release）→ 发布 release 触发 `deploy`（下载 release 资产 → scp → PM2）；`/var/www/rust/cross-file/releases/<tag>` + `current` 软链，保留最近 5 个 release |
 | 进程 | PM2 `crossfile-signaling` online（Node 22.22.1；`HOST=127.0.0.1`、`PORT=8788`，只经 nginx 反代） |
 | 配置 | 服务器 `shared/.env`（`TURN_SECRET`、`TURN_URIS`、`PUBLIC_HOST`、`PORT`、`HOST`、`MAX_MEMBERS=2`），不进 release；`infra/.env` 模板已留档为 `.env.template.bak` |
 | TURN | coturn 4.5.2，`turn:file.time-pack.com:3478`（udp/tcp），`external-ip=120.77.241.222`，`no-tls/no-dtls`，日志 `/dev/shm/coturn.log`（tmpfs） |

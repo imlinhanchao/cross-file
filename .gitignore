@@ -13,6 +13,8 @@ build/
 # secrets / local config
 .env
 .env.local
+# release signing material (Android keystore etc.) — generated locally, never committed
+.secrets/
 
 # playwright browsers (installed into the workspace, see scripts/dev-env.sh)
 .cache/

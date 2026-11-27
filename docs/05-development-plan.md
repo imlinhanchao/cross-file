@@ -327,6 +327,8 @@ https://room.net.time-pack.com  --TLS-->  nginx (既有反代)  -->  Vite :5173
 - ✅ `bash tests/audit/zero-storage.sh --container` → RESULT PASS：只读 rootfs、非 root（1000:1000）、无 volume/mount、CapDrop ALL、no-new-privileges、健康检查、同一 8 步 v2 会话、容器内写盘 EROFS、`down -v` 干净。本机沙箱需 `DOCKER_BUILDKIT=0`（buildx 活动文件只读）；构建需 Dockerfile 的 `--ignore-scripts`（见偏差记录）。
 - ✅ `pnpm build`（Web 生产构建 465 kB / gzip 145 kB）。
 
+**发布流水线（2026-11-27）**：新增 `.github/workflows/release.yml`（tag 驱动：门禁 + server tarball / SEA 单二进制 + Linux AppImage + Windows/macOS Tauri 无证书 + Android 签名 APK → draft release + SHA256SUMS）；`deploy.yml` 改为 `release: published` 触发、下载 release 资产部署；新增 `scripts/check-version.mjs`（tag 与 6 个 manifest 版本一致）与 `docs/release.md`。
+
 **偏差记录（2026-11-26）**
 - **AC6 断言调整**：v2 修订 D9 后「不同对可并发、同一对串行」，原「guest1 完成前 guest2 不开始」不再成立；同对串行改由 AC11 覆盖，AC6 只断言矩阵与两人哈希一致。
 - **AC12b 暴露 core bug 并已修**：`waitForCapacity()` 在已关闭 data channel 上死循环（`bufferedAmount` 不下降）导致发送方重建后永久卡 paused；`waitForDrain` 监听 `close`、`waitForCapacity`/`sendFile` 关闭即抛错，发送循环在新通道重试。

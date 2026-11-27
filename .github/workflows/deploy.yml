@@ -1,86 +1,62 @@
 name: deploy
 
-# Build → scp → pm2. For servers without Docker.
+# Production deploy from a published GitHub Release (no Docker: tarball → scp → PM2).
 #
-# Push to main (or run manually) builds the web app and the bundled signaling server,
-# packs a release tarball, uploads it over SSH and reloads a PM2 process. The server
-# keeps its own shared/.env (TURN_SECRET etc.); this workflow never writes secrets to
-# disk there.
+# release.yml builds the artifacts and opens a draft release; publishing that release runs this
+# workflow, which downloads the server tarball asset and deploys exactly the bytes that were
+# released. The workflow never builds anything, so "deployed version == released version".
+#
+# Manual redeploy: run this workflow with the tag of an existing release.
 #
 # Required repository secrets:
 #   DEPLOY_HOST        server hostname or IP
 #   DEPLOY_USER        ssh user (owns the deploy directory)
 #   DEPLOY_SSH_KEY     private key for that user (ed25519 recommended)
-#   DEPLOY_PATH        absolute path, e.g. /srv/crossfile
+#   DEPLOY_PATH        absolute path, e.g. /var/www/rust/cross-file
 # Optional:
 #   DEPLOY_PORT        ssh port (default 22)
-#   PUBLIC_BASE_URL    e.g. https://room.example.com — smoke-tested after reload
+#   PUBLIC_BASE_URL    e.g. https://file.time-pack.com — smoke-tested after reload
 
 on:
-  push:
-    branches: [main, master]
+  release:
+    types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to deploy (e.g. v0.1.0)"
+        required: true
 
 concurrency:
   group: deploy-production
   cancel-in-progress: false
 
 jobs:
-  build:
-    name: build release tarball
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: corepack enable
-      - run: pnpm install --frozen-lockfile
-
-      # Cheap deploy gate; the full matrix lives in ci.yml.
-      - run: pnpm lint && pnpm typecheck && pnpm test
-
-      - name: build web app
-        run: pnpm --filter @crossfile/web build
-
-      - name: bundle signaling server
-        run: node infra/signaling/build.mjs .
-
-      - name: assemble release
-        shell: bash
-        run: |
-          rm -rf release
-          mkdir -p release
-          cp infra/signaling/build/server.cjs release/server.cjs
-          cp -r apps/web/dist release/public
-          cp infra/pm2/ecosystem.config.cjs release/ecosystem.config.cjs
-          printf 'commit=%s\nbuilt=%s\n' "$GITHUB_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > release/VERSION
-          tar -czf crossfile-signaling.tar.gz -C release .
-          ls -lh crossfile-signaling.tar.gz
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: crossfile-signaling
-          path: crossfile-signaling.tar.gz
-          retention-days: 7
-
   deploy:
-    name: upload & pm2 reload
-    needs: build
+    name: download release & pm2 reload
     runs-on: ubuntu-latest
-    # Add required reviewers under Settings → Environments → production if wanted.
     environment: production
+    env:
+      RELEASE_ID: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: crossfile-signaling
+      - name: download server tarball from the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          gh release download "$RELEASE_ID" --repo "$GITHUB_REPOSITORY" \
+            --pattern "crossfile-signaling-*-linux-x64.tar.gz" --dir release
+          gh release download "$RELEASE_ID" --repo "$GITHUB_REPOSITORY" \
+            --pattern "SHA256SUMS" --dir release
+          cd release
+          sha256sum -c SHA256SUMS --ignore-missing
+          ls -lh
 
       - name: prepare server directories
         uses: appleboy/ssh-action@v1.2.0
         env:
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-          RELEASE_ID: ${{ github.sha }}
+          RELEASE_ID: ${{ env.RELEASE_ID }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
@@ -106,15 +82,15 @@ jobs:
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_PORT || 22 }}
-          source: crossfile-signaling.tar.gz
-          target: ${{ secrets.DEPLOY_PATH }}/releases/${{ github.sha }}
+          source: release/crossfile-signaling-*-linux-x64.tar.gz
+          target: ${{ secrets.DEPLOY_PATH }}/releases/${{ env.RELEASE_ID }}
           overwrite: true
 
       - name: extract, reload pm2 and health check
         uses: appleboy/ssh-action@v1.2.0
         env:
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-          RELEASE_ID: ${{ github.sha }}
+          RELEASE_ID: ${{ env.RELEASE_ID }}
           PUBLIC_BASE_URL: ${{ secrets.PUBLIC_BASE_URL }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
@@ -130,8 +106,10 @@ jobs:
             ROOT="$DEPLOY_PATH"
             RELEASE="$ROOT/releases/$RELEASE_ID"
 
-            tar -xzf "$RELEASE/crossfile-signaling.tar.gz" -C "$RELEASE"
-            rm -f "$RELEASE/crossfile-signaling.tar.gz"
+            # scp lands the tarball inside the release directory.
+            TARBALL=$(ls "$RELEASE"/crossfile-signaling-*-linux-x64.tar.gz | head -1)
+            tar -xzf "$TARBALL" -C "$RELEASE"
+            rm -f "$TARBALL"
 
             # Secrets/config live only on the server.
             set -a
@@ -139,9 +117,9 @@ jobs:
             set +a
             export PM2_LOG_DIR="$ROOT/logs"
 
-            # `startOrReload` matches the app by name and keeps the script path from the
-            # first deploy, so a later release could still point at a directory that the
-            # retention step has deleted. Delete + start re-registers the current release.
+            # `startOrReload` keeps the script path from the first deploy, so a later release
+            # could still point at a directory that the retention step has deleted. Delete +
+            # start re-registers the release that was just unpacked.
             pm2 delete crossfile-signaling >/dev/null 2>&1 || true
             pm2 start "$RELEASE/ecosystem.config.cjs" --update-env
             pm2 save
@@ -171,4 +149,4 @@ jobs:
 
             # Keep the five newest releases for rollback; drop older ones.
             ls -1dt "$ROOT"/releases/*/ 2>/dev/null | tail -n +6 | xargs -r rm -rf
-            echo "deployed $RELEASE to pm2 (port $PORT)"
+            echo "deployed $RELEASE_ID to pm2 (port $PORT)"

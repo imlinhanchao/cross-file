@@ -368,3 +368,10 @@ agent 沙箱内窗口无法创建（MESA/ZINK + Wayland socket 受限），这�
 - 传输标志：开始/结束/暂停时调用 `set_transfer_active`，与 Rust 的 `AtomicBool` 对应。
 - 信令地址：解析顺序 `window.__CROSSFILE_SIGNALING_URL__` → `localStorage["crossfile.signalingUrl"]` → 桌面默认 `ws://127.0.0.1:8788/v1/ws` → 同源。自托管实例可先写 localStorage 过渡，正式设置页属 M4。
 - 根脚本：`pnpm build` 只构建 Web；桌面用 `pnpm --filter @crossfile/desktop build`（或 `build:nobundle`）。
+
+## 发布产物与默认实例
+
+GitHub Releases 提供桌面安装包（见 `docs/release.md`）：Linux `CrossFile-<version>-x86_64.AppImage`（Electron）、
+Windows `CrossFile_<version>_x64_en-US.msi` / `-setup.exe`（Tauri，未签名）、macOS `CrossFile_<version>_universal.dmg`
+（Tauri universal，未签名/未公证）。桌面壳默认连接官方实例 `https://file.time-pack.com`；自托管可用
+`CROSSFILE_URL`（Electron）或应用内设置/菜单（Tauri）覆盖。

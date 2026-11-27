@@ -291,8 +291,29 @@ jobs:
           mkdir -p .secrets
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$CROSSFILE_KEYSTORE_PATH"
           chmod 600 "$CROSSFILE_KEYSTORE_PATH"
+      - name: require signing secrets
+        run: |
+          set -euo pipefail
+          test -n "${CROSSFILE_KEYSTORE_PASSWORD:-}" || {
+            echo "ANDROID_KEYSTORE_PASSWORD secret is not set; refusing to build a debug-signed APK" >&2
+            exit 1
+          }
+          test -s "$CROSSFILE_KEYSTORE_PATH" || {
+            echo "keystore missing at $CROSSFILE_KEYSTORE_PATH" >&2
+            exit 1
+          }
       - name: build signed APK
         run: pnpm --filter @crossfile/mobile exec tauri android build --apk --target aarch64
+      - name: verify release signature
+        run: |
+          set -euo pipefail
+          APK=$(find apps/mobile/src-tauri/gen/android/app/build/outputs/apk             -path '*release*' -name '*.apk' | head -1)
+          test -n "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$APK" \
+            | grep -q "CN=CrossFile" || {
+            echo "APK is not signed with the CrossFile release certificate" >&2
+            exit 1
+          }
       - name: collect APK
         env:
           VERSION: ${{ needs.meta.outputs.version }}

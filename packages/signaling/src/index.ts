@@ -6,6 +6,9 @@
  * ADR 0010 (admin + members, v2).
  */
 import { createSignalingServer as create } from "./server.js";
+import type { StaticSource } from "./static.js";
+
+export type { StaticSource } from "./static.js";
 
 export interface TurnOptions {
   /** coturn URIs, e.g. ["turn:turn.example.org:3478?transport=udp"]. */
@@ -48,6 +51,12 @@ export interface SignalingServerOptions {
    * serves the frontend and /v1/ws on one origin (docs/02 §7, ADR 0001).
    */
   staticDir?: string;
+  /**
+   * Embedded web app for the SEA single binary (built with `node --experimental-sea-config`
+   * assets). Mutually exclusive with {@link staticDir}; the source is read-only and served
+   * from memory, so the zero-storage promise is unchanged.
+   */
+  staticAssets?: StaticSource;
 }
 
 export interface SignalingServer {

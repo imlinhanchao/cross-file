@@ -46,7 +46,11 @@ import {
   type RoomRecord,
 } from "./rooms.js";
 import { ShortCodeStore } from "./shortcode.js";
-import { createStaticHandler } from "./static.js";
+import {
+  createStaticHandler,
+  createStaticHandlerFromSource,
+  type StaticHandler,
+} from "./static.js";
 import { issueTurnCredential } from "./turn.js";
 
 const WS_PATH = "/v1/ws";
@@ -125,6 +129,8 @@ function createRejoinToken(): string {
 export function createSignalingServer(
   options: SignalingServerOptions = {},
 ): SignalingServer {
+  if (options.staticDir && options.staticAssets)
+    throw new Error("staticDir and staticAssets are mutually exclusive");
   const listenPort = options.port ?? DEFAULT_PORT;
   const listenHost = options.host ?? DEFAULT_HOST;
   const maxMembers = options.maxMembers ?? options.maxGuests ?? MAX_MEMBERS;
@@ -144,8 +150,7 @@ export function createSignalingServer(
   const connections = new Map<WebSocket, ConnectionState>();
 
   let httpServer: HttpServer | null = null;
-  let staticHandler: Awaited<ReturnType<typeof createStaticHandler>> | null =
-    null;
+  let staticHandler: StaticHandler | null = null;
   let socketServer: WebSocketServer | null = null;
   let sweepTimer: ReturnType<typeof setInterval> | null = null;
   let keepAliveTimer: ReturnType<typeof setInterval> | null = null;
@@ -1015,7 +1020,12 @@ export function createSignalingServer(
 
   async function start(): Promise<{ port: number }> {
     if (httpServer) return { port: activePort };
-    if (options?.staticDir) {
+    if (options?.staticAssets) {
+      // SEA single binary: the web app is embedded (docs/02 §7).
+      staticHandler = createStaticHandlerFromSource(options.staticAssets);
+      if (!staticHandler.ready)
+        logError("static", new Error("embedded assets lack index.html"));
+    } else if (options?.staticDir) {
       staticHandler = await createStaticHandler(options.staticDir);
       if (!staticHandler.ready)
         logError("static", new Error(`no index.html in ${options.staticDir}`));

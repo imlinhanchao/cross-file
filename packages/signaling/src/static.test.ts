@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createSignalingServer, type SignalingServer } from "./index.js";
+import { createMemorySource } from "./static.js";
 
 const INDEX = "<!doctype html><title>CrossFile</title><div id=root></div>";
 const ASSET = "console.log('app');";
@@ -100,5 +101,59 @@ describe("static hosting disabled", () => {
     const response = await fetch(`http://127.0.0.1:${port}/`);
     expect(response.status).toBe(404);
     await server.stop();
+  });
+});
+
+describe("static hosting from an in-memory source (SEA single binary)", () => {
+  const files = new Map<string, Uint8Array>([
+    ["index.html", Buffer.from(INDEX)],
+    ["assets/app.js", Buffer.from(ASSET)],
+  ]);
+
+  it("serves index, hashed assets and SPA routes without touching disk", async () => {
+    const server = createSignalingServer({
+      port: 0,
+      staticAssets: createMemorySource(files),
+    });
+    const { port } = await server.start();
+    const base = `http://127.0.0.1:${port}`;
+    try {
+      const index = await fetch(`${base}/`);
+      expect(index.status).toBe(200);
+      expect(index.headers.get("content-type")).toContain("text/html");
+      expect(await index.text()).toContain("CrossFile");
+
+      const asset = await fetch(`${base}/assets/app.js`);
+      expect(asset.status).toBe(200);
+      expect(asset.headers.get("content-type")).toContain("text/javascript");
+      expect(asset.headers.get("cache-control")).toContain("immutable");
+      expect(await asset.text()).toBe(ASSET);
+
+      const spa = await fetch(`${base}/r/abcdefghijklmnopqrstuvwxyz`);
+      expect(spa.status).toBe(200);
+      expect(await spa.text()).toContain("<title>CrossFile</title>");
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("stays a quiet 404 server when the embedded source has no index.html", async () => {
+    const server = createSignalingServer({
+      port: 0,
+      staticAssets: createMemorySource(new Map()),
+    });
+    const { port } = await server.start();
+    const response = await fetch(`http://127.0.0.1:${port}/`);
+    expect(response.status).toBe(404);
+    await server.stop();
+  });
+
+  it("rejects staticDir and staticAssets together", () => {
+    expect(() =>
+      createSignalingServer({
+        staticDir: "/tmp/unused",
+        staticAssets: createMemorySource(files),
+      }),
+    ).toThrow(/mutually exclusive/);
   });
 });

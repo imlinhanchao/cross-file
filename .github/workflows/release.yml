@@ -79,7 +79,7 @@ jobs:
 
   web:
     name: build web
-    needs: verify
+    needs: [meta, verify]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -92,7 +92,10 @@ jobs:
       - name: package web dist
         env:
           VERSION: ${{ needs.meta.outputs.version }}
-        run: tar -czf "crossfile-web-${VERSION}-dist.tar.gz" -C apps/web/dist .
+        run: |
+          set -euo pipefail
+          test -n "$VERSION"
+          tar -czf "crossfile-web-${VERSION}-dist.tar.gz" -C apps/web/dist .
       - uses: actions/upload-artifact@v4
         with:
           name: web-dist

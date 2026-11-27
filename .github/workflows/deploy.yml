@@ -18,7 +18,7 @@ name: deploy
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   workflow_dispatch:
 
 concurrency:
@@ -89,6 +89,8 @@ jobs:
           envs: DEPLOY_PATH,RELEASE_ID
           script: |
             set -euo pipefail
+            # appleboy/ssh-action runs a non-login shell: load nvm so `pm2` is on PATH.
+            source ~/.profile
             mkdir -p "$DEPLOY_PATH/releases/$RELEASE_ID" "$DEPLOY_PATH/shared" "$DEPLOY_PATH/logs"
             if [ ! -f "$DEPLOY_PATH/shared/.env" ]; then
               echo "missing $DEPLOY_PATH/shared/.env on the server" >&2
@@ -123,6 +125,8 @@ jobs:
           envs: DEPLOY_PATH,RELEASE_ID,PUBLIC_BASE_URL
           script: |
             set -euo pipefail
+            # appleboy/ssh-action runs a non-login shell: load nvm so `pm2` is on PATH.
+            source ~/.profile
             ROOT="$DEPLOY_PATH"
             RELEASE="$ROOT/releases/$RELEASE_ID"
 

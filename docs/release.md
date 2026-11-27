@@ -56,7 +56,8 @@ iOS 暂不打包（需要 Apple 开发者账号与签名/TestFlight 流程）。
 | `ANDROID_KEY_PASSWORD` | key 密码 | ✅ |
 
 keystore 只存在本地工作区 `.secrets/android-release.keystore`（gitignored）与 GitHub Secrets，不进仓库。
-本地生成/更新与 Android 签名细节见 `docs/mobile.md` §发布签名。
+本地生成/更新与 Android 签名细节见 `docs/mobile.md` §发布签名。**缺少这 4 个 secret 时 release workflow 会直接失败**，
+不会把 debug 签名的 APK 发出去（job 会校验 APK 证书为 `CN=CrossFile`）。
 
 ## 5. 签名与分发说明
 

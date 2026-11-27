@@ -14,16 +14,44 @@ val tauriProperties = Properties().apply {
     }
 }
 
+// Release signing for CI/self-hosted builds (docs/mobile.md). The release keystore is NOT in
+// the repository; it arrives through four environment variables:
+//   CROSSFILE_KEYSTORE_PATH / CROSSFILE_KEYSTORE_PASSWORD / CROSSFILE_KEY_ALIAS / CROSSFILE_KEY_PASSWORD
+// When they are absent (local dev), `assembleRelease` still works by falling back to the debug
+// signing config — that APK is installable for testing but must NOT be distributed.
+val releaseKeystorePath = System.getenv("CROSSFILE_KEYSTORE_PATH")?.takeIf { it.isNotBlank() }
+val releaseKeystorePassword =
+    System.getenv("CROSSFILE_KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() }
+val releaseKeyAlias = System.getenv("CROSSFILE_KEY_ALIAS")?.takeIf { it.isNotBlank() }
+val releaseKeyPassword = System.getenv("CROSSFILE_KEY_PASSWORD")?.takeIf { it.isNotBlank() }
+val hasReleaseSigning =
+    releaseKeystorePath != null &&
+        releaseKeystorePassword != null &&
+        releaseKeyAlias != null &&
+        releaseKeyPassword != null
+
 android {
-    compileSdk = 37
-    namespace = "com.crossfile.mobile"
+    compileSdk = 36
+    // Pinned so CI only needs platforms;android-36 + build-tools;36.0.0 (no preview 37 package).
+    buildToolsVersion = "36.0.0"
+    namespace = "org.hancel.file"
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
-        applicationId = "com.crossfile.mobile"
+        applicationId = "org.hancel.file"
         minSdk = 24
-        targetSdk = 37
+        targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+    }
+    signingConfigs {
+        create("release") {
+            if (hasReleaseSigning && releaseKeystorePath != null) {
+                storeFile = file(releaseKeystorePath)
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
     }
     buildTypes {
         getByName("debug") {
@@ -42,6 +70,9 @@ android {
             optimization {
                enable = true
             }
+            signingConfig =
+                if (hasReleaseSigning) signingConfigs.getByName("release")
+                else signingConfigs.getByName("debug")
             proguardFiles(
                 *fileTree(".") {
                   include("**/*.pro")

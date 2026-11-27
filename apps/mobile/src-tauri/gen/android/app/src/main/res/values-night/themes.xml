@@ -1,6 +1,6 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
-    <style name="Theme.crossfile_mobile" parent="Theme.Material3.DayNight.NoActionBar">
+    <style name="Theme.org_hancel_file" parent="Theme.Material3.DayNight.NoActionBar">
         <!-- Customize your theme here. -->
     </style>
 </resources>

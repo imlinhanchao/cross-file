@@ -30,7 +30,7 @@ use tauri::{Manager, State, Webview};
 
 /// Self-hosted / official instance used until the settings page lands (M4).
 /// Overridable at build/run time through `CROSSFILE_SIGNALING_URL`.
-const DEFAULT_SIGNALING_URL: &str = "wss://room.net.time-pack.com/v1/ws";
+const DEFAULT_SIGNALING_URL: &str = "wss://file.time-pack.com/v1/ws";
 
 /// Name of the sub-directory the receiver writes into inside the app sandbox.
 const SAVE_SUBDIR: &str = "downloads";

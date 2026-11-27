@@ -370,7 +370,7 @@ window.__CROSSFILE_NATIVE__ = true                       // 能力包走 native 
 window.__CROSSFILE_SIGNALING_URL__ ||= 'wss://room.net.time-pack.com/v1/ws'
 ```
 
-- 默认值 `wss://room.net.time-pack.com/v1/ws`（官方实例）；构建/运行时可被环境变量 `CROSSFILE_SIGNALING_URL` 覆盖
+- 默认值 `wss://file.time-pack.com/v1/ws`（官方实例）；构建/运行时可被环境变量 `CROSSFILE_SIGNALING_URL` 覆盖
   （`std::env::var`，构建期 env 会进二进制，适合自托管打包）。
 - 注入时机在 Web 读取之前（读发生在建/加房时，不是模块加载时），所以**不需要改 `apps/web`**。
 - 另提供 `get_shell_config()` 返回 `{shell:"mobile", platform:"android"|"ios", signalingUrl, saveRoot, saveStrategy:"native", version}`，

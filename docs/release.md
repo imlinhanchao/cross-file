@@ -157,4 +157,4 @@ bash tests/audit/zero-storage.sh --go          # strace：0 写盘 / 0 DB / 1 �
 `appleboy/scp-action` 上传 `source: release/crossfile-signaling-*.tar.gz` 时保留了 `release/` 前缀，tarball 落到
 `releases/<tag>/release/`，而解压步骤只在 `releases/<tag>/` 下找 → `set -e` 退出，PM2 未被触碰（生产仍是旧版本，
 安全失败但没部署）。修复：scp-action 加 `strip_components: 1`，解压步骤用 `find -maxdepth 2` 兜底并清理嵌套目录。
-同版本重跑 `deploy` 工作流即可复验。
+同版本重跑 `deploy` 工作流即可复验——v0.2.0 修复后重跑（run 45981294402）全绿：tarball 直接落在 `releases/v0.2.0/`、解压后目录只有 `crossfile-signaling` + `ecosystem.config.cjs` + `VERSION`、PM2 重启健康检查通过、生产 AC10/AC2 复跑通过。

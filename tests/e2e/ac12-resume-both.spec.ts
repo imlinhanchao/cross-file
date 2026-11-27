@@ -99,12 +99,22 @@ test("AC12a: admin is the sender; a forced drop resumes from the bitmap", async 
   // The sender resumes from the bitmap and may reach "done" before a poll observes the
   // transient paused phase on slower runners; the resumed transfer and matching hashes
   // below are the real assertion (AC12a keeps the strict both-sides-paused check).
-  await waitForSnapshot(
-    member,
-    (view) => view.phase === "paused" || view.phase === "done",
-    30_000,
-    "member paused or done",
-  );
+  try {
+    await waitForSnapshot(
+      member,
+      (view) => view.phase === "paused" || view.phase === "done",
+      30_000,
+      "member paused or done",
+    );
+  } catch (error) {
+    const [adminView, memberView] = [
+      await snapshot(admin),
+      await snapshot(member),
+    ];
+    throw new Error(
+      `AC12b stuck; admin=${JSON.stringify(adminView)}; member=${JSON.stringify(memberView)}; errors=${JSON.stringify(pageErrors)}`,
+    );
+  }
   await expectHashes([admin, member], expected, 240_000);
 
   await adminContext.close();
@@ -125,6 +135,19 @@ test("AC12b: admin is the receiver; a forced drop resumes from the bitmap", asyn
   const expected = createHash("sha256").update(bytes).digest("hex");
   const { adminContext, memberContext, admin, member } =
     await openPair(browser);
+  const pageErrors: string[] = [];
+  for (const [name, page] of [
+    ["admin", admin],
+    ["member", member],
+  ] as const) {
+    page.on("pageerror", (error) =>
+      pageErrors.push(`${name}: ${String(error)}`),
+    );
+    page.on("console", (message) => {
+      if (message.type() === "error")
+        pageErrors.push(`${name} console: ${message.text()}`);
+    });
+  }
 
   // The member sends: the admin receives and accepts.
   await pickFiles(
@@ -143,12 +166,22 @@ test("AC12b: admin is the receiver; a forced drop resumes from the bitmap", asyn
   // The sender resumes from the bitmap and may reach "done" before a poll observes the
   // transient paused phase on slower runners; the resumed transfer and matching hashes
   // below are the real assertion (AC12a keeps the strict both-sides-paused check).
-  await waitForSnapshot(
-    member,
-    (view) => view.phase === "paused" || view.phase === "done",
-    30_000,
-    "member paused or done",
-  );
+  try {
+    await waitForSnapshot(
+      member,
+      (view) => view.phase === "paused" || view.phase === "done",
+      30_000,
+      "member paused or done",
+    );
+  } catch (error) {
+    const [adminView, memberView] = [
+      await snapshot(admin),
+      await snapshot(member),
+    ];
+    throw new Error(
+      `AC12b stuck; admin=${JSON.stringify(adminView)}; member=${JSON.stringify(memberView)}; errors=${JSON.stringify(pageErrors)}`,
+    );
+  }
   await expectHashes([admin, member], expected, 240_000);
 
   await adminContext.close();

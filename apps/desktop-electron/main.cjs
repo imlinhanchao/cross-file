@@ -11,11 +11,11 @@ const { app, BrowserWindow, ipcMain, Menu, shell } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const APP_URL = process.env.CROSSFILE_URL || "http://127.0.0.1:8788";
+const APP_URL = process.env.CROSSFILE_URL || "https://file.time-pack.com";
 const PRIVACY_URL =
-  process.env.CROSSFILE_PRIVACY_URL || "https://room.net.time-pack.com/privacy";
+  process.env.CROSSFILE_PRIVACY_URL || "https://file.time-pack.com/privacy";
 const HOMEPAGE_URL =
-  process.env.CROSSFILE_HOMEPAGE_URL || "https://room.net.time-pack.com/";
+  process.env.CROSSFILE_HOMEPAGE_URL || "https://file.time-pack.com/";
 
 // The agent/CI sandbox cannot use Chromium's setuid sandbox; harmless for normal runs.
 app.commandLine.appendSwitch("no-sandbox");

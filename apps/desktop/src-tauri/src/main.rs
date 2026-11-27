@@ -22,9 +22,9 @@ use tauri::{Emitter, Manager, State, Window, WindowEvent};
 use tauri_plugin_opener::OpenerExt;
 
 /// Official instance doubles as the project home until a marketing site exists.
-const DEFAULT_HOMEPAGE_URL: &str = "https://room.net.time-pack.com/";
+const DEFAULT_HOMEPAGE_URL: &str = "https://file.time-pack.com/";
 /// The privacy statement is a route in the web app (`apps/web/src/pages/PrivacyPage.tsx`).
-const DEFAULT_PRIVACY_URL: &str = "https://room.net.time-pack.com/privacy";
+const DEFAULT_PRIVACY_URL: &str = "https://file.time-pack.com/privacy";
 
 /// Default signaling endpoint for a packaged desktop build; overridable at runtime
 /// with `CROSSFILE_SIGNALING_URL` (self-hosted instance, docs/02 §7).

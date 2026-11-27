@@ -7,7 +7,7 @@
 
 | 角色 | 机器 | 说明 |
 |---|---|---|
-| 发送方 / 服务端 | Linux（hancel-service） | Node 22.22.1、Chrome 157.0.8103.38、Docker 29.4、16C/28G |
+| 发送方 / 服务端 | Linux（hancel-service） | Go 1.27（本地）/ 1.23（CI）、Chrome 157.0.8103.38、Docker 29.4、16C/28G；2026-11-27 起服务端为 Go 单二进制 |
 | 接收方 | mac-mini | macOS 27.0.1、Safari 27.0.1、iOS 27.2 模拟器、Xcode 27.2 |
 | 开发入口 | `https://room.net.time-pack.com` | 既有反代 → Vite :5173 → `/v1/ws` → signaling :8788 |
 | TURN | 本机 coturn（Docker） | `turn:192.168.50.200:3478`，`infra/docker-compose.yml` 桥接 + `TURN_EXTERNAL_IP` |
@@ -50,24 +50,20 @@
 
 ```bash
 pnpm install
-pnpm dev                                   # signaling :8788 + web :5173
+pnpm dev                                   # Go 信令 :8788（内嵌网页 + TURN）+ Vite :5173
 pnpm gate                                  # typecheck + 单测 + 对比度 + 零硬编码色值
-pnpm e2e                                   # 默认 e2e（AC2 用例自动跳过）
-docker compose -f infra/docker-compose.yml up -d --build
-bash tests/audit/zero-storage.sh
-SKIP_BUILD=1 bash tests/audit/zero-storage.sh --container
-E2E_RELAY=1 TURN_SECRET=… TURN_URIS='turn:<host>:3478?transport=udp' pnpm exec playwright test tests/e2e/ac2-relay.spec.ts
-
-# AC2 限速验证（≈10 Mbps 下 500 MB < 10 分钟）
-docker run -d --name cf-coturn-10mbps -p 3478:3478 -p 3478:3478/udp -p 49160-49200:49160-49200/udp \
-  coturn/coturn:4.19.2-alpine --listening-port=3478 --static-auth-secret=$TURN_SECRET --realm=crossfile \
-  --external-ip=<public-ip> --min-port=49160 --max-port=49200 --max-bps=1250000 --log-file=stdout
-DEBUG_RELAY=1 DEBUG_MAX_SECONDS=900 node scripts/debug-transfer.mjs 500
-TURN_SECRET=… AC4_QUERY='debug=1&relay=1&autoaccept=1&report=https%3A%2F%2Froom.net.time-pack.com%2F__report' \
-  node scripts/ac4-host-loop.mjs 100      # 跨机：在另一台设备用 Safari 打开发布的链接
+pnpm e2e                                   # 全量 e2e（默认 Go；AC2 relay / AC17 自动跳过）
+E2E_RECONNECT_MS=1500 pnpm exec playwright test \
+  tests/e2e/ac16-mesh.spec.ts tests/e2e/ac17-handover.spec.ts   # 阶段 2：mesh + 管理权移交
+E2E_RELAY=1 TURN_SECRET=… TURN_URIS='turn:127.0.0.1:3478?transport=udp' \
+  TURN_EXTERNAL_IP=127.0.0.1 pnpm exec playwright test tests/e2e/ac2-relay.spec.ts  # 内嵌 TURN
+docker compose -f infra/docker-compose.yml up -d --build   # 单容器（Go，内嵌 TURN，无 coturn）
+bash tests/audit/zero-storage.sh                            # 默认审计 Go 二进制
+SKIP_BUILD=1 bash tests/audit/zero-storage.sh --container   # 审计 Go 镜像
 ```
 
 > `?autoaccept=1` 与 `?report=` 只在 `import.meta.env.DEV`（dev server）生效，生产构建已确认剥离；`/__report` 端点只在 `vite serve` 注册。
+> 历史（2026-11-26，Node + coturn 时代）的 AC2 限速与跨机脚本（`scripts/debug-transfer.mjs`、`scripts/ac4-host-loop.mjs`、`docker run … coturn`）已随 Node 移除不再维护，保留在 git 历史中。
 
 ### AC10–AC15（任意互传阶段 1，已实现）
 
@@ -147,10 +143,36 @@ run 45975445722（event = `workflow_dispatch`）出现，说明「发布 → 自
 `strip_components: 1`，解压步骤改用 `find -maxdepth 2` 兜底并清理嵌套 `release/` 目录（commit `59d30af`）。
 v0.2.0 因此按 `deploy.yml` 等价步骤手动部署（见下方 v0.2.0 生产记录）；修复后的 `deploy` 脚本用同版本重跑即可复验。
 
-## Go 单二进制后端（2026-11-27，已上线 v0.2.0）
+## 阶段 2（成员互传、管理权移交、自动接收，2026-11-27）
+
+> 阶段 2 交付：任意成员之间懒建连 mesh 互传、管理员离线 60 s 后管理权自动移交、接收方「自动接收」开关、
+> 多成员收发 UI；协议仍为 v2（不新增消息），旧客户端（无 `caps.mesh`）回退到阶段 1 的「管理员 offer」规则，
+> 同房间新旧页面混用不会抢 offer。协议注记见 `docs/02-protocol.md` §11。
+
+| # | 判据 | 状态 | 证据 |
+|---|---|---|---|
+| AC16 | 成员↔成员双向传输（懒建连 mesh，非管理员） | ✅ | `tests/e2e/ac16-mesh.spec.ts`：admin + A + B；**由 answerer（id 较大方）先发**，覆盖 pair-request wake 冷启动；A→B、B→A 两方向哈希一致、路径标签正确、admin 不参与；断言首传前无 ICE path（懒建连生效）。`1 passed (6.5 s)` |
+| AC17 | 管理权移交：管理员离线 60 s → 最早加入的在线成员晋升 | ✅ | `E2E_RECONNECT_MS=1500 pnpm exec playwright test tests/e2e/ac17-handover.spec.ts` → `AC17 1 passed (8.1 s)`：关闭管理员页 → A 晋升（两端 `self-chip[data-role=admin]` + handover 提示）、旧管理员从成员表消失、A 可收可发（哈希一致）、新加入 C 由 A 批准、A 拿到未变的 6 位码（`created` 补发） |
+| AC17b | 旧管理员返回：create 被拒 → 走正常加入流程 → 新管理员批准 | ✅ | 同文件 AC17b `1 passed (5.8 s)`：旧管理员重连收 `ROOM_CLOSED` → UI 给「重新加入房间」→ 用邀请链接重新加入 → A 批准 → 作为普通成员收发正常 |
+| AC18 | 自动接收开关（默认关、localStorage 持久、`?autoaccept=1` dev 覆盖） | ✅ | `tests/e2e/auto-accept.spec.ts` → **3 passed (11.7 s)**：默认弹确认卡；开关打开后自动 accept 并显示 toast/传输卡；dev 覆盖仍生效；caps/硬上限校验不变 |
+| U | 回归 | ✅ | 全量 `pnpm e2e`（Go，2.2 min）→ **24 passed / 3 skipped / 0 failed**（跳过 = AC17 需 `E2E_RECONNECT_MS`、AC2 需 `E2E_RELAY`）；`E2E_RECONNECT_MS=1500` 下 ac16+ac17 3 passed（重复 3× 无 flake）；`pnpm gate` exit 0（134 单测、core 92.47% stmts / 85.44% branch、对比度 33/33、零硬编码色值）；`go test ./...` **106 个测试**、85.6% 覆盖、`-race` 干净；`zero-storage.sh`（默认 Go）RESULT PASS |
+
+复现命令：
+
+```bash
+pnpm gate
+pnpm e2e
+E2E_RECONNECT_MS=1500 pnpm exec playwright test tests/e2e/ac16-mesh.spec.ts tests/e2e/ac17-handover.spec.ts
+pnpm exec playwright test tests/e2e/auto-accept.spec.ts
+bash tests/audit/zero-storage.sh
+```
+
+## Go 单二进制后端（2026-11-27，已上线；Node 实现已移除）
 
 > 背景：用 Go 重写信令后端并把 TURN 内嵌进同一进程（`apps/signaling-go/`），去掉服务端 Node 与独立 coturn；
-> 协议仍为 v2、客户端零改动。实现与验收细节见 `docs/05-development-plan.md` §7.5。
+> 协议仍为 v2、客户端零改动。实现与验收细节见 `docs/05-development-plan.md` §7.5、决策见 `docs/adr/0011-go-single-binary-backend.md`。
+> **2026-11-27 起 `packages/signaling` 等 Node 实现已从仓库删除**，Go 二进制是唯一服务端；下表的 `E2E_SERVER=go`、
+> `zero-storage.sh --go` 现为兼容别名（默认即 Go）。
 
 | # | 判据 | 状态 | 证据 |
 |---|---|---|---|
@@ -169,7 +191,7 @@ Go 复现命令：
 (cd apps/signaling-go && gofmt -l . && go vet ./... && go test ./... && go test -race ./...)
 
 # 全量 e2e（Go 信令 + Vite 页面；自动 SKIP_WEB=1 构建二进制）
-E2E_SERVER=go pnpm e2e
+pnpm e2e                    # 默认 Go（E2E_SERVER=go 为兼容别名）
 
 # 内嵌 TURN 的 relay-only 用例（本机 3478 需空闲）
 E2E_SERVER=go E2E_RELAY=1 TURN_SECRET=dev-turn-secret \
@@ -178,7 +200,7 @@ E2E_SERVER=go E2E_RELAY=1 TURN_SECRET=dev-turn-secret \
   pnpm exec playwright test tests/e2e/ac2-relay.spec.ts
 
 # 零存储审计（Go 二进制）
-bash tests/audit/zero-storage.sh --go
+bash tests/audit/zero-storage.sh        # 默认审计 Go 二进制（--go 为兼容别名）
 ```
 
 #### 待人工验证（需要真机）

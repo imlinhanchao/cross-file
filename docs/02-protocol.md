@@ -115,8 +115,9 @@ created ──join_request──▶ awaiting_approval ──approve──▶ joi
    │                                                      │        └──rejoin(rejoinToken)──▶ joined
    │                                                      └──60 s──▶ removed（member_left 仅发管理员）
    ├──admin socket lost──▶ admin_offline（admin state=offline，广播 members；房间保留）
-   │        └──admin rejoin(rejoinToken ≤60 s)──▶ created
-   │        └──不自动散房：保留到 ROOM_TTL(30 min) 统一清理
+   │        ├──admin rejoin(rejoinToken ≤60 s)──▶ created
+   │        └──60 s 未回──▶ handover（最早加入的在线成员晋升；广播 members；旧管理员身份丢弃）
+   │                              └──新管理员再离线──▶ 再次 60 s 计时，可继续移交
    └──ttl(30 min 无活动)──▶ closed
 ```
 
@@ -125,8 +126,9 @@ created ──join_request──▶ awaiting_approval ──approve──▶ joi
 - `caps` 与显示名仅在内存中转发，S 不记录（不进日志）。
 - 管理员 socket 断开：置 `adminOffline=true`、广播 `members`（管理员 `state: "offline"`），房间保留到
   `ROOM_TTL`；**60 秒只是 `rejoinToken` 的重连窗口，到点不自动散房**。
-- 阶段 2：`admin_offline` 超过 60 s 后把 `isAdmin` 移交给最早加入的在线成员，广播 `members`
-  （见 `docs/01` D24）；本次不实现。
+- 阶段 2（已实现）：`admin_offline` 超过 60 s 后把 `isAdmin` 移交给**加入顺序最早且在线**的成员，广播
+  `members`（见 `docs/01` D24 与 §11.2）。旧管理员身份从房间移除（其 `rejoinToken` 失效）；它之后回来等同新成员，
+  需新管理员批准。没有在线成员时不移交，房间保留到 TTL。
 
 ### 3.4 加入时序（QR 路径，推荐）
 
@@ -273,7 +275,8 @@ emoji[i]  = EMOJI_64[ (sasBits[i] >> 2) & 0x3F ]   // 4 个 emoji，24 bit
   saveStrategies: ["blob"], // 优先级：native | fs | sw | blob
   deviceMemoryGB: 4,        // 可得则填
   storageQuotaMB: 10240,
-  screen: "phone"|"tablet"|"desktop"
+  screen: "phone"|"tablet"|"desktop",
+  mesh: true                 // 阶段 2 客户端：支持成员↔成员懒建连（可选；缺失视为阶段 1）
 }
 ```
 
@@ -298,7 +301,8 @@ v2 下发送方可能是任意成员，规则不变（仍然按**接收方** cap
 
 - 每对设备一条 `PeerConnection`，上面开两个通道：`ctrl`（`ordered=true`、`reliable`，JSON 控制消息）与
   `data`（`ordered=true`、`reliable`，二进制分片帧）。
-- 通道由 offerer 创建；阶段 1 offerer 固定为管理员，阶段 2 按 peerId 字典序（每对独立）。
+- 通道由 offerer 创建；**阶段 2（已实现）每对独立，`memberId` 字典序较小的一方是 offerer**（双方用同一规则，无需协商）。
+  阶段 1 的「管理员固定为 offerer」已废弃。
 - 通道开启顺序：先 `ctrl` 再 `data`；`data` 上禁止发控制消息。
 - 双向共用一个 `ctrl`/`data`：**所有传输级 ctrl 消息都带 `transferId`**
   （`manifest` / `accept` / `bitmap` / `progress` / `done` / `ack` / `error` / `pause` / `resume`；只有
@@ -364,7 +368,7 @@ offset  size  field
   500MB/64KiB = 8000 片 → 1000 B → base64 约 1.4 KB。
 - `chunkSeq` 不变，nonce 不变（因此不需要重加密）；续传期间不重发 manifest（双方内存里都有）；
   若接收方页面刷新（内存丢失）→ 无法续传，只能重新加入新会话。
-- 阶段 1 的重建由管理员发起 offer；阶段 2 按 peerId 字典序决定 offerer。
+- 重建由该对的 offerer 发起（`memberId` 字典序较小的一方），另一方等待新 offer。
 
 ### 6.7 ICE 路径选择与时序（D2）
 
@@ -472,7 +476,7 @@ v2 下任何一端都可能成为接收方（Web 接收页、桌面壳、手机�
 | 加入时的显示名 | `join` 不带名字：S 按 `caps` 生成默认名（`platformLabel · 4 位代号`），`join_ok.name` 告知本人、`join_request.name` 给管理员；客户端有本地记忆时在 `join_ok` 后立刻发 `profile` 改名 | `packages/core/src/identity.ts` / `packages/signaling/src/server.ts` |
 | 版本门禁 | `hello`/`create`/`join` 校验 `v === 2`，否则 `VERSION_MISMATCH` 后关闭 | 同上 |
 | `heartbeat` | 阶段 1 仅管理员心跳续期房间；成员心跳被忽略（不报错，沿用 v1） | 同上 |
-| 阶段 2 管理权 | 管理员离线超 60 s：把 `isAdmin` 交给最早加入的在线成员并广播 `members`，本次不实现 | 同上 |
+| 阶段 2 管理权 | 管理员离线超 60 s：把 `isAdmin` 交给最早加入的在线成员并广播 `members`；旧管理员身份丢弃、新管理员换新 `rejoinToken`、房间短码保留、pending `join_request` 重放（详见 §11.2） | 同上 |
 
 ### 10.2 控制通道（ctrl，JSON 文本帧）
 
@@ -499,7 +503,7 @@ v2 下任何一端都可能成为接收方（Web 接收页、桌面壳、手机�
 - 发送方在发 manifest 前对每个文件**预先计算**全文件 SHA-256（续传时复用），发送循环本身不维护哈希；
 - 续传：接收方发 `bitmap`，发送方只重发缺失片，`transferId`/`fileId`/`seq`/nonce 不变（密文可逐字节相同），
   随后重新发 `done`；
-- 60 s 窗口内双方都以 `rejoinToken` 重连；阶段 1 由管理员重建 `PeerConnection`，阶段 2 按 peerId 字典序；
+- 60 s 窗口内双方都以 `rejoinToken` 重连；每对由 offerer（`memberId` 字典序较小的一方）重建 `PeerConnection`；
 - `transferId` 格式 `${selfId}:<counter>`（`counter` 每个成员在房间内从 1 单调递增）；解析时只允许
   `[A-Za-z0-9_-]+:[1-9][0-9]*`；所有传输级 ctrl 消息都必须带它（`hello`/`key-ok` 等通道级消息除外）。
 
@@ -523,4 +527,54 @@ v2 下任何一端都可能成为接收方（Web 接收页、桌面壳、手机�
   e2e 用 dev-only `?sasTimeoutMs=` 覆盖缩短等待（默认仍 60 s）；
 - v2 的「任意成员间 `signal`」路由到 `packages/signaling/src/server.ts`；成员表广播与昵称只在内存，
   不进日志（§7）；
-- 阶段 2 的懒建连、任意成员互传、管理权移交、自动接收开关不在本版实现范围。
+- 阶段 2 的懒建连、任意成员互传、管理权移交、自动接收开关已实现（见 §11）；旧客户端（无 `caps.mesh`）
+  仍按阶段 1 的「管理员固定为 offerer」工作，新客户端对旧 peer 自动回退到该规则，同房间混用不会抢 offer。
+
+---
+
+## 11. 阶段 2 实现注记（成员互传、管理权移交、自动接收）
+
+阶段 2 **不新增/不修改任何信令消息**：`signal` 早在 v2 就允许任意成员之间转发（§3.2），阶段 2 是在客户端把
+「每对设备」的连接按需建立，并补上管理权移交与接收偏好。协议版本仍为 2。
+
+### 11.1 懒建连 mesh（客户端）
+
+- 任意两个成员之间都可以互传；**每对一条 `PeerConnection`，按需建立**，不在成员加入时预建。
+- **offerer 选举**：双方比较 `memberId` 字符串，字典序较小的一方是 offerer；规则对称，无需协商。
+  - **兼容阶段 1 客户端**：`caps.mesh !== true` 的 peer 视为阶段 1，此时回退到「管理员是 offerer」；两个阶段 2
+    客户端之间才用字典序。这样新旧页面混在一个房间也不会双方同时发 offer（glare）。
+- **建立时机**：offerer 首次向该 peer 发起传输时创建 PC + `ctrl`/`data` 通道并发 offer；answerer 收到该 peer 的
+  offer 时创建 answerer PC。收到 offer 时只要求对方在成员表且 `state == "joined"`。
+- **answerer 先发起传输时的 pair wake（实现注记）**：若 answerer 先要向 offerer 发送（例如 id 较大的一方先选文件），
+  它没有 PC、也不能发 offer，于是通过现有 `signal` 发一条 schema 合法的空 candidate
+  （`{k:"candidate", candidate:{candidate:""}}`，trickle ICE 的 end-of-candidates 惯例）作为「建对请求」。
+  offerer 收到后若自己是该对 offerer 且尚无 PC → 立即 attach（建 PC/通道/offer）；已有 PC 的连接把它当作
+  end-of-candidates（addCandidate 异常吞掉）；阶段 1 旧客户端收到无副作用。每次 attach 尝试最多发一次。
+- **重建**：通道断开后由该对的 offerer 重新发 offer；answerer 丢弃旧连接等待新 offer（§6.5）。
+- **每对仍串行**：同一对设备同一时刻只有一个活动 `transferId`，反向传输排队（§3.6、AC11 语义不变）。
+- 成员离开（`member_left` / 被移除）→ 关闭并删除该对 session。
+
+### 11.2 管理权移交（服务端）
+
+- 管理员 socket 断开后，除保留房间到 TTL 外，另起 **60 s（`RECONNECT_WINDOW_MS`）移交计时器**；
+  管理员在 60 s 内重连（`create` 同 roomId 或 `join` 带 admin `rejoinToken`）→ 取消计时器，房间恢复。
+- 计时器到期：把 `isAdmin` 移交给**加入顺序最早且在线**的成员（`members[]` 顺序）；没有在线成员则不移交，
+  房间继续保留到 TTL。
+- 移交时：旧管理员身份从房间移除（其 `rejoinToken` 失效，之后回来等同新成员、需新管理员批准）；新管理员从
+  `members[]` 提升，**换发新的 `rejoinToken`**，房间 6 位短码保持不变。
+- **消息顺序**：先向新管理员补发一条既有的 `created`（携带未变的 6 位 `code`、新 `selfId`、新 `rejoinToken`、
+  当前 `members` 快照与 `turn?`——新管理员只能从这里拿到邀请码和新重连令牌，`members` 不带这些字段），
+  再向全房间广播 `members`，最后向新管理员重放仍在等待的 `join_request`。不新增消息类型。
+- 新管理员再离线会再次进入 60 s 计时，可继续移交（取当时最早加入的在线成员）。
+- 客户端收到 `members` 中自己 `isAdmin` 变化时更新角色与 UI；服务端不额外发消息。
+
+### 11.3 自动接收开关（客户端偏好）
+
+- 纯客户端设置（localStorage，默认关）：开启后收到 `manifest` 自动 `accept`，不再弹确认框；仍按接收方 caps
+  做上限校验（超硬上限仍拒绝、超软上限自动接受但提示）。不发新消息，不改变协议。
+- 接收方在 `accept` 前仍会收到 manifest，超硬上限直接 `error TOO_LARGE` 的行为不变。
+
+### 11.4 测试逃生口
+
+- `RECONNECT_WINDOW_MS`：服务端环境变量（默认 60000，正整数），同时决定成员离线窗口与管理员移交窗口；
+  e2e 用 `E2E_RECONNECT_MS` 透传缩短等待，生产不设置。

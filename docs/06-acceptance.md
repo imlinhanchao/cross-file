@@ -1,6 +1,6 @@
 # 验收记录（docs/01 §8 AC1–AC15 + 计划 §1 U1–U8）
 
-> 最近更新：2026-11-26。每行都注明**实际跑过的命令与结果**；未验证项明确写「待验」，不放宽标准。
+> 最近更新：2026-11-27。每行都注明**实际跑过的命令与结果**；未验证项明确写「待验」，不放宽标准。
 > AC10–AC15 属 ADR 0010「任意互传（阶段 1）」，已在 2026-11-26 实现并回填实测证据。
 
 ## 环境
@@ -112,19 +112,20 @@ bash tests/audit/zero-storage.sh --container   # 会重建镜像；SKIP_BUILD=1 
 7. **暗色 dropzone 提示对比度**：GitHub runner 上 axe 报 `.dropzone > .muted.small` 4.08:1（前台 `#a0a5ac` / 背景 `#3f4245`）；提示文案改用 `--text-secondary`（语义 token，明暗都 ≥ 7:1）。
 8. **CI 上 AC12b 观察不到 paused**：管理员重建 offer 与旧通道 close 事件存在时序差，成员端可能把新 offer 应用到死连接；成员端收到管理员 offer 时现在总是丢弃旧 answerer 并重建，AC12b 断言改为「恢复完成 + 哈希一致」（AC12a 仍严格断言双端 paused）。
 
-### 生产实例（2026-11-27）
+### 生产实例（2026-11-27，release v0.1.0）
 
 | 项 | 值 / 证据 |
 |---|---|
 | 入口 | `https://file.time-pack.com`（DNS → 120.77.241.222；nginx 1.16.1 复用 `*.time-pack.com` 泛证书，2027-02-16 到期；80→443 跳转；HSTS / CSP / Referrer-Policy / X-Content-Type-Options / Permissions-Policy） |
-| 部署 | GitHub Actions `release`（tag → draft release）→ 发布 release 触发 `deploy`（下载 release 资产 → scp → PM2）；`/var/www/rust/cross-file/releases/<tag>` + `current` 软链，保留最近 5 个 release |
-| 进程 | PM2 `crossfile-signaling` online（Node 22.22.1；`HOST=127.0.0.1`、`PORT=8788`，只经 nginx 反代） |
+| Release | tag `v0.1.0` → `acdd78f`；`release` workflow（run 45966717337）全绿：gates（typecheck/unit/design/build、playwright 20 passed / 1 skipped、容器零存储）、version check、web、server、desktop-linux、desktop-windows、desktop-macos、android、publish；**自动发布** release `CrossFile 0.1.0`（`draft:false`，8 个资产 + `SHA256SUMS`） |
+| 产物校验 | 下载后 `sha256sum -c SHA256SUMS` 全部通过（server tarball、AppImage、msi/exe、dmg、APK）；Android APK 7,704,140 B，`apksigner verify --print-certs` → `CN=CrossFile, OU=Release`（release keystore，非 debug），`aapt2 dump badging` → `package=org.hancel.file`、`versionName=0.1.0`、`targetSdk=36` |
+| 部署 | 部署目录 `/var/www/rust/cross-file`：`releases/v0.1.0` + `current` 软链指向它，保留最近 5 个 release；`VERSION` = `commit=acdd78f…`、`version=0.1.0`、`built=2026-11-27T08:38:19Z`。**注意**：本次 `deploy` workflow 未被 `release: published` 自动触发（`GITHUB_TOKEN` 发布的 release 不产生 `release` 事件，见 §发布链路缺陷），因此按 `deploy.yml` 的等价步骤手动部署（release 资产下载 → SHA256 校验 → scp → `tar -xzf` → `source shared/.env` → `pm2 delete+start --update-env` → `pm2 save` → 健康检查 → `ln -sfn current` → 保留 5 个 release），部署的字节与 release 资产一致 |
+| 进程 | PM2 `crossfile-signaling` online（Node 22.22.1；`HOST=127.0.0.1`、`PORT=8788`，只经 nginx 反代）；`logs/signaling.out.log` 每次启动仅 1 行 `listening on ws://127.0.0.1:8788/v1/ws`，err 日志为空 |
 | 配置 | 服务器 `shared/.env`（`TURN_SECRET`、`TURN_URIS`、`PUBLIC_HOST`、`PORT`、`HOST`、`MAX_MEMBERS=2`），不进 release；`infra/.env` 模板已留档为 `.env.template.bak` |
-| TURN | coturn 4.5.2，`turn:file.time-pack.com:3478`（udp/tcp），`external-ip=120.77.241.222`，`no-tls/no-dtls`，日志 `/dev/shm/coturn.log`（tmpfs） |
-| 验收 | `https://file.time-pack.com/` 200 + 安全头；**生产环境** AC10 双向 10 MB 通过（9.9 s）；**生产环境** AC2 relay-only 10 MB 通过（39.3 s，路径「中继」）；v1 客户端收到 `VERSION_MISMATCH`；PM2 日志仅 1 行启动；release 内无 `.env` |
-| CI | `ci` 全绿（gates + e2e 20 passed / 1 skipped + 容器零存储审计）；`deploy` success（commit `5d06286`） |
+| TURN | coturn 4.5.2 active，`turn:file.time-pack.com:3478`（udp/tcp），`external-ip=120.77.241.222`，`no-tls/no-dtls`，日志 `/dev/shm/coturn.log`（tmpfs） |
+| 验收 | `https://file.time-pack.com/` 200 + 安全头（CSP/Referrer-Policy/nosniff/Permissions-Policy）；**生产环境** AC10 双向 10 MB → `1 passed (12.6s)`；**生产环境** AC2 relay-only 10 MB → `1 passed (38.1s)`，路径「中继」；PM2 日志仅 1 行启动；release 内无 `.env` |
 
-生产验收命令：
+生产验收命令（2026-11-27 实际执行）：
 
 ```bash
 E2E_NO_WS=1 E2E_BASE_URL=https://file.time-pack.com \
@@ -133,3 +134,46 @@ E2E_NO_WS=1 E2E_BASE_URL=https://file.time-pack.com E2E_RELAY=1 E2E_RELAY_MB=10 
   pnpm exec playwright test tests/e2e/ac2-relay.spec.ts
 ```
 
+#### 发布链路缺陷（P0 收尾发现，待修）
+
+`release.yml` 用 `softprops/action-gh-release` + 仓库 `GITHUB_TOKEN` 自动发布 release，而 GitHub 不会为 `GITHUB_TOKEN` 创建的 release 派发 `release: published` 事件（防递归规则；只有 `workflow_dispatch` / `repository_dispatch` 例外）。因此 `deploy.yml` 的 `on: release: published` 对自动发布的 release **不会触发**——本次 v0.1.0 就是手动按等价步骤部署的。修复方向：`release.yml` 发布后显式 `gh workflow run deploy.yml -f tag=<tag>`（需 `actions: write`），或 `deploy.yml` 改用 `on: workflow_run: { workflows: [release], types: [completed] }` 并按 `workflow_run.head_branch` 取 tag。修复后需在下一个 tag 上验证「发布 → 自动部署」闭环。
+
+## Go 单二进制后端（2026-11-27，本地验收完成，生产切换待做）
+
+> 背景：用 Go 重写信令后端并把 TURN 内嵌进同一进程（`apps/signaling-go/`），去掉服务端 Node 与独立 coturn；
+> 协议仍为 v2、客户端零改动。实现与验收细节见 `docs/05-development-plan.md` §7.5。
+
+| # | 判据 | 状态 | 证据 |
+|---|---|---|---|
+| G1 | 协议 v2 与 Node 语义一致（消息/状态机/错误码/边界） | ✅ | 独立只读 parity 审查（Node `server.ts`/`rooms.ts`/`static.ts`/`identity.ts`/`turn.ts` vs Go）：**无 blocker**；修复 1 个 IMPORTANT（TURN 门禁）与 7 个 minor 后复核通过。差异仅为文档化的实现选择（入口默认端口 8788、内嵌 TURN 需 `TURN_EXTERNAL_IP`、TURN 日志丢弃、3478 被占用则启动失败） |
+| G2 | Go 单测 | ✅ | `go test ./...` → **93 个测试全过，85.2% 语句覆盖率，1.4 s**；`go test -race ./...` 干净（2.8 s）；`gofmt -l .` 空、`go vet ./...` 干净 |
+| G3 | 全量 e2e（信令换成 Go） | ✅ | `E2E_SERVER=go pnpm e2e` → **20 passed / 1 skipped**（跳过项为 AC2 relay，未设 `E2E_RELAY`），2.0 min，与 Node 基线一致（AC10/AC11/AC12/AC13/AC14/AC6/AC7/SAS/配额/无障碍全过） |
+| G4 | 内嵌 TURN 真中继（不依赖 coturn） | ✅ | `E2E_SERVER=go E2E_RELAY=1 TURN_SECRET=… TURN_URIS='turn:127.0.0.1:3478?transport=udp,turn:127.0.0.1:3478?transport=tcp' TURN_EXTERNAL_IP=127.0.0.1 pnpm exec playwright test tests/e2e/ac2-relay.spec.ts` → **1 passed（9.7 s）**，双方 `path === "relay"` 断言通过；另有 Go 单测 `TestEmbeddedTURNAllocatesAndRelaysUDP` 用 REST 凭据分配并回环 UDP |
+| G5 | 零存储（Go 二进制） | ✅ | `bash tests/audit/zero-storage.sh --go` → **RESULT PASS**：8 步 v2 会话、0 可写文件、0 普通文件 write、stdout 恰 1 行、stdout 无 roomId/6 位码/显示名、cwd 为空、SIGTERM 优雅退出 |
+| G6 | 发布产物 | ✅ | release `server` job 本地等价实跑：x64/arm64 静态链接（含内嵌网页 10,457,248 B / 约 9.5 MB）、冒烟（`<div id="root">`、SPA 回退、v1 → `VERSION_MISMATCH`）、tarball = `crossfile-signaling`(0755) + `ecosystem.config.cjs` + `VERSION`；本机 PM2 `interpreter: none` 实跑 online、`/` 200、日志 1 行、`pm2 delete` 释放端口 |
+| G7 | 生产切换 | 🚧 待做 | 需停 coturn（释放 3478）后打 tag 发布；切换后按 P0 同款命令对生产复跑 AC10 与 AC2 relay |
+
+Go 复现命令：
+
+```bash
+# 单测 + 静态检查
+(cd apps/signaling-go && gofmt -l . && go vet ./... && go test ./... && go test -race ./...)
+
+# 全量 e2e（Go 信令 + Vite 页面；自动 SKIP_WEB=1 构建二进制）
+E2E_SERVER=go pnpm e2e
+
+# 内嵌 TURN 的 relay-only 用例（本机 3478 需空闲）
+E2E_SERVER=go E2E_RELAY=1 TURN_SECRET=dev-turn-secret \
+  TURN_URIS='turn:127.0.0.1:3478?transport=udp,turn:127.0.0.1:3478?transport=tcp' \
+  TURN_EXTERNAL_IP=127.0.0.1 \
+  pnpm exec playwright test tests/e2e/ac2-relay.spec.ts
+
+# 零存储审计（Go 二进制）
+bash tests/audit/zero-storage.sh --go
+```
+
+#### 待人工验证（需要真机）
+
+- Android：安装 `CrossFile-0.1.0-android-arm64.apk`（包名 `org.hancel.file`，release 签名）验证安装/启动/双向传输；本机无 arm64 真机。
+- iOS/Safari：Safari 收 100 MB / 500 MB（`sw` 未实现，仅 Blob 兜底；已知风险）。
+- Windows/macOS 桌面壳未签名，SmartScreen/公证提示属预期。

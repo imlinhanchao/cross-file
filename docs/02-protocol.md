@@ -378,6 +378,9 @@ offset  size  field
 
 - S 用 coturn 的 `static-auth-secret` 模式签发：`username = "<expiryEpoch>:<memberId>"`，
   `credential = base64(HMAC-SHA1(secret, username))`，TTL 1 h。
+- Go 单二进制（`apps/signaling-go/`）用**同一算法**签发，并由进程内的 pion/turn 校验：`TURN_URIS` 与
+  `TURN_SECRET` 都非空时内嵌 TURN 才启动（与 Node 的 `turn` 门禁一致），此时还需要 `TURN_EXTERNAL_IP`
+  作为 relay 通告地址；`TURN_URIS` 为空则不下发凭据、不启动 TURN。
 - 仅在需要时下发（`created`/`join_ok`）；每个成员每次连接一份；官方实例按 IP 限频（内存计数，不落盘）。
 
 ---
@@ -409,7 +412,11 @@ v2 下任何一端都可能成为接收方（Web 接收页、桌面壳、手机�
 4. 优雅关闭时清空内存；崩溃重启丢失所有房间（可接受，符合「用完即走」）。
 5. coturn：日志级别调至最低、日志写 tmpfs（内存），不落持久盘；`no-cli`；禁用 `no-loopback-peers` 之外
    的多余插件。
-6. 自托管用 docker-compose：`signaling` + `coturn` 两个服务，一个 `.env` 配置域名/TURN secret。
+6. Go 单二进制把 TURN 内嵌进**同一个进程**：pion 的 per-allocation/auth 日志**完全丢弃**（stdout 仍只有 1 行
+   启动信息），TURN 与信令共享同一份 `TURN_SECRET`，不再需要独立 coturn；端口（3478 tcp+udp、
+   49160–49200/udp）与反代方式不变。
+7. 自托管用 docker-compose：`signaling` + `coturn` 两个服务，一个 `.env` 配置域名/TURN secret；
+   或（推荐）单 Go 二进制一个进程，见 `docs/self-host.md` §12。
 
 ---
 

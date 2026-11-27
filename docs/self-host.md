@@ -3,6 +3,8 @@
 > 目标：自己的域名上跑一套 CrossFile，文件仍然只在两台设备之间端到端加密直传，服务器**不存一个字节**。
 > 代码位置：`infra/`（compose、镜像、反代示例）、`tests/audit/`（零存储审计）。
 > 设计与验收依据：`docs/01-design.md` §5/§8、`docs/02-protocol.md` §6.6/§6.7/§7、`docs/03-roadmap.md` M4。
+>
+> **2026-11-27 起：生产推荐「Go 单二进制」**——一个静态可执行文件，进程内同时服务网页、`/v1/ws` 与 TURN，服务器不需要 Node、也不需要单独的 coturn。完整说明见文末 **§12 单二进制自托管（Go，推荐）**。本文前面的 Docker/compose 与 Node + coturn 方式仍然可用；在 Go 生产切换验收通过前，`file.time-pack.com` 仍跑 Node 版本。
 
 ---
 
@@ -177,6 +179,8 @@ INFO Total lost packets 0 (0.000000%)
 | 49160–49200 | udp       | TURN relay 分配段（`COTURN_MIN_PORT`–`COTURN_MAX_PORT`）  | 必须             |
 | 5173        | tcp       | 仅开发：Vite dev server                                   | 不要暴露公网     |
 
+> Go 单二进制（§12）把 signaling 与 TURN 合进**一个进程**，但对外端口不变：443（反代）、8788（页面 + `/v1/ws`）、3478/udp+tcp、49160–49200/udp。变量名改为 `TURN_LISTEN_PORT`/`TURN_MIN_PORT`/`TURN_MAX_PORT`，防火墙规则照旧。
+
 防火墙示例（ufw）：
 
 ```bash
@@ -272,6 +276,24 @@ tests/audit/zero-storage.sh --container
 FAIL 都带 `[EVIDENCE]` 证据行并以退出码 1 结束。
 
 > 注意：`strace` 只跟踪自己的子进程，普通用户即可，无需 `sudo`/`ptrace_scope` 调整。若你的发行版禁用了非特权 ptrace，本机模式会提示用 `--container`。
+
+### 8.3 Go 单二进制模式
+
+```bash
+tests/audit/zero-storage.sh --go
+SKIP_BUILD=1 tests/audit/zero-storage.sh --go   # 复用已构建的 apps/signaling-go/bin/crossfile-signaling
+```
+
+它先 `SKIP_WEB=1 bash apps/signaling-go/build.sh`（不需要 Node 构建产物、不需要 Node bundle），再用同一套
+`strace -f -e trace=openat,openat2,write` 包住 `apps/signaling-go/bin/crossfile-signaling`，跑**同一个 8 步 v2 会话**
+（create → 2×join/approve → members 广播 → profile 改名广播 → admin→A / A→admin / A→B → close），断言与 8.1 一致：
+
+- 没有可写方式打开的文件、没有 `write(2)` 落到普通文件、没有数据库痕迹；
+- stdout 恰好一行启动日志（`[crossfile-signaling] listening …`）；
+- **启动日志不包含本次会话的 roomId、6 位码与显示名**（`signal-client.mts` 用 `CLIENT WATCH` 行把值交给分析器比对）；
+- 真实会话 `CLIENT PASS`，进程工作目录保持为空。
+
+审计会主动清掉 `TURN_*` 变量：本模式审计的是「信令进程不写盘」，不覆盖内嵌 TURN 的行为（TURN 一样只走内存/网络）。CI 里由 `zero-storage-go` job 跑。
 
 ---
 
@@ -533,3 +555,103 @@ pm2 save
 - PM2 开机自启：`pm2 startup` 一次，之后每次部署工作流会 `pm2 save`。
 - 部署会重启信令（房间在内存里），进行中的传输会中断，尽量避开高峰。
 - 如果服务器其实有 Docker，仍可用 `infra/docker-compose.yml` 的容器方式（见本文件上面的章节）。
+
+---
+
+## 12. 单二进制自托管（Go，推荐）
+
+**为什么**：Go 单二进制在**一个进程**里提供网页静态资源、`/v1/ws` 与 TURN。服务器上不再需要 Node、不需要单独的 coturn 进程，也不需要 `public/` 目录；服务仍然是「房间只在内存、日志只有一行、不写盘」，零存储审计（§8.3）覆盖这一点。
+
+### 12.1 拿到二进制
+
+```bash
+# A. 从 GitHub Release 下载（推荐；x64 / arm64 都有 tarball 和裸二进制）
+gh release download v0.1.0 --pattern 'crossfile-signaling-*-linux-x64.tar.gz' --dir /tmp/cf
+mkdir -p /srv/crossfile
+tar -xzf /tmp/cf/crossfile-signaling-*-linux-x64.tar.gz -C /srv/crossfile
+chmod 0755 /srv/crossfile/crossfile-signaling
+
+# B. 从源码构建（需要 Go 1.2x + pnpm）
+pnpm --filter @crossfile/web build
+mkdir -p apps/signaling-go/webdist && cp -r apps/web/dist/. apps/signaling-go/webdist/
+SKIP_WEB=1 bash apps/signaling-go/build.sh     # 产物 apps/signaling-go/bin/crossfile-signaling
+```
+
+tarball 解开就是三个文件：`crossfile-signaling`（静态二进制，含内嵌网页）、`ecosystem.config.cjs`、`VERSION`。
+
+### 12.2 配置
+
+```ini
+# /srv/crossfile/shared/.env（只存在服务器上，gitignored；deploy 工作流会 source 它）
+PORT=8788
+HOST=127.0.0.1                 # 前面有反代；直接对外则 0.0.0.0
+MAX_MEMBERS=2                  # 官方实例 2；自托管默认 4（不含管理员）
+TURN_SECRET=<openssl rand -hex 32>
+TURN_URIS=turn:turn.example.com:3478?transport=udp,turn:turn.example.com:3478?transport=tcp
+TURN_EXTERNAL_IP=<公网 IPv4>
+# TURN_LISTEN_PORT=3478
+# TURN_MIN_PORT=49160
+# TURN_MAX_PORT=49200
+```
+
+- `TURN_URIS` 与 `TURN_SECRET` **两者都非空**内嵌 TURN 才会启动（与 Node 的 `uris.length > 0 && secret` 门禁一致）：`TURN_URIS` 为空 = 不下发 TURN（只能直连）；只设 `TURN_SECRET` 不设 `TURN_URIS` = **不启动 TURN**（而不是启动后失败）。`TURN_SECRET` 同时用于签发凭据和内嵌 TURN 校验，**不需要**再起 coturn。
+- 公网主机必须设置 `TURN_EXTERNAL_IP`（**启用 TURN 时必填**，即 `TURN_URIS` 与 `TURN_SECRET` 都非空；缺省则启动即报错），否则 relay candidate 会是内网地址（与 §2 的 coturn 场景原因相同）。
+- 端口与反代和 §5 / §6 完全一样：443、8788、3478/udp+tcp、49160–49200/udp。**内嵌 TURN 直接绑定 3478/udp+tcp，和 coturn 不能同时跑**（见 §12.6）。
+
+### 12.3 启动（PM2 或 systemd）
+
+PM2（与 `deploy.yml` 一致，`ecosystem.config.cjs` 随 tarball 下发）：
+
+```bash
+set -a; . /srv/crossfile/shared/.env; set +a
+pm2 delete crossfile-signaling 2>/dev/null || true
+pm2 start /srv/crossfile/ecosystem.config.cjs --update-env
+pm2 save
+```
+
+`ecosystem.config.cjs` 的关键项：`interpreter: "none"`（直接 exec 二进制，不经过 Node）、`cwd: __dirname`、`env` 透传 `HOST`/`PORT`/`MAX_MEMBERS`/`TURN_*`。
+
+systemd（不装 PM2 时）：
+
+```ini
+# /etc/systemd/system/crossfile.service
+[Unit]
+Description=CrossFile signaling (Go single binary)
+After=network-online.target
+
+[Service]
+User=crossfile
+WorkingDirectory=/srv/crossfile
+EnvironmentFile=/srv/crossfile/shared/.env
+ExecStart=/srv/crossfile/crossfile-signaling
+Restart=always
+RestartSec=2
+# 进程本身不写盘，只读文件系统友好
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload && sudo systemctl enable --now crossfile
+```
+
+### 12.4 验收
+
+```bash
+# 1. 单进程：网页、/v1/ws、TURN 都在同一个 PID
+curl -fsS http://127.0.0.1:8788/ | grep -q '<div id="root">'
+curl -fsS -o /dev/null http://127.0.0.1:8788/r/abcdefghijklmnopqrstuvwxyz    # SPA 回退
+node --import tsx tests/audit/signal-client.mts ws://127.0.0.1:8788/v1/ws     # 期望 CLIENT PASS
+pm2 logs crossfile-signaling --lines 5 --nostream                            # 只有一行启动日志
+
+# 2. 零存储（Go 二进制）
+bash tests/audit/zero-storage.sh --go
+```
+
+TURN 是否真的生效仍按 §4 的方法验证（webrtc-internals 里看 candidate 是否 `relay`）；区别只是 TURN 现在就在同一个进程里，`TURN_EXTERNAL_IP` / `TURN_MIN_PORT` / `TURN_MAX_PORT` 直接生效。
+
+### 12.5 回滚到 Node + coturn
+
+生产切换验收通过前，线上仍是 Node 版本；回滚就是重新部署旧 tag（`deploy` 工作流输入旧 tag，或服务器上 `pm2 start releases/<旧 tag>/ecosystem.config.cjs --update-env`）。每个 release 的 tarball 自带适配自己运行时的 `ecosystem.config.cjs`，所以 Node/Go 版本可以互相覆盖部署。

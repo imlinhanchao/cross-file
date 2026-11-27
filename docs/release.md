@@ -7,17 +7,35 @@
 
 | 触发 | 行为 |
 |---|---|
-| push tag `v*`（如 `v0.1.0`） | 跑全部门禁 → 构建所有产物 → **自动发布 release** → 自动触发 `deploy` |
-| 手动 `workflow_dispatch`（version + dry_run） | 构建产物；`dry_run=true`（默认）只上传 workflow artifact，不创建 release |
-| `release: published`（自动发布或手动补发） | 触发 `deploy`，把该 release 的 server tarball 部署到生产 |
+| push tag `v*`（如 `v0.1.0`） | 跑全部门禁 → 构建所有产物 → **自动发布 release** → release job 末尾用 `gh workflow run` **显式 dispatch `deploy`** |
+| 手动 `workflow_dispatch`（version + dry_run） | 构建产物；`dry_run=true`（默认）只上传 workflow artifact，不创建 release、不部署；`dry_run=false` 与 tag 流程相同 |
+| `release: published`（人工发布/重新发布） | 触发 `deploy`，把该 release 的 server tarball 部署到生产 |
 | 手动 `deploy` workflow（输入 tag） | 重新部署某个已发布 release |
+
+> **为什么是显式 dispatch（GITHUB_TOKEN 限制）**：GitHub 不会为「用 `GITHUB_TOKEN` 创建的 release」发出
+> `release: published` 事件（framework 的递归触发保护）。`release.yml` 自动发布 release 时用的正是
+> `GITHUB_TOKEN`，所以 `deploy.yml` 的 `on: release: published` **不会**因它触发——P0 `v0.1.0` 就是这样
+> 发布成功但 deploy 没有自动跑（当时人工补部署）。`workflow_dispatch` 不受该限制，因此 release job 的最后一步
+> 执行 `gh workflow run deploy.yml --ref <默认分支> -f tag=<tag>`（工作流已声明 `permissions.actions: write`），
+> `deploy.yml` 本身零改动。人工在 GitHub 上发布/重新发布 release 仍走 `release: published`；
+> `deploy.yml` 的 `workflow_dispatch` 仍是手动重部署入口。
+
+> **该修复只能在下一次打 tag 时端到端证明**（本地无法触发 GitHub 事件）。届时看：`release` run 是否全绿 →
+> release 是否 published → release run 的 **`trigger deploy (workflow_dispatch)`** 步骤日志里是否出现
+> `dispatched deploy.yml for vX.Y.Z on master` → Actions 列表里是否出现一条 **`deploy` run（event = workflow_dispatch）**
+> 并跑完。若没有：检查 `trigger deploy` 步骤日志（常见原因：工作流 `permissions` 缺 `actions: write`、默认分支不叫
+> `master`），手动补部署：`gh workflow run deploy.yml --ref master -f tag=vX.Y.Z`。
 
 ## 2. 产物
 
+服务器端是 **Go 单二进制**（`apps/signaling-go/`）：一个静态链接的可执行文件，内嵌 Web 应用、信令 WebSocket 监听与 in-process TURN，**服务器不需要 Node 运行时、也不需要单独的 coturn**；协议仍是 v2，客户端零改动。
+
 | 文件 | 用途 |
 |---|---|
-| `crossfile-signaling-<version>-linux-x64.tar.gz` | 解压部署包：`server.cjs` + `public/` + `ecosystem.config.cjs` + `VERSION`（需要服务器有 Node 22） |
-| `crossfile-signaling-<version>-linux-x64` | 单文件二进制（Node SEA，Web 资源已嵌入，服务器无需 Node），约 123 MB；下载后 `chmod +x` 直接运行 |
+| `crossfile-signaling-<version>-linux-x64.tar.gz` | 服务器解压部署包（x64）：`crossfile-signaling` + `ecosystem.config.cjs` + `VERSION`，解压后 `pm2 start` 即单进程提供网页 + `/v1/ws` + TURN（不再需要 Node） |
+| `crossfile-signaling-<version>-linux-arm64.tar.gz` | 同上，arm64 服务器 |
+| `crossfile-signaling-<version>-linux-x64` | 单文件静态 Go 二进制（Web 资源已嵌入，约 10 MB），下载后 `chmod +x` 直接运行，x64 |
+| `crossfile-signaling-<version>-linux-arm64` | 同上，arm64（约 9.5 MB） |
 | `CrossFile-<version>-x86_64.AppImage` | Linux 桌面（Electron/Chromium，ADR 0009） |
 | `CrossFile_<version>_x64_en-US.msi` / `CrossFile_<version>_x64-setup.exe` | Windows 桌面（Tauri，**未签名**，SmartScreen 会提示） |
 | `CrossFile_<version>_universal.dmg` | macOS 桌面（Tauri universal，**未签名/未公证**） |
@@ -25,6 +43,37 @@
 | `SHA256SUMS` | 全部产物的 SHA-256 |
 
 iOS 暂不打包（需要 Apple 开发者账号与签名/TestFlight 流程）。
+
+### 2.1 服务器包内容与运行时环境
+
+`crossfile-signaling-<version>-linux-x64.tar.gz`（arm64 同理）解开后是三个文件，没有 `node_modules`、没有 `public/`、没有 `server.cjs`：
+
+```text
+crossfile-signaling     静态 Go 二进制（模式 0755；网页 + /v1/ws + in-process TURN）
+ecosystem.config.cjs    PM2 配置（name: crossfile-signaling；interpreter: "none"；cwd=__dirname）
+VERSION                 commit / version / built 三行
+```
+
+`ecosystem.config.cjs` 把以下环境变量透传给二进制（其余用二进制默认值；空值视为未设置）：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `HOST` | `0.0.0.0` | 监听地址；反代后面建议 `127.0.0.1` |
+| `PORT` | `8788` | 单进程对外端口（网页 + `/v1/ws` 同源） |
+| `MAX_MEMBERS` | 4（官方实例 2） | 房间成员上限，不含管理员（docs/01 D6） |
+| `TURN_URIS` | 空 | 下发给浏览器的 TURN 地址；空 = 不提供 TURN |
+| `TURN_SECRET` | 空 | TURN 临时凭据的 HMAC secret（内嵌 TURN 与下发凭据用同一份） |
+| `TURN_EXTERNAL_IP` | 启用 TURN 时必填 | 内嵌 TURN 通告给浏览器的 relay 地址；公网主机填公网 IPv4。TURN 仅在 `TURN_URIS` 非空**且** `TURN_SECRET` 设置时启动（与 Node 门禁一致）；缺此地址则启动失败 |
+| `TURN_LISTEN_PORT` | `3478` | 内嵌 TURN 监听端口（udp+tcp） |
+| `TURN_MIN_PORT` / `TURN_MAX_PORT` | `49160` / `49200` | relay 端口段（防火墙需同步放行） |
+
+`deploy.yml` **无需改动**：它下载的资产名与解压后路径不变，`pm2 delete` + `pm2 start <release>/ecosystem.config.cjs --update-env` 对 Go 包和旧的 Node 包都成立（每个 release 自带自己的 ecosystem 配置），健康检查 `curl http://127.0.0.1:$PORT/` 由 Go 二进制内嵌的 Web 应用应答。
+
+体积参考（2026-11-27 本地按本工作流命令实测）：x64 静态二进制约 10 MB、arm64 约 9.5 MB；gzip 后的 tarball 分别约 3.9 MB / 3.5 MB（旧 Node SEA 单文件为 123 MB）。
+
+> 旧的 Node 解压包（`server.cjs` + `public/`，需要服务器有 Node 22）与 Node SEA 单二进制不再随 release 产出；`infra/signaling/build*.mjs` 暂时保留到 Go 生产切换验收通过后再删除。
+
+> ⚠️ **切换窗口注意**：发布 release 会自动触发 `deploy.yml` 部署生产。在 master 上启用本流水线后，**任何新打的 tag 产出的 server 资产都是 Go 二进制**，发布即把生产切换成 Go。P0 的 `v0.1.0` tag 指向旧 commit（`acdd78f`），其 workflow/产物仍是 Node 版本，不受影响；在 Go 切换验收通过前，不要用 master 打新 tag 发布生产。
 
 ## 3. 发一个版本
 
@@ -38,9 +87,13 @@ iOS 暂不打包（需要 Apple 开发者账号与签名/TestFlight 流程）。
    git push origin v0.1.0
    ```
 4. `release` workflow 构建完成后会**自动发布 release**（含产物 + 自动生成的 release notes + SHA256SUMS），
-   并立即触发 `deploy`（`environment: production`，如配置了 required reviewers 需先批准）。
-5. 验收：`https://file.time-pack.com/` 200、`pm2 ls` online、`current` 软链指向 `releases/v0.1.0`。
-   如果产物有问题，删除该 release 并修复后重新打 tag（或在 Actions 里重跑）。
+   随后 release job 的 **`trigger deploy (workflow_dispatch)`** 步骤会显式 dispatch `deploy`
+   （`environment: production`，如配置了 required reviewers 需先批准）。这一步失败会让 release workflow 变红，
+   避免「已发布但没部署」静默发生。
+5. 验收：Actions 里应出现一条 **`deploy` run（event = workflow_dispatch）** 且为绿色；然后
+   `https://file.time-pack.com/` 200、`pm2 ls` online、`current` 软链指向 `releases/<tag>`。
+   如果 release 产物有问题，删除该 release 并修复后重新打 tag（或在 Actions 里重跑）；
+   如果 deploy 没被 dispatch，手动补：`gh workflow run deploy.yml --ref master -f tag=vX.Y.Z`。
 
 > 版本号以 tag 为唯一来源；tag 与 6 个 manifest 不一致时 `verify` job 直接失败。
 
@@ -60,11 +113,16 @@ keystore 只存在本地工作区 `.secrets/android-release.keystore`（gitignor
 本地生成/更新与 Android 签名细节见 `docs/mobile.md` §发布签名。**缺少这 4 个 secret 时 release workflow 会直接失败**，
 不会把 debug 签名的 APK 发出去（job 会校验 APK 证书为 `CN=CrossFile`）。
 
+**工作流权限**：`release.yml` 声明了 `permissions: { contents: write, actions: write }`——`contents: write` 用于创建
+release，`actions: write` 用于最后一步 `gh workflow run deploy.yml` 的 dispatch。若仓库把默认 token 权限设为只读，
+工作流里显式声明的权限依然生效；不需要额外的个人 token secret。
+
 ## 5. 签名与分发说明
 
 - **Windows / macOS**：当前无证书，产物可下载可运行，但 Windows 会弹 SmartScreen、macOS 会提示"无法验证开发者"（右键打开或 `xattr -dr com.apple.quarantine`）。要正式分发需要代码签名证书（Windows）与 Apple Developer ID + 公证（macOS）。
 - **Android**：release APK 用 `org.hancel.file` 包名与 release keystore 签名，可直接侧载安装；上架 Google Play 需要 AAB（后续可加 `--aab`）。
-- **server 二进制**：Node SEA 在 Node 22 仍标记 experimental；默认部署仍用 tarball，二进制作为"下载即跑"的备选（123 MB，无需目标机装 Node，但只能在与构建相同的 OS/架构上运行，当前 linux-x64）。
+- **server**：Go 单二进制（`apps/signaling-go/`，`CGO_ENABLED=0` 静态链接，`-trimpath -ldflags="-s -w"`），一个进程内嵌 Web 应用、`/v1/ws` 与 TURN。生产部署不再需要 Node 运行时或单独的 coturn，协议仍是 v2、客户端零改动。x64 与 arm64 各产出一个 tarball 和一个裸二进制；二进制只能在与构建相同的 OS/架构上运行（当前只出 linux）。
+- **server 包的回滚兼容性**：每个 release 的 tarball 自带自己的 `ecosystem.config.cjs`（Node 版指向 `server.cjs`，Go 版 `interpreter: "none"` 直接跑二进制），所以 `deploy.yml` 用旧 tag 重跑即可回滚到 Node 或 Go 版本，工作流不需要区分。
 
 ## 6. dry run 与本地验证
 
@@ -72,6 +130,18 @@ keystore 只存在本地工作区 `.secrets/android-release.keystore`（gitignor
 # 不创建 release，只验证全矩阵构建（Actions → release → Run workflow，dry_run=true）
 # 本地验证版本门禁
 node scripts/check-version.mjs 0.1.0
+
+# 本地复现 release 的 server 产物（不依赖 CI 产物）
+pnpm --filter @crossfile/web build
+mkdir -p apps/signaling-go/webdist && cp -r apps/web/dist/. apps/signaling-go/webdist/
+SKIP_WEB=1 bash apps/signaling-go/build.sh
+PORT=18998 HOST=127.0.0.1 apps/signaling-go/bin/crossfile-signaling   # 单进程网页 + /v1/ws + TURN
+curl -fsS http://127.0.0.1:18998/ | grep -q '<div id="root">'
+curl -fsS -o /dev/null http://127.0.0.1:18998/r/abcdefghijklmnopqrstuvwxyz   # SPA 回退
+
+# 用真实 e2e 与零存储审计验证 Go 二进制
+E2E_SERVER=go pnpm exec playwright test        # 全量 e2e（Go 信令 + Vite 页面）
+bash tests/audit/zero-storage.sh --go          # strace：0 写盘 / 0 DB / 1 行启动日志
 ```
 
 ## 7. 回滚

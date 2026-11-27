@@ -7,7 +7,9 @@
 
 **2026-11-26：任意互传阶段 1 已实现。** 房间模型从「发送方 + 接收方」改为「管理员 + 成员」，管理员与成员之间可以双向互传（成员之间互传留在阶段 2）；协议升 v2、不兼容 v1（旧页面会收到明确的 `VERSION_MISMATCH` 并提示刷新），Web 端 Host/Guest 两页合并为统一 Room 页。验收：`pnpm gate` 全绿（178 单测）、`pnpm e2e` 20 passed / 1 skipped（AC2 relay 需 TURN 环境）、AC10 双向 500 MB 哈希一致、零存储审计 PASS。生产实例：**https://file.time-pack.com**（GitHub Actions → PM2，部署与验收记录见 [docs/06-acceptance.md](docs/06-acceptance.md)）。决策见 [ADR 0010](docs/adr/0010-any-to-any-room.md)。
 
-**发布与下载：** GitHub Releases 提供服务器解压包 / 服务器单二进制、Linux AppImage、Windows MSI/EXE、macOS DMG、Android APK（`SHA256SUMS` 校验）；打 tag 即自动发布 release 并**自动部署生产**。流程见 [docs/release.md](docs/release.md)。
+**2026-11-27：服务器端 Go 单二进制重写在途。** `apps/signaling-go/` 用 Go 重写 Node 信令服务：一个静态二进制在同一个进程里提供网页、`/v1/ws` 与 in-process TURN——**协议 v2 不变、客户端零改动**。流水线已适配：`E2E_SERVER=go` 跑 e2e、CI 新增 `go`/`e2e-go`/`zero-storage-go` 任务、`tests/audit/zero-storage.sh --go` 审 Go 二进制、release 产出 linux x64/arm64 的 Go tarball 与裸二进制（服务器不再需要 Node 或单独 coturn）。生产切换验收前，线上仍是 Node 版本。进度见 [docs/05-development-plan.md](docs/05-development-plan.md) §7.5。
+
+**发布与下载：** GitHub Releases 提供服务器 tarball（**Go 单二进制**，含网页与 TURN）/ 服务器裸二进制（x64、arm64）、Linux AppImage、Windows MSI/EXE、macOS DMG、Android APK（`SHA256SUMS` 校验）；打 tag 即自动发布 release 并**自动部署生产**。流程见 [docs/release.md](docs/release.md)。
 
 ```bash
 pnpm install
@@ -15,13 +17,16 @@ pnpm dev                   # 信令 :8788 + Web :5173（一起起）
 pnpm dev:signal            # 只起信令：ws://127.0.0.1:8788/v1/ws（零存储、无数据库）
 pnpm dev:web               # Web：http://127.0.0.1:5173
 pnpm gate                  # typecheck + 单测 + 对比度 33/33 + 零硬编码色值
-pnpm e2e                   # Playwright 双浏览器真实传输（默认 10 MB）
+pnpm e2e                   # Playwright 双浏览器真实传输（默认 10 MB，Node 信令）
+E2E_SERVER=go pnpm e2e     # 同上，但信令换成 Go 单二进制（先 SKIP_WEB=1 构建再启动）
 E2E_FILE_MB=500 pnpm e2e   # 500 MB 用例
+bash apps/signaling-go/build.sh   # 构建 Go 信令单二进制（内含网页 + /v1/ws + TURN）
 
 # 一键自托管（signaling + coturn，零存储、只读根文件系统）
 cp infra/.env.example infra/.env   # 填 TURN_SECRET / TURN_URIS / PUBLIC_HOST
 docker compose -f infra/docker-compose.yml up -d --build
-bash tests/audit/zero-storage.sh   # 零存储审计（本机 strace）
+bash tests/audit/zero-storage.sh   # 零存储审计（本机 strace，Node）
+bash tests/audit/zero-storage.sh --go   # 零存储审计（Go 单二进制）
 SKIP_BUILD=1 bash tests/audit/zero-storage.sh --container   # 容器只读审计
 E2E_RELAY=1 TURN_SECRET=... TURN_URIS='turn:127.0.0.1:3478?transport=udp' \
   pnpm exec playwright test tests/e2e/ac2-relay.spec.ts       # 仅中继路径
@@ -57,9 +62,9 @@ E2E_NO_WS=1 E2E_BASE_URL=https://room.net.time-pack.com E2E_IGNORE_TLS=1 \
 | [docs/03-roadmap.md](docs/03-roadmap.md) | 仓库结构、技术栈、M0–M4 里程碑、测试矩阵、风险清单 |
 | [docs/04-design-system.md](docs/04-design-system.md) | 设计系统：设计意图、OKLCH token、排版、组件与状态、无障碍、平台适配、文案 |
 | [docs/deploy-official-instance.md](docs/deploy-official-instance.md) | 官方实例部署清单：前置条件、.env、反代、验收命令、运维边界、中继成本 |
-| [docs/release.md](docs/release.md) | 发布流程：tag → draft release（server tarball/二进制、桌面、Android）→ 发布即部署 |
-| [.github/workflows/release.yml](.github/workflows/release.yml) | 打包：tag 驱动，构建全部产物 + SHA256SUMS，创建 draft release |
-| [.github/workflows/deploy.yml](.github/workflows/deploy.yml) | 部署：release published → 下载 release 资产 → scp → PM2 重载 + 健康检查 |
+| [docs/release.md](docs/release.md) | 发布流程：tag → release（Go 单二进制 tarball/裸二进制、桌面、Android）→ 发布即部署 |
+| [.github/workflows/release.yml](.github/workflows/release.yml) | 打包：tag 驱动，构建全部产物 + SHA256SUMS，**自动发布** release 并显式 dispatch deploy |
+| [.github/workflows/deploy.yml](.github/workflows/deploy.yml) | 部署：release published / workflow_dispatch（release job 显式 dispatch）→ 下载 release 资产 → scp → PM2 重载 + 健康检查 |
 | [docs/desktop.md](docs/desktop.md) | Tauri 2 桌面壳：依赖、开发/打包命令、原生写盘 IPC、关窗保护、菜单 |
 | [docs/mobile.md](docs/mobile.md) | Tauri 2 手机壳：Android 构建、原生写盘、前台保活、分享接收、限制 |
 | [design/](design/README.md) | 设计稿与出图流水线：6 个画面（统一 Room 页）、token、对比度校验、截图脚本 |

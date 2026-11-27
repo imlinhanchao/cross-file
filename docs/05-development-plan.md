@@ -40,6 +40,7 @@
 | **M3 产品化** | 多接收方队列 + 文件×人矩阵、审批/移除/结束、6 位码 + SAS emoji、全状态与无障碍 | AC5 AC6 | ☐ |
 | **M4 发布可用** | docker-compose 一键自托管、官方实例、隐私页、自托管文档、LICENSE | U1–U8 复跑 | ☐ |
 | **M5 发布后** | 鸿蒙 API 26 冒烟、真机待办、v1.x backlog | 报告归档 | ☐ |
+| **M6 Go 单二进制后端** | 用 Go 重写信令（协议 v2 不变、客户端零改动），单进程内嵌 Web 静态资源与 TURN；CI / e2e / 零存储审计 / 发布流水线适配 | e2e（`E2E_SERVER=go`）全绿 + 零存储 `--go` PASS + release 产出 Go 资产 + 生产切换验收 | ✅ 实现/验证完成，🚧 生产切换待做 |
 
 ## 4. 工作包（WBS）
 
@@ -59,6 +60,7 @@
 | WS11 | 鸿蒙 ArkWeb 冒烟 | 0.5 | ☐ |
 | WS12 | e2e/perf/审计 | 4.0 | ☐ |
 | WS13 | infra/deploy/文档 | 2.5 | ☐ |
+| WS14 | `apps/signaling-go`：协议 v2 parity、内嵌 TURN、单静态二进制；e2e/CI/零存储/发布适配 | 3.0 | ✅ |
 
 ## 5. 环境事实（实测）
 
@@ -340,6 +342,39 @@ https://room.net.time-pack.com  --TLS-->  nginx (既有反代)  -->  Vite :5173
 - **CI 安装修复**：`pnpm-workspace.yaml` 的 `allowBuilds` 里 `electron-winstaller` 是 `pnpm approve-builds` 写下的占位字符串，pnpm 12 在非交互安装时按「未批准」处理并报 `ERR_PNPM_IGNORED_BUILDS`（GitHub Actions 因此失败）；显式设为 `false`（只有打包 Windows 安装器才会用到它的脚本）后，`pnpm install --frozen-lockfile` 在 CI 与本地均通过。
 - **未验证项**：AC2 relay（本机无 coturn）；管理员 WS 断线/成员 `rejoinToken` 重连只有服务端单测、无浏览器实测钩子；壳层（Tauri/Electron/手机）仍靠人工 AC9（本次未重跑，壳加载同一 Web 产物）；阶段 2 未实现（协议/状态已按 member 化预留）。
 - **AC11 用例依赖大文件窗口**：默认用 80 MB 制造排队窗口（本机稳定），极快机器可用 `E2E_QUEUE_MB` 放大。
+
+## 7.5 Go 单二进制后端（2026-11-27，实现与验证完成，待生产切换）
+
+**目标**：用 Go 重写 Node 信令服务（`apps/signaling-go/`），产出一个静态单二进制，进程内同时提供 Web 静态资源、`/v1/ws` 与 in-process TURN；**协议 v2 不变、客户端零改动**，随后生产从「Node + 独立 coturn」切换到「一个 Go 二进制」。
+
+**构建契约**（`apps/signaling-go/build.sh`）：
+
+- `SKIP_WEB=1` 跳过前端构建（e2e/CI 用 Vite 或已下载的 `web-dist`）；否则先构建前端并复制 `apps/web/dist` → `apps/signaling-go/webdist/` 供 `go:embed`；
+- `CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o apps/signaling-go/bin/crossfile-signaling .`；
+- 环境变量：`HOST`、`PORT`(8788)、`MAX_MEMBERS`、`RATE_LIMIT_MAX`、`RATE_LIMIT_WINDOW_MS`、`TURN_SECRET`、`TURN_URIS`、`TURN_EXTERNAL_IP`、`TURN_LISTEN_PORT`(3478)、`TURN_MIN_PORT`(49160)、`TURN_MAX_PORT`(49200)、`STATIC_DIR`。
+
+**流水线适配（本次完成）**：
+
+- e2e：`playwright.config.ts` 支持 `E2E_SERVER=go`（默认仍是 Node `dev.ts`）；Go 模式先 `SKIP_WEB=1 bash apps/signaling-go/build.sh` 再启动二进制，Vite webServer 与默认 Node 分支不变。
+- CI：`.github/workflows/ci.yml` 新增 `go`（gofmt / go vet / go test / 静态构建）、`e2e-go`（`E2E_SERVER=go pnpm e2e`）、`zero-storage-go`；Node 的 e2e 与容器零存储 job 保留到 Go 生产切换验收通过。
+- 零存储：`tests/audit/zero-storage.sh --go` 用同一套 `strace` + 8 步 v2 会话审计 Go 二进制，并额外断言启动日志不含 roomId / 6 位码 / 显示名。
+- 发布：`release.yml` 的 server job 改为 Go 构建（linux x64 + arm64），tarball 资产名保持 `crossfile-signaling-<version>-linux-x64.tar.gz` 不变，内含 Go 二进制 + `interpreter: "none"` 的 `ecosystem.config.cjs` + `VERSION`；另出裸二进制资产，并在发布前做「内嵌页面 / SPA 回退 / v1 版本门禁」冒烟。`deploy.yml` 零改动。
+- 文档：`docs/release.md`、`docs/self-host.md`、README 同步为单二进制部署；旧 Node 构建脚本（`infra/signaling/build*.mjs`）暂留，切换验收后再删。
+
+**状态**：实现与全部本地验证已完成（见下方实测）；生产仍跑 Node 版本，待一次 tag 发布完成切换。切换顺序：停 coturn（释放 3478）→ 打 tag → release 自动发布并 dispatch deploy → Go 二进制接管网页 + `/v1/ws` + TURN。回滚只需用旧 tag 重跑 deploy 并重启 coturn（见 `docs/release.md` §7）。
+
+**本地实测（2026-11-27，流水线本身）**：
+
+- `SKIP_WEB=1 bash apps/signaling-go/build.sh` → `bin/crossfile-signaling`（7.4 MB、静态 ELF、stripped）；含内嵌网页的完整构建 **10,457,248 B（10 MB）**；
+- `E2E_SERVER=go pnpm exec playwright test tests/e2e/m0-transfer.spec.ts` → **1 passed**（7.7 s，Go 信令 + Vite 页面）；
+- `bash tests/audit/zero-storage.sh --go` → **RESULT PASS**：8 步 v2 会话、0 可写文件、0 普通文件 write、1 行启动日志、无 roomId/6 位码/显示名、cwd 为空；
+- release `server` job 的三段 `run` 脚本原文实跑：x64/arm64 均静态链接（含内嵌网页时 10 MB / 9.5 MB）、冒烟通过（`<div id="root">`、`/r/<id>` SPA 回退、v1 客户端收到 `VERSION_MISMATCH`）、tarball 内容为 `crossfile-signaling`(0755) + `ecosystem.config.cjs` + `VERSION`；
+- 本机 PM2 用 tarball 内的 `ecosystem.config.cjs` 实跑：`interpreter: none`、`online`、`curl /` 200、`/r/<id>` 200、日志仅一行启动、`pm2 delete` 后端口释放（`deploy.yml` 的 pm2 步骤等价）。
+- **全量 e2e（Go 信令）**：`E2E_SERVER=go pnpm e2e` → **20 passed / 1 skipped（AC2 relay）**，2.0 min，与 Node 基线一致；
+- **内嵌 TURN 的 AC2 relay（不依赖 coturn）**：`E2E_SERVER=go E2E_RELAY=1 TURN_SECRET=… TURN_URIS='turn:127.0.0.1:3478?…' TURN_EXTERNAL_IP=127.0.0.1 pnpm exec playwright test tests/e2e/ac2-relay.spec.ts` → **1 passed（9.7 s）**，双方 `path === "relay"` 断言通过（DTLS-SCTP 真的走进程内 relay）；
+- **Go 单测**：`go test ./...` → **93 个测试全过，85.2% 语句覆盖率，`-race` 干净**；`gofmt -l` 空、`go vet` 干净；
+- **parity 审查**：独立只读审查（Node `server.ts`/`rooms.ts`/`static.ts`/`identity.ts`/`turn.ts` vs Go）→ 无 blocker；修复了 TURN 门禁（改为 `TURN_URIS` 与 `TURN_SECRET` 都非空才启动，与 Node 一致）、`/v1%2Fws` 原始路径、`.gitkeep` 不下发、连接 goroutine panic 恢复、profile 窗口哨兵等 7 项差异；
+- **零存储（Go）**：`bash tests/audit/zero-storage.sh --go` → **RESULT PASS**（0 可写文件、0 普通文件 write、stdout 恰 1 行、无 roomId/6 位码/显示名、cwd 为空）。
 
 ## 8. 待办（需外部输入）
 

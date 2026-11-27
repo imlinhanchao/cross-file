@@ -334,6 +334,7 @@ https://room.net.time-pack.com  --TLS-->  nginx (既有反代)  -->  Vite :5173
 - **e2e 限流逃生口**：`dev.ts` 新增 `RATE_LIMIT_MAX`/`RATE_LIMIT_WINDOW_MS`（仅测试 webServer 设为 100000；生产默认 120/60 s 不变）。
 - **沙箱 inotify 兜底**：`tests/e2e/fs-watch-fallback.cjs` 在 EMFILE/ENOSPC 时退化为轮询，`playwright.config.ts` 自动加载，正常机器 no-op。
 - **容器构建修复**：pnpm 12 对 workspace root 的 electron-builder 链（即使 `--filter` 也会安装）报 `ERR_PNPM_IGNORED_BUILDS`；`infra/signaling/Dockerfile` 的 `pnpm install` 加 `--ignore-scripts`（bundle 与 Vite 构建不需要 lifecycle script），容器审计重建后 PASS。
+- **PM2 发布路径修复（2026-11-27，生产实例）**：`pm2 startOrReload` 按名字匹配已有进程、沿用首次部署的 `script path`；第 6 次部署时该 release 已被保留策略删除，进程崩溃循环、健康检查失败。deploy 脚本改为 `pm2 delete` + `pm2 start <新 release>/ecosystem.config.cjs`，确保每次指向当前 release。
 - **CI 安装修复**：`pnpm-workspace.yaml` 的 `allowBuilds` 里 `electron-winstaller` 是 `pnpm approve-builds` 写下的占位字符串，pnpm 12 在非交互安装时按「未批准」处理并报 `ERR_PNPM_IGNORED_BUILDS`（GitHub Actions 因此失败）；显式设为 `false`（只有打包 Windows 安装器才会用到它的脚本）后，`pnpm install --frozen-lockfile` 在 CI 与本地均通过。
 - **未验证项**：AC2 relay（本机无 coturn）；管理员 WS 断线/成员 `rejoinToken` 重连只有服务端单测、无浏览器实测钩子；壳层（Tauri/Electron/手机）仍靠人工 AC9（本次未重跑，壳加载同一 Web 产物）；阶段 2 未实现（协议/状态已按 member 化预留）。
 - **AC11 用例依赖大文件窗口**：默认用 80 MB 制造排队窗口（本机稳定），极快机器可用 `E2E_QUEUE_MB` 放大。

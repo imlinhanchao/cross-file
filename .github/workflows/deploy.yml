@@ -139,7 +139,11 @@ jobs:
             set +a
             export PM2_LOG_DIR="$ROOT/logs"
 
-            pm2 startOrReload "$RELEASE/ecosystem.config.cjs" --update-env
+            # `startOrReload` matches the app by name and keeps the script path from the
+            # first deploy, so a later release could still point at a directory that the
+            # retention step has deleted. Delete + start re-registers the current release.
+            pm2 delete crossfile-signaling >/dev/null 2>&1 || true
+            pm2 start "$RELEASE/ecosystem.config.cjs" --update-env
             pm2 save
 
             PORT="${PORT:-8788}"

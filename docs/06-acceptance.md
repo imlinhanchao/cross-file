@@ -167,6 +167,28 @@ pnpm exec playwright test tests/e2e/auto-accept.spec.ts
 bash tests/audit/zero-storage.sh
 ```
 
+### 生产 v0.3.0（阶段 2 + Node 移除，2026-11-27）
+
+| 项 | 值 / 证据 |
+|---|---|
+| Release | tag `v0.3.0` → `13faa2c`；release workflow（run 45990768524）全绿：gates（gates/go/e2e/zero-storage/zero-storage-container）、version、web、server（Go x64/arm64）、desktop×3、android、publish；**自动发布**（10 资产 + SHA256SUMS） |
+| 部署 | **首次全自动链路**：release job 显式 dispatch → `deploy` run 45992262331（event `workflow_dispatch`）全绿（下载 → 校验 → scp → 解压 → PM2 重启 → 健康检查 → `current` 软链）；`releases/v0.3.0` 只有 3 个文件（无嵌套 `release/`），保留最近 5 个 release |
+| 进程 | PM2 online（pid 79616，内存 5.4 MB，0 restarts）；`current` → `releases/v0.3.0`；`VERSION` = `commit=13faa2c…`、`version=0.3.0`；启动日志 1 行 `listening on ws://127.0.0.1:8788/v1/ws turn=on`；err 日志 0 行；coturn `inactive` |
+| 入口/端口 | `https://file.time-pack.com/` 200（0.12 s）；3478 udp+tcp 监听（内嵌 TURN）；8788 仅回环（nginx 反代） |
+| 生产验收 | **AC10 双向 10 MB → 1 passed（10.4 s）**；**AC16 成员↔成员 mesh → 1 passed（7.4 s）**（阶段 2 新能力，生产实测）；**AC2 relay-only 10 MB（内嵌 TURN）→ 1 passed（1.2 min）** |
+| 仓库 | `packages/signaling` 等 Node 实现已删除；`pnpm dev`/`pnpm e2e`/`zero-storage.sh` 默认都是 Go；回滚到 Node 需部署 `v0.1.0` release 并重新启用 coturn（仓库不再保留 Node 源码） |
+
+生产验收命令：
+
+```bash
+E2E_NO_WS=1 E2E_BASE_URL=https://file.time-pack.com \
+  pnpm exec playwright test tests/e2e/ac10-bidirectional.spec.ts
+E2E_NO_WS=1 E2E_BASE_URL=https://file.time-pack.com \
+  pnpm exec playwright test tests/e2e/ac16-mesh.spec.ts
+E2E_NO_WS=1 E2E_BASE_URL=https://file.time-pack.com E2E_RELAY=1 E2E_RELAY_MB=10 \
+  pnpm exec playwright test tests/e2e/ac2-relay.spec.ts
+```
+
 ## Go 单二进制后端（2026-11-27，已上线；Node 实现已移除）
 
 > 背景：用 Go 重写信令后端并把 TURN 内嵌进同一进程（`apps/signaling-go/`），去掉服务端 Node 与独立 coturn；

@@ -5,7 +5,7 @@
 
 **当前状态：M0 已跑通（2026-11-24）。** 两个浏览器经本机信令 + WebRTC 数据通道互传 10 MB / 100 MB / 500 MB，密文分片 AES-256-GCM、全文件 SHA-256 双向校验一致，界面显示真实路径标签（局域网直连 / 直连 / 中继）。设计与验收细节见 [docs/05-development-plan.md](docs/05-development-plan.md)。
 
-**2026-11-26：任意互传阶段 1 已实现。** 房间模型从「发送方 + 接收方」改为「管理员 + 成员」，管理员与成员之间可以双向互传（成员之间互传留在阶段 2）；协议升 v2、不兼容 v1（旧页面会收到明确的 `VERSION_MISMATCH` 并提示刷新），Web 端 Host/Guest 两页合并为统一 Room 页。验收：`pnpm gate` 全绿（178 单测）、`pnpm e2e` 20 passed / 1 skipped（AC2 relay 需 TURN 环境）、AC10 双向 500 MB 哈希一致、零存储审计 PASS。决策见 [ADR 0010](docs/adr/0010-any-to-any-room.md)，证据见 [docs/06-acceptance.md](docs/06-acceptance.md)。
+**2026-11-26：任意互传阶段 1 已实现。** 房间模型从「发送方 + 接收方」改为「管理员 + 成员」，管理员与成员之间可以双向互传（成员之间互传留在阶段 2）；协议升 v2、不兼容 v1（旧页面会收到明确的 `VERSION_MISMATCH` 并提示刷新），Web 端 Host/Guest 两页合并为统一 Room 页。验收：`pnpm gate` 全绿（178 单测）、`pnpm e2e` 20 passed / 1 skipped（AC2 relay 需 TURN 环境）、AC10 双向 500 MB 哈希一致、零存储审计 PASS。生产实例：**https://file.time-pack.com**（GitHub Actions → PM2，部署与验收记录见 [docs/06-acceptance.md](docs/06-acceptance.md)）。决策见 [ADR 0010](docs/adr/0010-any-to-any-room.md)。
 
 ```bash
 pnpm install

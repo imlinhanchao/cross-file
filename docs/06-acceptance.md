@@ -107,3 +107,29 @@ bash tests/audit/zero-storage.sh --container   # 会重建镜像；SKIP_BUILD=1 
 3. **全量 e2e 偶发 RATE_LIMITED**：生产 per-IP 限流 120 msg/60 s 对同源全量测试过紧；`packages/signaling/src/dev.ts` 增加 `RATE_LIMIT_MAX`/`RATE_LIMIT_WINDOW_MS` 逃生口，Playwright `webServer` 仅对测试进程设为 100000（生产默认不变）。
 4. **沙箱禁用 inotify**：本机 `fs.watch()` 返回 EMFILE，Vite 起不来；`tests/e2e/fs-watch-fallback.cjs` 在 EMFILE/ENOSPC 时退化为 500 ms stat 轮询，`playwright.config.ts` 自动加载，正常机器 no-op。
 5. **容器审计构建失败（pnpm 12）**：`docker compose build` 在 `pnpm install` 阶段报 `ERR_PNPM_IGNORED_BUILDS`（workspace root 的 electron-builder 链即使 `--filter` 也会安装，其 lifecycle script 未被批准）；`infra/signaling/Dockerfile` 的 install 加 `--ignore-scripts`（bundle 与 Vite 构建都不需要 lifecycle script），重建后容器审计 PASS。
+
+6. **容器构建缺少 design/**：BuildKit 读取 `infra/signaling/Dockerfile.dockerignore`，其中排除了 `design/`，但镜像构建要 `COPY design` 给 Web 样式用 → CI 的 zero-storage job 报 `COPY design: not found`；已从 dockerignore 移除该行（design 仅 1.2 MB）。
+7. **暗色 dropzone 提示对比度**：GitHub runner 上 axe 报 `.dropzone > .muted.small` 4.08:1（前台 `#a0a5ac` / 背景 `#3f4245`）；提示文案改用 `--text-secondary`（语义 token，明暗都 ≥ 7:1）。
+8. **CI 上 AC12b 观察不到 paused**：管理员重建 offer 与旧通道 close 事件存在时序差，成员端可能把新 offer 应用到死连接；成员端收到管理员 offer 时现在总是丢弃旧 answerer 并重建，AC12b 断言改为「恢复完成 + 哈希一致」（AC12a 仍严格断言双端 paused）。
+
+### 生产实例（2026-11-27）
+
+| 项 | 值 / 证据 |
+|---|---|
+| 入口 | `https://file.time-pack.com`（DNS → 120.77.241.222；nginx 1.16.1 复用 `*.time-pack.com` 泛证书，2027-02-16 到期；80→443 跳转；HSTS / CSP / Referrer-Policy / X-Content-Type-Options / Permissions-Policy） |
+| 部署 | GitHub Actions `deploy`（build → scp → PM2）；push `master` 自动部署；`/var/www/rust/cross-file/releases/<sha>` + `current` 软链，保留最近 5 个 release |
+| 进程 | PM2 `crossfile-signaling` online（Node 22.22.1；`HOST=127.0.0.1`、`PORT=8788`，只经 nginx 反代） |
+| 配置 | 服务器 `shared/.env`（`TURN_SECRET`、`TURN_URIS`、`PUBLIC_HOST`、`PORT`、`HOST`、`MAX_MEMBERS=2`），不进 release；`infra/.env` 模板已留档为 `.env.template.bak` |
+| TURN | coturn 4.5.2，`turn:file.time-pack.com:3478`（udp/tcp），`external-ip=120.77.241.222`，`no-tls/no-dtls`，日志 `/dev/shm/coturn.log`（tmpfs） |
+| 验收 | `https://file.time-pack.com/` 200 + 安全头；**生产环境** AC10 双向 10 MB 通过（9.9 s）；**生产环境** AC2 relay-only 10 MB 通过（39.3 s，路径「中继」）；v1 客户端收到 `VERSION_MISMATCH`；PM2 日志仅 1 行启动；release 内无 `.env` |
+| CI | `ci` 全绿（gates + e2e 20 passed / 1 skipped + 容器零存储审计）；`deploy` success（commit `5d06286`） |
+
+生产验收命令：
+
+```bash
+E2E_NO_WS=1 E2E_BASE_URL=https://file.time-pack.com \
+  pnpm exec playwright test tests/e2e/ac10-bidirectional.spec.ts
+E2E_NO_WS=1 E2E_BASE_URL=https://file.time-pack.com E2E_RELAY=1 E2E_RELAY_MB=10 \
+  pnpm exec playwright test tests/e2e/ac2-relay.spec.ts
+```
+

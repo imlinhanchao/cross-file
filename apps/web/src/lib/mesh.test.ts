@@ -2,14 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   handoverInfo,
   isPairOfferer,
-  pairElectionSettled,
   pairNeedsSas,
   roleAfterMembers,
   type PairElectionInput,
 } from "./mesh.js";
-
-const MESH = { mesh: true };
-const OLD = {};
 
 function election(
   overrides: Partial<PairElectionInput> = {},
@@ -18,16 +14,13 @@ function election(
     selfId: "aaaa",
     peerId: "bbbb",
     selfIsAdmin: false,
-    peerIsAdmin: false,
-    selfMesh: true,
-    peerCaps: MESH,
     selfHasKey: true,
     ...overrides,
   };
 }
 
 describe("isPairOfferer", () => {
-  it("new-new: the lexicographically smaller memberId offers", () => {
+  it("the lexicographically smaller memberId offers", () => {
     expect(isPairOfferer(election({ selfId: "aaa", peerId: "bbb" }))).toBe(
       true,
     );
@@ -38,102 +31,20 @@ describe("isPairOfferer", () => {
     expect(isPairOfferer(election({ selfId: "10", peerId: "9" }))).toBe(true);
   });
 
-  it("new-new: role of the admin does not matter for the election", () => {
+  it("the admin role does not matter for the election", () => {
     expect(
       isPairOfferer(
-        election({
-          selfId: "aaa",
-          peerId: "bbb",
-          selfIsAdmin: false,
-          peerIsAdmin: true,
-        }),
+        election({ selfId: "aaa", peerId: "bbb", selfIsAdmin: true }),
       ),
     ).toBe(true);
     expect(
       isPairOfferer(
-        election({
-          selfId: "bbb",
-          peerId: "aaa",
-          selfIsAdmin: true,
-          peerIsAdmin: false,
-        }),
+        election({ selfId: "bbb", peerId: "aaa", selfIsAdmin: true }),
       ),
     ).toBe(false);
   });
 
-  it("new-old: falls back to 'the admin is the offerer' regardless of ids", () => {
-    // New client is the smaller id but the old peer is the admin: admin offers.
-    expect(
-      isPairOfferer(
-        election({
-          selfId: "aaa",
-          peerId: "bbb",
-          selfIsAdmin: false,
-          peerIsAdmin: true,
-          peerCaps: OLD,
-        }),
-      ),
-    ).toBe(false);
-    // New client is the admin: it must offer, even though its id is larger.
-    expect(
-      isPairOfferer(
-        election({
-          selfId: "zzz",
-          peerId: "aaa",
-          selfIsAdmin: true,
-          peerIsAdmin: false,
-          peerCaps: OLD,
-        }),
-      ),
-    ).toBe(true);
-  });
-
-  it("old-old: the admin is the offerer", () => {
-    expect(
-      isPairOfferer(
-        election({
-          selfId: "zzz",
-          peerId: "aaa",
-          selfMesh: false,
-          selfIsAdmin: true,
-          peerCaps: OLD,
-        }),
-      ),
-    ).toBe(true);
-    expect(
-      isPairOfferer(
-        election({
-          selfId: "aaa",
-          peerId: "zzz",
-          selfMesh: false,
-          selfIsAdmin: false,
-          peerCaps: OLD,
-        }),
-      ),
-    ).toBe(false);
-  });
-
-  it("caps unknown: conservative admin fallback, election not settled", () => {
-    expect(pairElectionSettled(undefined)).toBe(false);
-    expect(pairElectionSettled(OLD)).toBe(true);
-    expect(
-      isPairOfferer(
-        election({ selfId: "aaa", peerId: "bbb", peerCaps: undefined }),
-      ),
-    ).toBe(false);
-    expect(
-      isPairOfferer(
-        election({
-          selfId: "zzz",
-          peerId: "aaa",
-          selfIsAdmin: true,
-          peerCaps: undefined,
-        }),
-      ),
-    ).toBe(true);
-  });
-
-  it("6-digit SAS path: the admin offers the pair, whatever the caps say", () => {
+  it("6-digit SAS path: the admin offers the pair, whatever the ids say", () => {
     // Member without the key: it answers the admin's offer.
     expect(
       isPairOfferer(
@@ -141,7 +52,6 @@ describe("isPairOfferer", () => {
           selfId: "aaa",
           peerId: "bbb",
           selfIsAdmin: false,
-          peerIsAdmin: true,
           selfHasKey: false,
         }),
       ),
@@ -153,7 +63,6 @@ describe("isPairOfferer", () => {
           selfId: "zzz",
           peerId: "aaa",
           selfIsAdmin: true,
-          peerIsAdmin: false,
           peerHasKey: false,
         }),
       ),

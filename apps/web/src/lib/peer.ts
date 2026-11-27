@@ -2,7 +2,7 @@
  * One `PeerConnection` per pair of members (ADR 0010, docs/02 v2).
  *
  * Responsibilities:
- * - own the WebRTC peer (phase 1: the admin is always the offerer),
+ * - own the WebRTC peer (the pair's elected offerer creates the offer),
  * - serialise transfers with that peer: at most one active transfer per pair,
  *   either direction; a local attempt while the pair is busy is queued and
  *   retried when the pair becomes idle (AC11),
@@ -38,9 +38,9 @@ export interface PeerSessionHooks {
   selfIsAdmin(): boolean;
   peerIsAdmin(): boolean;
   /**
-   * This side is the pair's offerer (docs/02 §11.1: phase-2 lexicographic
-   * election, phase-1 admin fallback for old peers). Read dynamically so a
-   * role change or a late member-list update is honoured on the next attach.
+   * This side is the pair's offerer (docs/02 §11.1: smaller memberId, except
+   * the admin on the 6-digit SAS path). Read dynamically so a role change or a
+   * member-list update is honoured on the next attach.
    */
   offerer(): boolean;
   relayOnly: boolean;
@@ -220,7 +220,7 @@ export class PeerSession {
    * Cancel the pair's active transfer (either direction), docs/02 §10.2 cancel.
    * The local side ends immediately; the peer is told with a ctrl `cancel` and
    * the pair becomes idle so the next queued job can start without waiting for
-   * an acknowledgement (older pages cannot answer one anyway).
+   * an acknowledgement.
    */
   cancelActive(): boolean {
     const sender = this.sender;
@@ -325,8 +325,8 @@ export class PeerSession {
       this.hooks.offerer() ? this.pairReady : this.hooks.hasKey(),
     );
     // The pair is open: start the per-pair ctrl heartbeat (docs/02 §10.2). It is
-    // stopped again by handleLost()/close(); older peers ignore ping and never
-    // pong, which CtrlHeartbeat handles by not enforcing a timeout for them.
+    // stopped again by handleLost()/close(); a peer that sends nothing at all is
+    // declared lost after CtrlHeartbeat's timeout and the pair is rebuilt.
     this.startHeartbeat();
     this.onReopen();
   }
@@ -463,8 +463,7 @@ export class PeerSession {
 
   private onCtrl(raw: unknown): void {
     if (this.closed) return;
-    // Any frame proves the pair is alive, including frames from older peers that
-    // do not know the heartbeat and ones that fail to parse below.
+    // Any frame proves the pair is alive, including one that fails to parse below.
     this.heartbeat?.noteActivity();
     let message: CtrlMessage;
     try {
@@ -476,11 +475,9 @@ export class PeerSession {
     }
     switch (message.type) {
       case "ping":
-        this.heartbeat?.noteActivity();
         this.sendCtrl({ v: 2, type: "pong" });
         return;
       case "pong":
-        this.heartbeat?.notePong();
         return;
       case "cancel":
         this.onCancel(message);
@@ -525,7 +522,7 @@ export class PeerSession {
    * go back to idle. A stale/unknown id is ignored — the same pair runs one
    * transfer at a time, so a mismatch can only be a late frame from a finished
    * one. We do not answer: the cancelling side already ended locally, and not
-   * waiting for an ack is what makes this work with older peers too.
+   * waiting for an ack keeps this a one-way notice.
    */
   private onCancel(message: Extract<CtrlMessage, { type: "cancel" }>): void {
     if (this.sender?.transferId === message.transferId) {
@@ -547,8 +544,9 @@ export class PeerSession {
       // Priority rule (ADR 0010): the admin's direction wins when both sides
       // start at the same time. A member yields while its own manifest has not
       // been accepted yet; otherwise the pair answers BUSY and the peer retries.
-      // docs/02 §6.5: the pair's offerer wins a simultaneous start (the admin
-      // on phase-1 fallback pairs), so the other side yields its unaccepted send.
+      // docs/02 §6.5: the pair's offerer wins a simultaneous start (on the
+      // 6-digit path the admin is the offerer), so the other side yields its
+      // unaccepted send.
       const yieldToPriority = !this.hooks.offerer() && !this.sender.hasAccepted;
       if (!yieldToPriority) {
         this.rejectBusy(manifest.transferId);

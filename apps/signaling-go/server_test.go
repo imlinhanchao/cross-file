@@ -965,67 +965,6 @@ func TestRecoverConnHandlesPanic(t *testing.T) {
 	}
 }
 
-func TestMeshCapabilityForwarded(t *testing.T) {
-	_, port := startTestServer(t, Options{Port: 0})
-	admin := connectClient(t, port)
-	roomID := newRoomID(t)
-	adminMeshCaps := withMesh(adminCaps(), true)
-	admin.send(map[string]any{"v": 2, "type": "hello", "clientCaps": adminMeshCaps})
-	admin.send(map[string]any{"v": 2, "type": "create", "roomId": roomID, "caps": adminMeshCaps, "name": "MacBook · 7K2F"})
-	created := admin.mustNext("created", testTimeout)
-	if mesh, ok := membersOf(t, created)[0].(map[string]any)["caps"].(map[string]any)["mesh"]; !ok || mesh != true {
-		t.Fatalf("created caps.mesh = %v", membersOf(t, created)[0])
-	}
-
-	// A phase-2 member's mesh flag reaches the admin in join_request...
-	member := connectClient(t, port)
-	memberMeshCaps := withMesh(memberCaps(), true)
-	member.send(map[string]any{"v": 2, "type": "hello", "clientCaps": memberMeshCaps})
-	member.send(map[string]any{"v": 2, "type": "join", "roomId": roomID, "caps": memberMeshCaps, "nonce": "member-nonce-0123456789"})
-	request := admin.mustNext("join_request", testTimeout)
-	if mesh, ok := request["caps"].(map[string]any)["mesh"]; !ok || mesh != true {
-		t.Fatalf("join_request caps.mesh = %v", request["caps"])
-	}
-	admin.send(map[string]any{"v": 2, "type": "approve", "memberId": request["memberId"]})
-	joinOk := member.mustNext("join_ok", testTimeout)
-	member.mustNext("members", testTimeout)
-	admin.mustNext("members", testTimeout)
-	for _, entry := range membersOf(t, joinOk) {
-		if mesh, ok := entry.(map[string]any)["caps"].(map[string]any)["mesh"]; !ok || mesh != true {
-			t.Fatalf("join_ok caps lost mesh: %v", entry)
-		}
-	}
-
-	// ... and in every later members broadcast (e.g. after a rename).
-	member.send(map[string]any{"v": 2, "type": "profile", "name": "客厅的电脑"})
-	broadcast := admin.mustNext("members", testTimeout)
-	for _, entry := range membersOf(t, broadcast) {
-		if mesh, ok := entry.(map[string]any)["caps"].(map[string]any)["mesh"]; !ok || mesh != true {
-			t.Fatalf("members caps lost mesh: %v", entry)
-		}
-	}
-
-	// Older clients omit mesh: forwarded caps stay absent (never mesh=false).
-	plain := connectClient(t, port)
-	plain.send(map[string]any{"v": 2, "type": "hello", "clientCaps": memberCaps()})
-	plain.send(map[string]any{"v": 2, "type": "join", "roomId": roomID, "caps": memberCaps(), "nonce": "member-nonce-0123456789"})
-	plainRequest := admin.mustNext("join_request", testTimeout)
-	if _, present := plainRequest["caps"].(map[string]any)["mesh"]; present {
-		t.Fatalf("old client caps gained a mesh field: %v", plainRequest["caps"])
-	}
-	admin.send(map[string]any{"v": 2, "type": "approve", "memberId": plainRequest["memberId"]})
-	plainJoinOk := plain.mustNext("join_ok", testTimeout)
-	plain.mustNext("members", testTimeout)
-	admin.mustNext("members", testTimeout)
-	for _, entry := range membersOf(t, plainJoinOk) {
-		if entry.(map[string]any)["id"] == plainRequest["memberId"] {
-			if _, present := entry.(map[string]any)["caps"].(map[string]any)["mesh"]; present {
-				t.Fatalf("old client caps gained a mesh field in join_ok: %v", entry)
-			}
-		}
-	}
-}
-
 // --- lifecycle --------------------------------------------------------------
 
 func TestGracefulShutdownReleasesEverything(t *testing.T) {

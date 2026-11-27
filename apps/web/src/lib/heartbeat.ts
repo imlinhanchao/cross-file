@@ -3,17 +3,12 @@
  *
  * The `ctrl` data channel carries a channel-level `ping` every
  * {@link CTRL_HEARTBEAT_MS}; the peer answers `pong`, and *any* frame received on
- * the pair counts as activity. When nothing at all arrives for
- * {@link CTRL_TIMEOUT_MS} the pair is declared lost and the normal
- * "pair lost → offerer rebuilds" path runs (docs/02 §6.5). This detects a frozen
- * page / dead NAT binding in ~10 s instead of waiting 5–30 s for a WebRTC close
- * event.
- *
- * Compatibility: an older page does not know `ping` and never answers it. Until
- * the first `pong` arrives this class only sends pings and never declares a
- * timeout, so a new↔old pair keeps working exactly as before (the WebRTC close
- * event still handles real disconnects). Once a pong proves the peer speaks the
- * heartbeat, the strict timeout applies.
+ * the pair counts as activity. The timeout is armed as soon as the heartbeat
+ * starts: when nothing at all arrives for {@link CTRL_TIMEOUT_MS} the pair is
+ * declared lost and the normal "pair lost → offerer rebuilds" path runs
+ * (docs/02 §6.5). This detects a frozen page / dead NAT binding in ~10 s instead
+ * of waiting 5–30 s for a WebRTC close event, and a peer that never answers
+ * (including one that never sends anything) is treated as broken and rebuilt.
  *
  * All inputs (clock, timers, ping send, timeout callback) are injected so the
  * decision logic is unit-tested without a browser or fake WebRTC.
@@ -50,7 +45,6 @@ export class CtrlHeartbeat {
   private readonly onTimeout: () => void;
   private pingTimer?: TimerHandle;
   private checkTimer?: TimerHandle;
-  private sawPong = false;
   private running = false;
   private lastActivityAt = 0;
 
@@ -70,11 +64,6 @@ export class CtrlHeartbeat {
     return this.running;
   }
 
-  /** True once the peer answered at least one ping; only then is a timeout enforced. */
-  get peerSpeaksHeartbeat(): boolean {
-    return this.sawPong;
-  }
-
   get lastActivity(): number {
     return this.lastActivityAt;
   }
@@ -83,7 +72,6 @@ export class CtrlHeartbeat {
   start(): void {
     if (this.running) return;
     this.running = true;
-    this.sawPong = false;
     this.lastActivityAt = this.now();
     this.pingTimer = this.setIntervalFn(
       () => this.sendPing(),
@@ -113,15 +101,8 @@ export class CtrlHeartbeat {
     if (this.running) this.lastActivityAt = this.now();
   }
 
-  /** A pong both proves heartbeat support and counts as activity. */
-  notePong(): void {
-    if (!this.running) return;
-    this.sawPong = true;
-    this.lastActivityAt = this.now();
-  }
-
   private check(): void {
-    if (!this.running || !this.sawPong) return;
+    if (!this.running) return;
     if (this.now() - this.lastActivityAt < this.timeoutMs) return;
     this.stop();
     this.onTimeout();

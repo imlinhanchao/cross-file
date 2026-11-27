@@ -145,8 +145,8 @@ function exposeDiagnostics(
 }
 
 /**
- * The side that creates the data channels and offers: the room admin in phase 1,
- * the lower peer id of a pair in phase 2 (ADR 0010 §reconnect).
+ * The side that creates the data channels and offers: the pair's elected
+ * offerer (ADR 0010 §reconnect).
  */
 export function createOffererPeer(options: PeerOptions): Peer {
   const pc = new RTCPeerConnection({

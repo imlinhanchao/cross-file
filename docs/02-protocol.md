@@ -25,7 +25,7 @@
 `HWM = 8 MiB`（发送高水位）；`LWM = 2 MiB`；`RECONNECT_WINDOW = 60 s`（`rejoinToken` 有效期，双方都适用；
 窗口到期不等于房间销毁，房间保留到 TTL）；
 `ROOM_TTL = 30 min`；`HEARTBEAT = 20 s`（阶段 1 仅管理员心跳续期房间，沿用 v1；阶段 2 任一成员）；`TURN_TTL = 1 h`；
-`MAX_MEMBERS`：官方实例 2、自托管默认 4（不含管理员）。服务端选项为 `maxMembers`（旧名 `maxGuests` 兼容），部署时用 `MAX_MEMBERS` 环境变量配置（旧名 `MAX_GUESTS` 兼容，非法值启动即失败）。
+`MAX_MEMBERS`：官方实例 2、自托管默认 4（不含管理员）。服务端选项为 `maxMembers`，部署时用 `MAX_MEMBERS` 环境变量配置（非法值启动即失败）。
 
 ---
 
@@ -275,8 +275,7 @@ emoji[i]  = EMOJI_64[ (sasBits[i] >> 2) & 0x3F ]   // 4 个 emoji，24 bit
   saveStrategies: ["blob"], // 优先级：native | fs | sw | blob
   deviceMemoryGB: 4,        // 可得则填
   storageQuotaMB: 10240,
-  screen: "phone"|"tablet"|"desktop",
-  mesh: true                 // 阶段 2 客户端：支持成员↔成员懒建连（可选；缺失视为阶段 1）
+  screen: "phone"|"tablet"|"desktop"
 }
 ```
 
@@ -411,13 +410,9 @@ v2 下任何一端都可能成为接收方（Web 接收页、桌面壳、手机�
   匹配当前活动传输后同样停止、清理半成品，并把该 pair 置回 idle（队列下一条自动开始），显示「对方已取消」。
   `transferId` 不匹配/已过期的 `cancel` 直接忽略。重试使用**新的** `transferId` 重新走 `manifest → accept`，
   不复用旧密文/bitmap。
-- 旧页面（未内置 cancel 的 bundle）会把未知 type 丢弃：新→旧取消时本端立即结束、不阻塞队列，但旧对端可能停在
-  半途或在其 120 s ack 超时后报错——新旧混用时取消属于尽力而为。
 - `ping` / `pong`（无 `transferId`，通道级）：pair 的 `ctrl` open 后每 `CTRL_HEARTBEAT_MS = 3 s` 发 `ping`，
   对端回 `pong`；**收到任意 ctrl 或 data 帧都算活跃**；连续 `CTRL_TIMEOUT_MS = 10 s` 无任何帧 → 判定 pair 失效，
   走 §6.5「pair lost → offerer 重建」（不直接报错）。pair 关闭/重建时清理定时器。
-- 兼容：旧页面不认 `ping/pong`、不回 pong；因此**只有收到过至少一次 pong 后才启用 10 s 超时判定**，否则只发
-  ping 不判失效（避免新旧混用误重建；真正断线仍由 WebRTC close 事件兜底）。
 - 常量：`CTRL_HEARTBEAT_MS = 3000`、`CTRL_TIMEOUT_MS = 10000`（`packages/core/src/protocol.ts`），与信令
   WS 心跳 `HEARTBEAT_MS = 20000` 区分。
 
@@ -547,8 +542,7 @@ v2 下任何一端都可能成为接收方（Web 接收页、桌面壳、手机�
 - v2 的「任意成员间 `signal`」路由到 `packages/signaling/src/server.ts`；成员表广播与昵称只在内存，
   不进日志（§7）；
 - 取消/重试与 ctrl 心跳已实现（v0.4，见 §6.10）：取消不新增错误码、心跳不新增信令消息；
-- 阶段 2 的懒建连、任意成员互传、管理权移交、自动接收开关已实现（见 §11）；旧客户端（无 `caps.mesh`）
-  仍按阶段 1 的「管理员固定为 offerer」工作，新客户端对旧 peer 自动回退到该规则，同房间混用不会抢 offer。
+- 懒建连、任意成员互传、管理权移交、自动接收开关已实现（见 §11）。
 
 ---
 
@@ -561,15 +555,13 @@ v2 下任何一端都可能成为接收方（Web 接收页、桌面壳、手机�
 
 - 任意两个成员之间都可以互传；**每对一条 `PeerConnection`，按需建立**，不在成员加入时预建。
 - **offerer 选举**：双方比较 `memberId` 字符串，字典序较小的一方是 offerer；规则对称，无需协商。
-  - **兼容阶段 1 客户端**：`caps.mesh !== true` 的 peer 视为阶段 1，此时回退到「管理员是 offerer」；两个阶段 2
-    客户端之间才用字典序。这样新旧页面混在一个房间也不会双方同时发 offer（glare）。
 - **建立时机**：offerer 首次向该 peer 发起传输时创建 PC + `ctrl`/`data` 通道并发 offer；answerer 收到该 peer 的
   offer 时创建 answerer PC。收到 offer 时只要求对方在成员表且 `state == "joined"`。
 - **answerer 先发起传输时的 pair wake（实现注记）**：若 answerer 先要向 offerer 发送（例如 id 较大的一方先选文件），
   它没有 PC、也不能发 offer，于是通过现有 `signal` 发一条 schema 合法的空 candidate
   （`{k:"candidate", candidate:{candidate:""}}`，trickle ICE 的 end-of-candidates 惯例）作为「建对请求」。
   offerer 收到后若自己是该对 offerer 且尚无 PC → 立即 attach（建 PC/通道/offer）；已有 PC 的连接把它当作
-  end-of-candidates（addCandidate 异常吞掉）；阶段 1 旧客户端收到无副作用。每次 attach 尝试最多发一次。
+  end-of-candidates（addCandidate 异常吞掉）；无 PC 的接收方忽略。每次 attach 尝试最多发一次。
 - **重建**：通道断开后由该对的 offerer 重新发 offer；answerer 丢弃旧连接等待新 offer（§6.5）。
 - **每对仍串行**：同一对设备同一时刻只有一个活动 `transferId`，反向传输排队（§3.6、AC11 语义不变）。
 - 成员离开（`member_left` / 被移除）→ 关闭并删除该对 session。

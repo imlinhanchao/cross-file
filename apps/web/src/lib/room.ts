@@ -1,14 +1,14 @@
 /**
  * Room controller (ADR 0010, docs/02 v2).
  *
- * One room = one admin plus N members; phase 1 enables admin↔member transfers.
+ * One room = one admin plus N members; any member can transfer to any other.
  * This controller owns everything room-wide:
  *
  * - the signaling socket, identity/roomKey, member list and rejoin window,
  * - the display name (default `平台 · 代号`, editable, remembered locally),
  * - SAS + roomKey hand-over on the 6-digit-code path,
  * - one lazily attached {@link PeerSession} per pair; the offerer is elected by
- *   {@link isPairOfferer} (phase 2), the admin keeps offering old/SAS pairs,
+ *   {@link isPairOfferer} (smaller id, except the admin on the SAS path),
  * - admin hand-over (role flip from a `members` broadcast) and the
  *   auto-accept preference,
  * - the send queue (file × member matrix) and the UI-facing store updates.
@@ -51,7 +51,6 @@ import { PeerSession, type PeerSessionHooks } from "./peer.js";
 import {
   handoverInfo,
   isPairOfferer,
-  pairElectionSettled,
   pairNeedsSas,
   roleAfterMembers,
 } from "./mesh.js";
@@ -73,7 +72,6 @@ export type RoomMode =
 const NAME_STORAGE_KEY = "crossfile.displayName";
 const AUTO_ACCEPT_STORAGE_KEY = "crossfile.autoAccept";
 const REBUILD_DELAY_MS = 600;
-const SAS_UNKNOWN_KEY_DELAY_MS = 1_200;
 
 /** Fill a `{name}` template from copy.ts (same helper shape as RoomPage). */
 function tpl(template: string, vars: Record<string, string | number>): string {
@@ -695,8 +693,8 @@ export class RoomController {
         });
         this.applyMembers(message.members);
         this.startHeartbeat();
-        // applyMembers() re-evaluates the lazy pairs (legacy/SAS pairs are
-        // attached eagerly there; the rest only when a transfer needs them), so a
+        // applyMembers() re-evaluates the pairs (the SAS pair is attached
+        // eagerly there; the rest only when a transfer needs them), so a
         // re-attached admin does not have to rebuild every pair by hand.
         break;
       }
@@ -897,10 +895,9 @@ export class RoomController {
       if (member.id === this.selfId) continue;
       if (member.state === "offline") continue;
       const session = this.ensurePeer(member);
-      // Phase-1 shaped pairs are still created eagerly: the 6-digit SAS
-      // hand-over, and peers that run a phase-1 client (they only wait for the
-      // admin's offer). Every phase-2 pair is lazy: a transfer or a wake
-      // attaches it (docs/02 §11.1).
+      // The 6-digit SAS pair is created eagerly by the admin (the keyless
+      // member cannot initiate it); every other pair is lazy: a transfer or a
+      // pair-request wake attaches it (docs/02 §11.1).
       this.maybeEagerAttach(member);
       this.maybeAttach(member.id);
       // A peer that comes back after a queued send may need the wake again.
@@ -959,18 +956,13 @@ export class RoomController {
 
   /**
    * The pair's offerer election (docs/02 §11.1), evaluated against the live
-   * member list: a role hand-over or a late caps broadcast can change the answer
-   * for the next attach.
+   * member list: a role hand-over can change the answer for the next attach.
    */
   private isPairOfferer(peerId: string): boolean {
-    const peer = this.memberInfo(peerId);
     return isPairOfferer({
       selfId: this.selfId,
       peerId,
       selfIsAdmin: this.role === "admin",
-      peerIsAdmin: peer?.isAdmin ?? false,
-      selfMesh: true,
-      ...(peer ? { peerCaps: peer.caps } : {}),
       selfHasKey: this.hasKey,
       ...(this.memberHasKey.has(peerId)
         ? { peerHasKey: this.memberHasKey.get(peerId) }
@@ -1009,15 +1001,14 @@ export class RoomController {
   /**
    * Attach this pair if this side is its offerer and something wants it: a local
    * send (`wantedPeers`) or a pair-request wake from the peer (`pairRequests`).
-   * Nothing is created on member join, and a PC is never pre-emptively offered
-   * while the election is still unsettled (docs/02 §11.1 rule 3).
+   * Nothing is created on member join (except the SAS pair, which attaches
+   * eagerly), and nothing is offered while the pair is idle.
    */
   private maybeAttach(peerId: string): void {
     const peer = this.memberInfo(peerId);
     if (!peer || peer.state === "offline") return;
     if (!this.hasKey) return;
     if (this.pairNeedsSas(peerId)) return; // the SAS path attaches eagerly
-    if (!pairElectionSettled(peer.caps)) return;
     if (!this.wantedPeers.has(peerId) && !this.pairRequests.has(peerId)) return;
     if (!this.isPairOfferer(peerId)) return;
     const session = this.peers.get(peerId);
@@ -1025,14 +1016,14 @@ export class RoomController {
     session.attach();
   }
 
-  /** Phase-1 pair shapes are still created eagerly by the admin. */
+  /**
+   * The 6-digit SAS pair is created eagerly by the admin, so the SAS card can
+   * appear as soon as the member joins rather than only on the first transfer.
+   */
   private maybeEagerAttach(member: MemberInfo): void {
     if (this.role !== "admin" || !this.hasKey) return;
     if (member.state === "offline") return;
-    const settled = pairElectionSettled(member.caps);
-    const sas = this.pairNeedsSas(member.id);
-    const legacy = settled && member.caps?.mesh !== true;
-    if (!sas && !legacy) return;
+    if (!this.pairNeedsSas(member.id)) return;
     const session = this.ensurePeer(member);
     if (session.hasHandles || session.connecting) return;
     session.attach();
@@ -1042,8 +1033,8 @@ export class RoomController {
    * Pair-request wake (docs/02 §11.1 implementation note): the answerer cannot
    * create a pair, so the first time it wants to send it asks the elected
    * offerer with an empty `candidate` signal — an existing, schema-valid payload
-   * (trickle ICE end-of-candidates). Older clients ignore a candidate without a
-   * live PC (`PeerSession.handleSignal` no-ops when `peer` is undefined), and an
+   * (trickle ICE end-of-candidates). A peer without a live PC no-ops
+   * (`PeerSession.handleSignal` returns when `peer` is undefined), and an
    * already connected pair just drops the empty candidate in `addCandidate`.
    * Sent at most once per attach attempt; cleared when the pair opens or drops.
    */
@@ -1053,7 +1044,6 @@ export class RoomController {
     // The wake only means "create the pair"; whether the peer already holds the
     // roomKey is settled by the key-ok exchange on the opened channel, so it is
     // not required here (a keyless 6-digit member simply keeps the pair waiting).
-    if (member.caps?.mesh !== true) return; // phase-1 peers get the admin's offer
     if (this.isPairOfferer(member.id)) return; // we attach ourselves
     const session = this.peers.get(member.id);
     if (!session || session.hasHandles || session.connecting) return;
@@ -1201,15 +1191,6 @@ export class RoomController {
       if (claim === false) {
         // 6-digit path: the admin drives the SAS hand-over for this member.
         this.beginSas(peerId, handles);
-      } else if (claim === undefined && member?.caps?.mesh !== true) {
-        // Admin reconnect lost the join-request proof hint for a phase-1 peer:
-        // give it a moment to announce key-ok, else fall back to the SAS ceremony.
-        setTimeout(() => {
-          const current = this.peers.get(peerId);
-          if (!current?.hasHandles || this.sasPeerId === peerId) return;
-          if (this.memberHasKey.get(peerId) === true) return;
-          this.beginSas(peerId, handles);
-        }, SAS_UNKNOWN_KEY_DELAY_MS);
       } else if (claim === true && this.hasKey) {
         peer?.setPairReady(true);
       }

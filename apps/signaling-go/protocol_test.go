@@ -245,47 +245,6 @@ func TestCapsRoundTrip(t *testing.T) {
 	}
 }
 
-func TestParseCapsMesh(t *testing.T) {
-	base := `"platform":"linux","uaFamily":"chrome","nativeShell":false,"secureContext":true,"fsAccess":true,"sw":true,"swDownload":false,"saveStrategies":["blob"],"screen":"desktop"`
-
-	// true and false are both preserved (pointer field, not omitempty).
-	for _, want := range []bool{true, false} {
-		caps, err := parseCaps([]byte(`{` + base + `,"mesh":` + map[bool]string{true: "true", false: "false"}[want] + `}`))
-		if err != nil {
-			t.Fatalf("parseCaps(mesh=%v): %v", want, err)
-		}
-		if caps.Mesh == nil || *caps.Mesh != want {
-			t.Fatalf("mesh = %v, want %v", caps.Mesh, want)
-		}
-		encoded, _ := json.Marshal(caps)
-		if !strings.Contains(string(encoded), `"mesh":`+map[bool]string{true: "true", false: "false"}[want]) {
-			t.Fatalf("forwarded caps dropped mesh: %s", encoded)
-		}
-	}
-
-	// Absent stays absent: no "mesh":false is emitted for older clients.
-	caps, err := parseCaps([]byte(`{` + base + `}`))
-	if err != nil {
-		t.Fatalf("parseCaps(no mesh): %v", err)
-	}
-	if caps.Mesh != nil {
-		t.Fatalf("absent mesh became %v", *caps.Mesh)
-	}
-	encoded, _ := json.Marshal(caps)
-	if strings.Contains(string(encoded), `"mesh"`) {
-		t.Fatalf("absent mesh was emitted: %s", encoded)
-	}
-
-	// Non-boolean values are schema errors.
-	for _, value := range []string{`"yes"`, `null`, `1`, `{}`} {
-		if _, err := parseCaps([]byte(`{` + base + `,"mesh":` + value + `}`)); err == nil {
-			t.Fatalf("mesh=%s should be rejected", value)
-		} else if errVersionMismatch(err) {
-			t.Fatalf("mesh=%s should be a schema error, got %v", value, err)
-		}
-	}
-}
-
 func capsJSON(t *testing.T, caps Caps) string {
 	t.Helper()
 	encoded, err := json.Marshal(caps)

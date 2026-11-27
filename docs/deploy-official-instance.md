@@ -39,7 +39,7 @@ TURN_MAX_PORT=49200
 说明：
 - `TURN_URIS` 用域名而不是 IP：Safari/iOS 对 `turn:` 的凭据与 URI 更严格，域名 + 有效 TLS 反代是稳妥组合；
 - `TURN_SECRET` 只给信令进程用（签发凭据 + 校验内嵌 TURN），**不要**在前端出现；`TURN_URIS` 与 `TURN_SECRET` 都非空才会启动内嵌 TURN，`TURN_EXTERNAL_IP` 在启用 TURN 时必填；
-- 官方实例把 `MAX_MEMBERS` 设为 2（成员上限，**不含管理员**；docs/01 D6/D13），自托管默认 4；旧名 `MAX_GUESTS` 仍兼容，两者同时存在时 `MAX_MEMBERS` 优先。
+- 官方实例把 `MAX_MEMBERS` 设为 2（成员上限，**不含管理员**；docs/01 D6/D13），自托管默认 4；旧名 `MAX_MEMBERS` 仍兼容，两者同时存在时 `MAX_MEMBERS` 优先。
 
 ## 3. 起服务
 

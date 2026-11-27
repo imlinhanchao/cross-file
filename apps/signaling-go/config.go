@@ -4,8 +4,7 @@ package main
 // packages/signaling/src/config.ts and dev.ts.
 //
 // MAX_MEMBERS is the room capacity **excluding the admin** (docs/01 D6): the
-// official instance uses 2, self-hosted deployments default to 4. MAX_GUESTS is
-// accepted as a legacy alias; MAX_MEMBERS wins when both are present. Invalid
+// official instance uses 2, self-hosted deployments default to 4. Invalid
 // values fail fast instead of silently falling back.
 
 import (
@@ -143,27 +142,24 @@ func loadConfig(env map[string]string) (Config, error) {
 	return config, nil
 }
 
-// parseMaxMembers reads MAX_MEMBERS (legacy MAX_GUESTS); 0 means "unset".
+// parseMaxMembers reads MAX_MEMBERS; 0 means "unset".
 func parseMaxMembers(env map[string]string) (int, error) {
-	for _, key := range []string{"MAX_MEMBERS", "MAX_GUESTS"} {
-		raw := jsTrim(env[key])
-		if raw == "" {
-			continue
-		}
-		if !positiveIntegerPattern.MatchString(raw) {
-			return 0, maxMembersError(key, raw)
-		}
-		value, err := strconv.Atoi(raw)
-		if err != nil || value < 1 {
-			return 0, maxMembersError(key, raw)
-		}
-		return value, nil
+	raw := jsTrim(env["MAX_MEMBERS"])
+	if raw == "" {
+		return 0, nil
 	}
-	return 0, nil
+	if !positiveIntegerPattern.MatchString(raw) {
+		return 0, maxMembersError(raw)
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 1 {
+		return 0, maxMembersError(raw)
+	}
+	return value, nil
 }
 
-func maxMembersError(key, raw string) error {
-	return fmt.Errorf("%s must be a positive integer (got %q); unset it for the default (%d)", key, raw, defaultMaxMembers)
+func maxMembersError(raw string) error {
+	return fmt.Errorf("MAX_MEMBERS must be a positive integer (got %q); unset it for the default (%d)", raw, defaultMaxMembers)
 }
 
 // parseReconnectWindowMs reads the test-only RECONNECT_WINDOW_MS escape hatch

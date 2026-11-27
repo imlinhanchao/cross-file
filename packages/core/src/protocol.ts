@@ -68,8 +68,6 @@ export const CTRL_TIMEOUT_MS = 10_000;
 export const TURN_TTL_SEC = 3_600;
 /** Room capacity: the admin plus up to MAX_MEMBERS - 1 joiners (docs/01 D6, ADR 0010). */
 export const MAX_MEMBERS = 4;
-/** @deprecated v1 name; kept so packages mid-migration keep compiling. */
-export const MAX_GUESTS = MAX_MEMBERS;
 
 // --- error codes (docs/02 §3.6) --------------------------------------------
 export const ERROR_CODES = [
@@ -131,12 +129,6 @@ export interface Caps {
   deviceMemoryGB?: number;
   storageQuotaMB?: number;
   screen: "phone" | "tablet" | "desktop";
-  /**
-   * Phase-2 client: can lazily mesh with any member (docs/02 §5/§11.1). A peer
-   * without this flag is a phase-1 client, so pair roles fall back to the old
-   * "admin is the offerer" rule and old/new pages mixed in one room never glare.
-   */
-  mesh?: boolean;
 }
 
 export const capsSchema: z.ZodType<Caps> = z.object({
@@ -151,7 +143,6 @@ export const capsSchema: z.ZodType<Caps> = z.object({
   deviceMemoryGB: z.number().positive().optional(),
   storageQuotaMB: z.number().positive().optional(),
   screen: z.enum(["phone", "tablet", "desktop"]),
-  mesh: z.boolean().optional(),
 });
 
 // --- room membership (ADR 0010) ---------------------------------------------
@@ -447,14 +438,12 @@ export type CtrlMessage =
    * transfer" notice. The receiving side stops it, drops the half-received data
    * and returns the pair to idle; the sender/receiver locally cleans up without
    * waiting for a reply. `transferId` is validated against the active transfer —
-   * a stale/unknown id is ignored. Older pages do not know this type and drop it
-   * while parsing (see docs/02 §6.6/§10.2 note): the cancelling side still ends
-   * locally, so the pair is never blocked by a peer that cannot be reached.
+   * a stale/unknown id is ignored.
    */
   | { v: 2; type: "cancel"; transferId: string; reason?: string }
   /**
    * Channel-level heartbeat (no `transferId`): ping every 3 s, reply pong. Any
-   * frame received counts as activity. Older pages ignore the unknown type.
+   * frame received counts as activity.
    */
   | { v: 2; type: "ping" }
   | { v: 2; type: "pong" }
@@ -571,8 +560,8 @@ export const ctrlMessageSchema: z.ZodType<CtrlMessage> = z.union([
 
 /**
  * Parse one ctrl frame. Unknown `type`s (or fields) throw: the web layer catches
- * the error and silently drops the frame, which is what keeps added ctrl types
- * (`cancel`/`ping`/`pong`) harmless to pages that still run an older bundle.
+ * the error and silently drops the frame, so a message type this build does not
+ * know never breaks an open pair.
  */
 export function parseCtrlMessage(raw: unknown): CtrlMessage {
   return ctrlMessageSchema.parse(raw);

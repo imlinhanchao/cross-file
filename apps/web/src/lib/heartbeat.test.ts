@@ -54,12 +54,12 @@ describe("CtrlHeartbeat", () => {
     h.heartbeat.stop();
   });
 
-  it("does not declare a timeout while the peer keeps ponging", () => {
+  it("does not declare a timeout while the peer keeps answering", () => {
     const h = setup();
     h.heartbeat.start();
     for (let i = 0; i < 5; i += 1) {
       h.advance(3_000);
-      h.heartbeat.notePong();
+      h.heartbeat.noteActivity();
     }
     expect(h.timeouts()).toBe(0);
     expect(h.heartbeat.active).toBe(true);
@@ -69,7 +69,7 @@ describe("CtrlHeartbeat", () => {
   it("declares the pair lost ~10 s after the last frame", () => {
     const h = setup();
     h.heartbeat.start();
-    h.heartbeat.notePong(); // peer speaks heartbeat
+    h.heartbeat.noteActivity();
     h.advance(9_000);
     expect(h.timeouts()).toBe(0);
     h.advance(1_000);
@@ -80,25 +80,23 @@ describe("CtrlHeartbeat", () => {
     expect(h.heartbeat.active).toBe(false);
   });
 
+  it("times out a peer that never sends a single frame", () => {
+    const h = setup();
+    h.heartbeat.start();
+    h.advance(30_000);
+    expect(h.timeouts()).toBe(1);
+    expect(h.heartbeat.active).toBe(false);
+  });
+
   it("any frame (not only a pong) counts as activity", () => {
     const h = setup();
     h.heartbeat.start();
-    h.heartbeat.notePong();
     h.advance(8_000);
     h.heartbeat.noteActivity(); // e.g. a data frame or a ctrl message
     h.advance(9_000);
     expect(h.timeouts()).toBe(0);
     h.advance(1_000);
     expect(h.timeouts()).toBe(1);
-  });
-
-  it("never times out a peer that does not answer pings (older page)", () => {
-    const h = setup();
-    h.heartbeat.start();
-    h.advance(60_000);
-    expect(h.timeouts()).toBe(0);
-    expect(h.heartbeat.peerSpeaksHeartbeat).toBe(false);
-    h.heartbeat.stop();
   });
 
   it("stop clears both timers and start can run again for a rebuilt pair", () => {

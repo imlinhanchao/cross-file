@@ -65,10 +65,10 @@
 ## 验证
 
 - Go 单测 93 个、语句覆盖率 85.2%、`-race` 干净；`gofmt`/`go vet` 干净。
-- `E2E_SERVER=go pnpm e2e` → 20 passed / 1 skipped（与 Node 基线一致）；内嵌 TURN 的 AC2 relay-only 1 passed。
+- `pnpm e2e` → 20 passed / 1 skipped（与 Node 基线一致）；内嵌 TURN 的 AC2 relay-only 1 passed。
 - 独立 parity 审查（Node vs Go，只读）：无 blocker；修复 TURN 门禁、原始路径、`.gitkeep`、panic 恢复、
   profile 哨兵等 8 项差异。
-- 零存储：`tests/audit/zero-storage.sh --go` RESULT PASS（0 写盘、stdout 1 行、无 roomId/码/昵称）。
+- 零存储：`tests/audit/zero-storage.sh` RESULT PASS（0 写盘、stdout 1 行、无 roomId/码/昵称）。
 - 生产（v0.2.0，2026-11-27）：静态 Go 二进制、PM2 内存 ~5–11 MB、`turn=on` 监听 3478、coturn 已停用；
   AC10 双向 10 MB 与 AC2 relay-only 10 MB 均通过。详见 `docs/06-acceptance.md`。
 

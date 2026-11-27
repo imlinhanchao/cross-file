@@ -5,8 +5,8 @@
 > `infra/`（Docker 镜像、compose、反代示例）、`tests/audit/`（零存储审计）。
 > 设计与验收依据：`docs/01-design.md` §5/§8、`docs/02-protocol.md` §6.6/§6.7/§7、`docs/03-roadmap.md` M4。
 >
-> 服务器上只跑**一个 Go 二进制**：没有 Node、没有单独的 coturn、没有数据库/Redis/持久卷。旧的 Node + coturn
-> 部署方式已随 Node 实现一起删除；生产实例 `https://file.time-pack.com` 从 v0.2.0 起是 Go 单二进制。
+> 服务器上只跑**一个 Go 二进制**：没有 Node、没有单独的 coturn、没有数据库/Redis/持久卷。生产实例
+> `https://file.time-pack.com` 从 v0.2.0 起是 Go 单二进制。
 
 ---
 
@@ -50,7 +50,7 @@ TURN_MAX_PORT=49200
 要点：
 
 - `TURN_SECRET` 用于 `HMAC-SHA1(secret, "<expiry>:<memberId>")` 签发临时凭据，同时被进程内 TURN 校验；**不需要**再起 coturn。
-- 内嵌 TURN **只在 `TURN_URIS` 非空且 `TURN_SECRET` 非空时启动**（与旧 Node 实现的 `uris.length > 0 && secret` 门禁一致）。只配 `TURN_SECRET` 不配 `TURN_URIS` = 不启动 TURN（只能直连），不会启动后失败。
+- 内嵌 TURN **只在 `TURN_URIS` 非空且 `TURN_SECRET` 非空时启动**。只配 `TURN_SECRET` 不配 `TURN_URIS` = 不启动 TURN（只能直连），不会启动后失败。
 - `TURN_URIS` 是**下发给浏览器**的地址，写公网域名/IP，不要写 `127.0.0.1`（除非浏览器也在同一台机器上做本地联调）。
 - `TURN_EXTERNAL_IP` 是 TURN 通告给浏览器的 relay candidate 地址：**启用 TURN 时必填**，缺省则启动失败；公网 VPS 填公网 IPv4，本机两个浏览器联调填 `127.0.0.1`，手机连同 Wi-Fi 联调填宿主机局域网 IP。
 - `SIGNAL_PORT` 是**宿主机**发布端口（默认 8788，与仓库开发默认 `pnpm dev:signal`/Vite 代理一致），容器内固定监听 8787；只改这里不需要动别处。
@@ -142,7 +142,7 @@ pnpm exec playwright test tests/e2e/ac2-relay.spec.ts
 
 ## 5. 端口与防火墙
 
-一个进程同时服务网页/信令/TURN，但对外端口与旧的 signaling + coturn 方案一致：
+一个进程同时服务网页/信令/TURN，对外端口：
 
 | 端口        | 协议      | 用途                                                              | 对外             |
 | ----------- | --------- | ----------------------------------------------------------------- | ---------------- |
@@ -152,8 +152,8 @@ pnpm exec playwright test tests/e2e/ac2-relay.spec.ts
 | 49160–49200 | udp       | TURN relay 分配段（`TURN_MIN_PORT`–`TURN_MAX_PORT`）              | 必须             |
 | 5173        | tcp       | 仅开发：Vite dev server                                           | 不要暴露公网     |
 
-> **内嵌 TURN 直接绑定 3478/udp+tcp，不能与 coturn 同时运行。** 从旧部署迁移时先停 coturn（见 §12.6），
-> 否则 Go 进程启动会因 `EADDRINUSE` 失败、健康检查失败。
+> **内嵌 TURN 直接绑定 3478/udp+tcp，同一台机器上不能再运行其他 TURN 服务（如 coturn）**，否则 Go 进程
+> 启动会因 `EADDRINUSE` 失败、健康检查失败。
 
 防火墙示例（ufw）：
 
@@ -211,7 +211,7 @@ error 级且不含 IP/UA/roomId/显示名；无 cookie、无指纹、无第三�
 
 ## 8. 零存储审计
 
-`tests/audit/zero-storage.sh` 有两种模式，都不需要 sudo。默认模式审计 Go 二进制（Node 模式已随 Node 实现删除）。
+`tests/audit/zero-storage.sh` 有两种模式，都不需要 sudo。默认模式审计 Go 二进制。
 
 ### 8.1 本机进程 + strace（默认）
 
@@ -290,12 +290,12 @@ RESULT PASS (zero-storage audit, local)
 
 | 现象                                             | 原因 / 处理                                                                                                                                                                                                             |
 | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 启动即失败 / 容器反复重启                        | `TURN_SECRET` 或 `TURN_URIS` 配了但 `TURN_EXTERNAL_IP` 缺失；或 3478 被 coturn 占用（`EADDRINUSE`，见 §12.6）。看 `docker compose logs signaling`（应只有一行启动日志或一行 config 错误）。 |
+| 启动即失败 / 容器反复重启                        | `TURN_SECRET` 或 `TURN_URIS` 配了但 `TURN_EXTERNAL_IP` 缺失；或 3478 被其他 TURN 服务占用（`EADDRINUSE`）。看 `docker compose logs signaling`（应只有一行启动日志或一行 config 错误）。 |
 | 信令能连但页面 404                               | 镜像构建时 Vite 产物没有 embed 进去（构建阶段失败被忽略？）；重新 `--build` 并确认构建阶段 `pnpm --filter @crossfile/web build` 成功。                                                                                   |
 | 页面能连信令但传输极慢/总是失败                   | TURN 不可达。检查 3478/udp+tcp、49160–49200/udp 的安全组；`TURN_URIS` 的域名解析到公网 IP；webrtc-internals 看 candidate 是否只有 host/srflx。                                                                            |
 | relay candidate 是 `relay` 但连不上              | `TURN_EXTERNAL_IP` 填成了内网地址（应为公网 IPv4/LAN IP），或 relay 端口段未放行。                                                                                                                                       |
 | webrtc-internals 里 ICE 一直 `checking`          | 凭据过期（TTL 1h）或浏览器与服务端时间差过大；核对 `/v1/ws` 是否同源 wss、反代是否透传 Upgrade。                                                                                                                         |
-| 服务器 3478 已有服务占用                         | 停掉旧 coturn（`systemctl disable --now coturn`）或改 `TURN_PORT`/`TURN_LISTEN_PORT`（同时改 `TURN_URIS` 端口）与 compose 发布端口。                                                                                     |
+| 服务器 3478 已有服务占用                         | 停掉占用它的服务（如 `systemctl disable --now coturn`）或改 `TURN_PORT`/`TURN_LISTEN_PORT`（同时改 `TURN_URIS` 端口）与 compose 发布端口。                                                                                     |
 | `docker compose build` 卡在 `pnpm install`       | 主机访问 npm registry 慢/被墙。给 Docker daemon 配代理（`/etc/docker/daemon.json` 的 `proxies`）。                                                                                                                       |
 | `permission denied` 写文件/挂载                  | 设计如此：只读根文件系统 + 非 root + 无 volume。别加 `volumes`，需要持久化的东西不应该存在于这套部署里。                                                                                                                |
 | 审计本机模式报 `strace is not installed`         | `apt install strace`；或改用 `--container`。                                                                                                                                                                            |
@@ -325,8 +325,8 @@ Windows/macOS Tauri（无证书）、Android APK（release keystore 签名），
    → `pm2 save` → 轮询 `http://127.0.0.1:${PORT}/`（默认 8788）直到 200；
 3. 更新 `current` 软链 → 可选 `PUBLIC_BASE_URL` 公网 smoke → 只保留最近 5 个 release。
 
-这样「发布的版本 = 线上跑的版本」；回滚只需重新部署旧 tag（手动跑 `deploy` 并输入旧 tag）。**服务器上的 Node 只用于运行
-PM2 本身**：应用是静态 Go 二进制，不需要 Node 运行时；也可以不用 PM2，改 systemd（§12.3）。
+这样「发布的版本 = 线上跑的版本」；回滚只需重新部署上一个 Go release tag（手动跑 `deploy` 并输入旧 tag）。
+**服务器上的 Node 只用于运行 PM2 本身**：应用是静态 Go 二进制，不需要 Node 运行时；也可以不用 PM2，改 systemd（§12.3）。
 
 ### 服务器一次性准备（只需要一次）
 
@@ -384,8 +384,8 @@ pm2 start /srv/crossfile/releases/<旧 tag>/ecosystem.config.cjs --update-env
 pm2 save
 ```
 
-（或手动跑 `deploy` 工作流并输入旧 tag。每个 release 的 tarball 自带适配自己运行时的 `ecosystem.config.cjs`，
-所以旧 Node release 也能这样回滚——**回滚不需要仓库里还有 Node 代码**，只需要旧 release 资产仍然存在。）
+（或手动跑 `deploy` 工作流并输入旧 tag。每个 release 的 tarball 自带自己的 `ecosystem.config.cjs`，
+回滚就是部署上一个 Go release tag。）
 
 ### 运维提示
 
@@ -472,22 +472,7 @@ TURN 是否真的生效按 §4 的方法验证；区别只是 TURN 就在同一�
 
 ### 12.5 回滚
 
-- **回滚到旧的 Go 版本**：`deploy` 工作流输入旧 tag，或服务器上 `pm2 start releases/<旧 tag>/ecosystem.config.cjs --update-env`。
-- **回滚到 Node + coturn（v0.1.0 及更早）**：部署旧 tag 的 release 资产（tarball 自带 `server.cjs` + Node 版
-  `ecosystem.config.cjs`），并先启动 coturn：`sudo systemctl enable --now coturn`。仓库里已没有 Node 源码，但这不影响回滚。
-
-### 12.6 从 Node + coturn 迁移到单二进制（一次性，含官方实例的切换顺序）
-
-1. **先停/禁用 coturn**：Go 进程的内嵌 TURN 要绑定 `3478/udp+tcp`，同一台机器上 coturn 还占着就会 `EADDRINUSE`，
-   启动失败 → 部署健康检查失败。
-   ```bash
-   sudo systemctl disable --now coturn        # systemd 安装
-   # 或：docker compose -f <旧 compose> stop coturn
-   ```
-2. **补 `TURN_EXTERNAL_IP`**：在服务器 `shared/.env` 加一行 `TURN_EXTERNAL_IP=<公网 IPv4>`（官方实例为
-   `120.77.241.222`；Node 版本会忽略这个变量，所以加它不影响回滚）。`TURN_URIS` 必须非空，内嵌 TURN 才会启动；
-   `TURN_SECRET` 保持原值即可（Node 与 Go 的凭据算法一致，客户端零改动）。
-3. **部署 Go release**：发布 `vX.Y.Z` tag → release 自动发布并 dispatch `deploy`（或手动 `deploy` 输入 tag）。
-   健康检查 `curl http://127.0.0.1:$PORT/` 由内嵌 Web 应用应答。
-4. **验收**：`curl https://<domain>/` 200、`pm2 ls` online、`current` 指向 `releases/v<新版本>`、§4 的 relay 检查通过。
-5. **回滚**：重新部署旧 tag 的 Node release 并 `sudo systemctl enable --now coturn`（见 §12.5）。
+- **回滚到上一个 Go release**：`deploy` 工作流输入旧 tag，或服务器上
+  `pm2 start releases/<旧 tag>/ecosystem.config.cjs --update-env && pm2 save`。
+- 回滚使用旧 tag 的 tarball（自带该版本的 `ecosystem.config.cjs`，`interpreter: "none"` 直接跑二进制）；
+  `deploy.yml` 不需要区分版本。TURN 在同一个二进制里，回滚不涉及外部服务。

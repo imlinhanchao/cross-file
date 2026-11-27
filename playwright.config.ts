@@ -12,17 +12,7 @@ const SIGNALING_PORT = Number(process.env.E2E_SIGNALING_PORT ?? 8790);
  * the embedded web app, `/v1/ws` and the in-process TURN relay. Vite still serves the web app
  * for the e2e suite (fast reloads, dev-only test hooks); the binary only has to answer
  * `/v1/ws` on SIGNALING_PORT.
- *
- * The Node implementation was removed (docs/05 §7.5), so `E2E_SERVER` is kept only as a
- * guard: unset or `go` is accepted, anything else fails fast instead of silently running the
- * wrong server.
  */
-const E2E_SERVER = process.env.E2E_SERVER ?? "go";
-if (E2E_SERVER !== "go") {
-  throw new Error(
-    `E2E_SERVER=${E2E_SERVER} is not supported: the Node signaling server was removed; unset it or set E2E_SERVER=go`,
-  );
-}
 const GO_ROOT = resolve("apps/signaling-go");
 const GO_BUILD = resolve(GO_ROOT, "build.sh");
 const GO_BIN = resolve(GO_ROOT, "bin/crossfile-signaling");

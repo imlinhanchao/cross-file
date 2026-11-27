@@ -1,11 +1,10 @@
 # CrossFile signaling (Go)
 
-一个静态链接的 Go 二进制，替换原来两件事：
+一个静态链接的 Go 二进制，负责两件事：
 
-1. `packages/signaling` 的 Node 信令服务器（协议 v2，`/v1/ws`，与现有 Web / 桌面 / Android 客户端
-   零改动兼容）；
-2. 独立的 coturn 容器：进程内用 [pion/turn v4](https://github.com/pion/turn) 起 UDP + TCP TURN，
-   沿用 coturn `static-auth-secret` 的 REST 凭据算法。
+1. 信令服务器（协议 v2，`/v1/ws`，与现有 Web / 桌面 / Android 客户端配合）；
+2. 进程内用 [pion/turn v4](https://github.com/pion/turn) 起 UDP + TCP TURN，沿用 coturn
+   `static-auth-secret` 的 REST 凭据算法。
 
 同时把构建好的 Web 应用（`apps/web/dist`）用 `//go:embed` 打进二进制，同源托管；`STATIC_DIR`
 可覆盖为磁盘目录（开发用）。零存储红线保持不变：无数据库、无文件写入、无 cookie、无访问日志，
@@ -39,7 +38,7 @@ apps/signaling-go/bin/crossfile-signaling
 |---|---|---|
 | `HOST` | `127.0.0.1` | 监听地址；容器内用 `0.0.0.0` |
 | `PORT` | `8788` | HTTP + WebSocket 端口 |
-| `MAX_MEMBERS` | `4` | 房间成员上限（**不含管理员**；官方实例用 2）；旧名 `MAX_GUESTS` 兼容，非法值启动失败 |
+| `MAX_MEMBERS` | `4` | 房间成员上限（**不含管理员**；官方实例用 2）；非法值启动失败 |
 | `RATE_LIMIT_MAX` | `120` | 每 IP 信令预算（条/窗口）；测试专用逃生口 |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | 上述窗口 |
 | `RECONNECT_WINDOW_MS` | `60000` | 成员离线窗口 + 管理员移交窗口（测试逃生口，e2e 可缩短）；非法值启动失败 |
@@ -52,8 +51,8 @@ apps/signaling-go/bin/crossfile-signaling
 
 行为要点：
 
-- 进程内 TURN 只在 `TURN_URIS` 非空 **且** `TURN_SECRET` 有值时启用（与 Node `dev.ts` 的
-  turn 选项门禁一致）。任一为空：不启动 TURN、`created` / `join_ok` 不含 `turn` 字段。
+- 进程内 TURN 只在 `TURN_URIS` 非空 **且** `TURN_SECRET` 有值时启用。任一为空：不启动 TURN、
+  `created` / `join_ok` 不含 `turn` 字段。
 - 启用 TURN 时 `TURN_EXTERNAL_IP` 必填（中继在进程内，必须知道客户端可达地址），缺失即启动失败；
   `TURN_LISTEN_PORT`（默认 3478）被占用时启动失败并在 stderr 说明端口。
 - TURN 凭据：`username = "<expiryEpoch>:<memberId>"`，
@@ -83,8 +82,7 @@ apps/signaling-go/bin/crossfile-signaling
 
 客户端无需新增消息：身份变化通过 `members` 广播体现（旧客户端仍能连接并传输）。
 
-`caps` 由服务端**原样透传**（不解释、不落盘），包括阶段 2 客户端新增的可选布尔字段 `mesh`：缺失保持缺失，
-`true`/`false` 都保留，供客户端决定每对设备由谁发 offer。
+`caps` 由服务端**原样透传**（不解释、不落盘），供客户端展示与能力判断。
 
 ## 端点
 
@@ -111,15 +109,3 @@ E2E_RELAY=1 TURN_SECRET=... \
   TURN_URIS='turn:127.0.0.1:3478?transport=udp,turn:127.0.0.1:3478?transport=tcp' \
   TURN_EXTERNAL_IP=127.0.0.1 pnpm exec playwright test tests/e2e/ac2-relay.spec.ts
 ```
-
-## 与 Node 实现的已知差异
-
-- 默认端口：`server.ts` 的库默认是 8787，但进程入口 `dev.ts`（本二进制替换的对象）默认
-  **8788**，这里沿用 8788。
-- `TURN_SECRET` 已设置而 `TURN_EXTERNAL_IP` 缺失时**启动失败**（原 Node 只负责签发凭据，
-  TURN 在 coturn 侧；现在中继在进程内，必须知道对外地址）。自托管升级时需要补这个变量。
-- 进程内 TURN 日志被丢弃（原 coturn 可自行配置日志级别）。
-- 实现了阶段 2 管理权移交（ADR 0010 D24）；被删除的 Node 实现只有阶段 1，因此 Go 版在这一点上
-  超出原实现，协议消息形状不变。
-- 除上述之外，房间状态机、消息字段、错误码、限流、短码、重连窗口、昵称去重、TURN 凭据算法
-  均按 `packages/signaling/src/*` 与 `docs/02-protocol.md` 逐条移植，并由 Go 测试覆盖。

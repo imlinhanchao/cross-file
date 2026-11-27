@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   CHUNK_MAX_CIPHERTEXT,
   FRAME_MAX_BYTES,
-  MAX_GUESTS,
   MAX_MEMBERS,
   PROTOCOL_VERSION,
   VersionMismatchError,
@@ -92,9 +91,8 @@ describe("protocol constants", () => {
     expect(PROTOCOL_VERSION).toBe(2);
   });
 
-  it("keeps the room capacity at 4 and the v1 alias in sync", () => {
+  it("keeps the room capacity at 4", () => {
     expect(MAX_MEMBERS).toBe(4);
-    expect(MAX_GUESTS).toBe(MAX_MEMBERS);
   });
 });
 
@@ -119,29 +117,6 @@ describe("signaling message validation (v2)", () => {
         caps: capsStub(),
       }),
     ).toThrow();
-  });
-
-  it("keeps the optional phase-2 caps.mesh flag, and omits it when absent", () => {
-    const withMesh = parseClientMessage({
-      v: 2,
-      type: "create",
-      roomId: "a".repeat(26),
-      caps: { ...capsStub(), mesh: true },
-      name: "MacBook · 7K2F",
-    });
-    if (withMesh.type !== "create") throw new Error("expected create");
-    expect(withMesh.caps.mesh).toBe(true);
-
-    const withoutMesh = parseClientMessage({
-      v: 2,
-      type: "create",
-      roomId: "a".repeat(26),
-      caps: capsStub(),
-      name: "MacBook · 7K2F",
-    });
-    if (withoutMesh.type !== "create") throw new Error("expected create");
-    // A phase-1 client must stay indistinguishable from before (no `mesh: false`).
-    expect("mesh" in withoutMesh.caps).toBe(false);
   });
 
   it("accepts a join with proof and rejoin token", () => {
@@ -410,9 +385,9 @@ describe("control message validation (v2)", () => {
     ).toEqual({ v: 2, type: "ping" });
   });
 
-  it("throws on an unknown ctrl type so old pages can drop newer frames", () => {
-    // peer.ts catches this and silently ignores the frame: that is the
-    // compatibility contract for messages added after a page was built.
+  it("throws on an unknown ctrl type so the pair drops the frame", () => {
+    // peer.ts catches this and silently ignores the frame, so an unknown ctrl
+    // type never breaks an open pair.
     expect(() => parseCtrlMessage({ v: 2, type: "future-thing" })).toThrow();
     expect(() => parseCtrlMessage({ v: 1, type: "ping" })).toThrow();
   });

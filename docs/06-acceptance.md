@@ -146,8 +146,7 @@ v0.2.0 因此按 `deploy.yml` 等价步骤手动部署（见下方 v0.2.0 生产
 ## 阶段 2（成员互传、管理权移交、自动接收，2026-11-27）
 
 > 阶段 2 交付：任意成员之间懒建连 mesh 互传、管理员离线 60 s 后管理权自动移交、接收方「自动接收」开关、
-> 多成员收发 UI；协议仍为 v2（不新增消息），旧客户端（无 `caps.mesh`）回退到阶段 1 的「管理员 offer」规则，
-> 同房间新旧页面混用不会抢 offer。协议注记见 `docs/02-protocol.md` §11。
+> 多成员收发 UI；协议仍为 v2（不新增消息）。协议注记见 `docs/02-protocol.md` §11。
 
 | # | 判据 | 状态 | 证据 |
 |---|---|---|---|
@@ -176,7 +175,7 @@ bash tests/audit/zero-storage.sh
 | 进程 | PM2 online（pid 79616，内存 5.4 MB，0 restarts）；`current` → `releases/v0.3.0`；`VERSION` = `commit=13faa2c…`、`version=0.3.0`；启动日志 1 行 `listening on ws://127.0.0.1:8788/v1/ws turn=on`；err 日志 0 行；coturn `inactive` |
 | 入口/端口 | `https://file.time-pack.com/` 200（0.12 s）；3478 udp+tcp 监听（内嵌 TURN）；8788 仅回环（nginx 反代） |
 | 生产验收 | **AC10 双向 10 MB → 1 passed（10.4 s）**；**AC16 成员↔成员 mesh → 1 passed（7.4 s）**（阶段 2 新能力，生产实测）；**AC2 relay-only 10 MB（内嵌 TURN）→ 1 passed（1.2 min）** |
-| 仓库 | `packages/signaling` 等 Node 实现已删除；`pnpm dev`/`pnpm e2e`/`zero-storage.sh` 默认都是 Go；回滚到 Node 需部署 `v0.1.0` release 并重新启用 coturn（仓库不再保留 Node 源码） |
+| 仓库 | `packages/signaling` 等 Node 实现已删除；`pnpm dev`/`pnpm e2e`/`zero-storage.sh` 默认都是 Go；回滚 = 部署上一个 Go release tag（产品未正式发布，无旧客户端兼容负担） |
 
 生产验收命令：
 
@@ -197,7 +196,7 @@ E2E_NO_WS=1 E2E_BASE_URL=https://file.time-pack.com E2E_RELAY=1 E2E_RELAY_MB=10 
 | # | 判据 | 状态 | 证据 |
 |---|---|---|---|
 | AC19 | 传输取消/重试（发送与接收两侧、含排队项） | ✅ | `tests/e2e/transfer-cancel-retry.spec.ts` **2 passed**：100 MB 传输中取消 → 双方 `phase=cancelled`（发送侧 local / 接收侧 peer）、无 error、半成品清理；重试用**新 transferId** 重新 manifest→accept，双方 SHA-256 一致。排队项可单独取消（队列第 2 条移除后第 1 条自动开始、对端只收到第 1 个文件）。单测 +11（send/receive/peer/heartbeat/protocol） |
-| AC20 | 应用层 ctrl 心跳（断线检测 ~10 s） | ✅ | 已 open 的 pair 每 3 s `ping`/`pong`，任意 ctrl/data 帧算活跃，连续 10 s 无帧 → 走 offerer 重建；**只有收到过 pong 后才启用超时判定**（旧页面不误伤）。单测 `heartbeat.test.ts` 6 条（注入时钟）覆盖超时/恢复/旧页面保护；DEV 覆盖 `?ctrlHeartbeatMs=`/`?ctrlTimeoutMs=` |
+| AC20 | 应用层 ctrl 心跳（断线检测 ~10 s） | ✅ | 已 open 的 pair 每 3 s `ping`/`pong`，任意 ctrl/data 帧算活跃，连续 10 s 无帧 → 走 offerer 重建；收到任意帧算活跃，10 s 无帧判定失效。单测 `heartbeat.test.ts` 6 条（注入时钟）覆盖超时/恢复/活跃判定；DEV 覆盖 `?ctrlHeartbeatMs=`/`?ctrlTimeoutMs=` |
 | AC21 | 壳层「服务器地址设置页」（Electron / Tauri 桌面 / Android） | ✅ 本机可验部分 | Electron：`server-config.test.cjs` **9/9**、打包 AppImage 实跑首启设置页/测试连接/保存生效/重启跳过/服务器不可达回设置页/恢复官方实例；Tauri 桌面：`cargo test` **16/16**、`tauri build --no-bundle` 通过、真实 WebKitGTK 下保存→重载→注入新 `ws://` 实测；移动：`cargo test` **17/17**、`cargo check --target aarch64-linux-android` 通过、注入入口按钮（44 px/shadow DOM/aria）Chromium 验证。存储：各平台配置目录 `server-settings.json`（无密钥）；优先级 `CROSSFILE_SIGNALING_URL` > 已保存 > 官方实例（debug 默认本机 8788）；「恢复官方实例」清除设置并立即生效 |
 | U | 回归 | ✅ | `pnpm gate` exit 0（**154 单测 / 15 文件**，core 覆盖 93.77% lines / 86.44% branch，对比度 33/33，零硬编码色值）；全量 `pnpm e2e`（Go）→ **26 passed / 3 skipped / 0 failed**（2.7 min）；`E2E_RECONNECT_MS=1500` ac16+ac17 3 passed；Go 106 测试 / 85.6% / `-race` 干净；零存储审计 PASS |
 
@@ -211,22 +210,22 @@ pnpm --filter @crossfile/desktop-electron check        # node --check + 9 node:t
 (cd apps/mobile/src-tauri && cargo test)                # 17 tests
 ```
 
-**已知限制**：取消对未升级的旧页面是尽力而为（旧 bundle 丢弃未知 ctrl 帧，旧发送端可能在自身 120 s ack 超时后报错）；重试仅发送侧可用（接收方被取消需对方重发）；Android 设置页打开时系统返回键会退到后台（无 Rust↔Kotlin 桥，后续修）；Windows/macOS 壳与 Android 真机运行时未验（本机无对应环境）。
+**已知限制**：重试仅发送侧可用（接收方被取消需对方重发）；Android 设置页打开时系统返回键会退到后台（无 Rust↔Kotlin 桥，后续修）；Windows/macOS 壳与 Android 真机运行时未验（本机无对应环境）。
 
 ## Go 单二进制后端（2026-11-27，已上线；Node 实现已移除）
 
 > 背景：用 Go 重写信令后端并把 TURN 内嵌进同一进程（`apps/signaling-go/`），去掉服务端 Node 与独立 coturn；
 > 协议仍为 v2、客户端零改动。实现与验收细节见 `docs/05-development-plan.md` §7.5、决策见 `docs/adr/0011-go-single-binary-backend.md`。
-> **2026-11-27 起 `packages/signaling` 等 Node 实现已从仓库删除**，Go 二进制是唯一服务端；下表的 `E2E_SERVER=go`、
-> `zero-storage.sh --go` 现为兼容别名（默认即 Go）。
+> **2026-11-27 起 `packages/signaling` 等 Node 实现已从仓库删除**，Go 二进制是唯一服务端；下表早期命令里的
+> `E2E_SERVER=go`、`--go` 是当时的写法，现默认即 Go。
 
 | # | 判据 | 状态 | 证据 |
 |---|---|---|---|
 | G1 | 协议 v2 与 Node 语义一致（消息/状态机/错误码/边界） | ✅ | 独立只读 parity 审查（Node `server.ts`/`rooms.ts`/`static.ts`/`identity.ts`/`turn.ts` vs Go）：**无 blocker**；修复 1 个 IMPORTANT（TURN 门禁）与 7 个 minor 后复核通过。差异仅为文档化的实现选择（入口默认端口 8788、内嵌 TURN 需 `TURN_EXTERNAL_IP`、TURN 日志丢弃、3478 被占用则启动失败） |
 | G2 | Go 单测 | ✅ | `go test ./...` → **93 个测试全过，85.2% 语句覆盖率，1.4 s**；`go test -race ./...` 干净（2.8 s）；`gofmt -l .` 空、`go vet ./...` 干净 |
 | G3 | 全量 e2e（信令换成 Go） | ✅ | `E2E_SERVER=go pnpm e2e` → **20 passed / 1 skipped**（跳过项为 AC2 relay，未设 `E2E_RELAY`），2.0 min，与 Node 基线一致（AC10/AC11/AC12/AC13/AC14/AC6/AC7/SAS/配额/无障碍全过） |
-| G4 | 内嵌 TURN 真中继（不依赖 coturn） | ✅ | `E2E_SERVER=go E2E_RELAY=1 TURN_SECRET=… TURN_URIS='turn:127.0.0.1:3478?transport=udp,turn:127.0.0.1:3478?transport=tcp' TURN_EXTERNAL_IP=127.0.0.1 pnpm exec playwright test tests/e2e/ac2-relay.spec.ts` → **1 passed（9.7 s）**，双方 `path === "relay"` 断言通过；另有 Go 单测 `TestEmbeddedTURNAllocatesAndRelaysUDP` 用 REST 凭据分配并回环 UDP |
-| G5 | 零存储（Go 二进制） | ✅ | `bash tests/audit/zero-storage.sh --go` → **RESULT PASS**：8 步 v2 会话、0 可写文件、0 普通文件 write、stdout 恰 1 行、stdout 无 roomId/6 位码/显示名、cwd 为空、SIGTERM 优雅退出 |
+| G4 | 内嵌 TURN 真中继（不依赖 coturn） | ✅ | `E2E_RELAY=1 TURN_SECRET=… TURN_URIS='turn:127.0.0.1:3478?transport=udp,turn:127.0.0.1:3478?transport=tcp' TURN_EXTERNAL_IP=127.0.0.1 pnpm exec playwright test tests/e2e/ac2-relay.spec.ts` → **1 passed（9.7 s）**，双方 `path === "relay"` 断言通过；另有 Go 单测 `TestEmbeddedTURNAllocatesAndRelaysUDP` 用 REST 凭据分配并回环 UDP |
+| G5 | 零存储（Go 二进制） | ✅ | `bash tests/audit/zero-storage.sh` → **RESULT PASS**：8 步 v2 会话、0 可写文件、0 普通文件 write、stdout 恰 1 行、stdout 无 roomId/6 位码/显示名、cwd 为空、SIGTERM 优雅退出 |
 | G6 | 发布产物 | ✅ | release `server` job 本地等价实跑：x64/arm64 静态链接（含内嵌网页 10,457,248 B / 约 9.5 MB）、冒烟（`<div id="root">`、SPA 回退、v1 → `VERSION_MISMATCH`）、tarball = `crossfile-signaling`(0755) + `ecosystem.config.cjs` + `VERSION`；本机 PM2 `interpreter: none` 实跑 online、`/` 200、日志 1 行、`pm2 delete` 释放端口 |
 | G7 | 生产切换（v0.2.0） | ✅ | coturn `stop+disable`、3478 释放后打 tag `v0.2.0`（→ `2d2d5fd`）；release run 45973916659 全绿并自动发布（8+2 个资产）→ dispatch `deploy`；因 scp 嵌套路径缺陷（见上「缺陷 2」）deploy 未完成，按 `deploy.yml` 等价步骤手动部署：`releases/v0.2.0` 解压 → `source shared/.env`（含 `TURN_EXTERNAL_IP`）→ `pm2 delete+start --update-env` → 健康检查 → `current` 软链。**生产实测**：`file` = 静态 Go ELF（stripped）、PM2 online（内存 ~5.6 MB，原 Node 版 ~65 MB）、`3478` udp+tcp 监听、启动日志 1 行 `… turn=on`、`https://file.time-pack.com/` 200 + 安全头；**生产 AC10 双向 10 MB → 1 passed（11.7 s）**；**生产 AC2 relay-only 10 MB（内嵌 TURN，无 coturn）→ 1 passed（1.5 min）**。**deploy 修复后重跑验证**（run 45981294402，`workflow_dispatch`，tag `v0.2.0`）全绿：`releases/v0.2.0` 只有 3 个文件（无嵌套 `release/`）、PM2 新 pid 78306（5.4 MB）、`current` → `v0.2.0`、3478 udp+tcp 监听、`https://file.time-pack.com/` 200、AC10 复跑 1 passed（11.9 s）、AC2 relay 复跑 1 passed（1.2 min） |
 
@@ -237,16 +236,16 @@ Go 复现命令：
 (cd apps/signaling-go && gofmt -l . && go vet ./... && go test ./... && go test -race ./...)
 
 # 全量 e2e（Go 信令 + Vite 页面；自动 SKIP_WEB=1 构建二进制）
-pnpm e2e                    # 默认 Go（E2E_SERVER=go 为兼容别名）
+pnpm e2e                    # 默认 Go
 
 # 内嵌 TURN 的 relay-only 用例（本机 3478 需空闲）
-E2E_SERVER=go E2E_RELAY=1 TURN_SECRET=dev-turn-secret \
+E2E_RELAY=1 TURN_SECRET=dev-turn-secret \
   TURN_URIS='turn:127.0.0.1:3478?transport=udp,turn:127.0.0.1:3478?transport=tcp' \
   TURN_EXTERNAL_IP=127.0.0.1 \
   pnpm exec playwright test tests/e2e/ac2-relay.spec.ts
 
 # 零存储审计（Go 二进制）
-bash tests/audit/zero-storage.sh        # 默认审计 Go 二进制（--go 为兼容别名）
+bash tests/audit/zero-storage.sh        # 默认审计 Go 二进制
 ```
 
 #### 待人工验证（需要真机）

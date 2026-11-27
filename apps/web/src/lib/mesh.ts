@@ -1,33 +1,23 @@
 /**
- * Pair-role election and hand-over bookkeeping for the phase-2 mesh
+ * Pair-role election and hand-over bookkeeping for the member mesh
  * (ADR 0010 D23/D24, docs/02 §11.1).
  *
- * Phase 1 had one fixed offerer: the admin offered every pair. Phase 2 keeps one
- * `PeerConnection` per pair but elects its offerer independently and lazily:
+ * There is one `PeerConnection` per pair; its offerer is elected independently
+ * and lazily by a pure, symmetric rule (both sides compute the same answer from
+ * data they already have, so no negotiation message is needed):
  *
- * 1. both sides are phase-2 clients (`caps.mesh === true`) → the peer with the
- *    lexicographically smaller `memberId` (plain JS string `<`) is the offerer;
- * 2. the peer has no `caps.mesh` (a phase-1 page, or caps not delivered yet) →
- *    fall back to the phase-1 rule: the admin is the offerer. This is what keeps
- *    old and new pages in the same room from both offering (glare);
- * 3. the pair still needs the 6-digit-code SAS hand-over (one side has no
- *    roomKey) → the admin offers it, exactly like phase 1. Only the admin↔member
- *    pair runs that ceremony; a member↔member pair simply waits for the key.
- *
- * The rule is pure and symmetric: both sides compute the same answer from data
- * they already have (ids + broadcast caps), so no negotiation message is needed.
+ * 1. the peer with the lexicographically smaller `memberId` (plain JS string
+ *    `<`) is the offerer;
+ * 2. the pair still needs the 6-digit-code SAS hand-over (one side has no
+ *    roomKey) → the admin offers it, because the keyless member cannot
+ *    initiate a pair. Only the admin↔member pair runs that ceremony; a
+ *    member↔member pair simply waits for the key.
  */
-import type { Caps } from "@crossfile/core";
 
 export interface PairElectionInput {
   selfId: string;
   peerId: string;
   selfIsAdmin: boolean;
-  peerIsAdmin: boolean;
-  /** this client speaks the mesh rule (a phase-1 client would pass false) */
-  selfMesh: boolean;
-  /** the peer's caps from the member list; undefined until the list arrives */
-  peerCaps?: Pick<Caps, "mesh">;
   /** both sides normally hold the roomKey; false on the 6-digit path before SAS */
   selfHasKey: boolean;
   /** admin only: what `join_request` said about the member's roomKey (undefined = unknown) */
@@ -41,22 +31,9 @@ export function pairNeedsSas(
   return !input.selfHasKey || input.peerHasKey === false;
 }
 
-/**
- * True once both inputs of the mesh rule are known. Before the peer's caps
- * arrive the conservative answer is the phase-1 fallback; callers must not
- * attach an offerer PC while the election is unsettled (docs/02 §11.1 rule 3).
- */
-export function pairElectionSettled(
-  peerCaps: Pick<Caps, "mesh"> | undefined,
-): boolean {
-  return peerCaps !== undefined;
-}
-
 /** True when this side creates the offer for the pair (and rebuilds it after loss). */
 export function isPairOfferer(input: PairElectionInput): boolean {
   if (pairNeedsSas(input)) return input.selfIsAdmin;
-  const peerMesh = input.peerCaps?.mesh === true;
-  if (!input.selfMesh || !peerMesh) return input.selfIsAdmin;
   return input.selfId < input.peerId;
 }
 

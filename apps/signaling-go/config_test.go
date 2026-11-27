@@ -60,9 +60,6 @@ func TestLoadConfigMaxMembers(t *testing.T) {
 		{map[string]string{}, 4},
 		{map[string]string{"MAX_MEMBERS": "2"}, 2},
 		{map[string]string{"MAX_MEMBERS": " 4 "}, 4},
-		{map[string]string{"MAX_GUESTS": "3"}, 3},
-		{map[string]string{"MAX_MEMBERS": "2", "MAX_GUESTS": "4"}, 2},
-		{map[string]string{"MAX_MEMBERS": "  ", "MAX_GUESTS": "5"}, 5},
 	}
 	for _, testCase := range cases {
 		config, err := loadConfig(testCase.env)
@@ -74,11 +71,9 @@ func TestLoadConfigMaxMembers(t *testing.T) {
 		}
 	}
 	for _, raw := range []string{"0", "-1", "abc", "2.5", "2x", "1e3"} {
-		for _, key := range []string{"MAX_MEMBERS", "MAX_GUESTS"} {
-			_, err := loadConfig(map[string]string{key: raw})
-			if err == nil || !strings.Contains(err.Error(), "must be a positive integer") {
-				t.Fatalf("%s=%q: want a positive-integer error, got %v", key, raw, err)
-			}
+		_, err := loadConfig(map[string]string{"MAX_MEMBERS": raw})
+		if err == nil || !strings.Contains(err.Error(), "must be a positive integer") {
+			t.Fatalf("MAX_MEMBERS=%q: want a positive-integer error, got %v", raw, err)
 		}
 	}
 }

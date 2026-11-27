@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Zero-storage audit for the CrossFile signaling server (docs/01 AC8, docs/02 §7, AC15).
 #
-# The server is the Go single binary in `apps/signaling-go/` (the Node implementation was
-# removed). Two modes:
+# The server is the Go single binary in `apps/signaling-go/`. Two modes:
 #
 #   (default) local — build the binary with `SKIP_WEB=1 apps/signaling-go/build.sh`, run it under
 #                     `strace -f -e trace=openat,openat2,write` in an empty working directory,
@@ -20,7 +19,6 @@
 #
 # Usage:
 #   tests/audit/zero-storage.sh                    # local Go strace audit (default)
-#   tests/audit/zero-storage.sh --local            # same as the default
 #   SKIP_BUILD=1 tests/audit/zero-storage.sh       # reuse apps/signaling-go/bin/crossfile-signaling
 #   tests/audit/zero-storage.sh --container        # container audit (needs Docker)
 #   SKIP_BUILD=1 tests/audit/zero-storage.sh --container   # reuse the existing image
@@ -43,7 +41,6 @@ PORT="${AUDIT_PORT:-18787}"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --container) MODE="container" ;;
-    --local|--go) MODE="local" ;;
     --port) shift; PORT="${1:?--port needs a value}" ;;
     -h|--help) awk 'NR > 1 && /^set -u -o pipefail$/{exit} NR > 1' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "[FAIL] unknown argument: $1 (try --help)"; exit 1 ;;

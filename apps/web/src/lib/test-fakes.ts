@@ -57,7 +57,6 @@ export const fakeCaps: Caps = {
   swDownload: false,
   saveStrategies: ["blob"],
   screen: "desktop",
-  mesh: true,
 };
 
 export function ctrlTypes(ctrlSent: string[]): string[] {

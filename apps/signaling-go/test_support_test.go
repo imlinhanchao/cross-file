@@ -551,9 +551,3 @@ func roomSnapshot(t *testing.T, server *Server, roomID string) roomInfo {
 		Members:        len(room.Members),
 	}
 }
-
-// withMesh returns a caps bundle with the optional phase-2 mesh flag set.
-func withMesh(caps Caps, mesh bool) Caps {
-	caps.Mesh = &mesh
-	return caps
-}

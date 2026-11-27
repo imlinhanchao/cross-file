@@ -8,6 +8,9 @@ import { detectCaps, type Caps } from "@crossfile/core";
  */
 export async function probeCaps(): Promise<Caps> {
   const caps = detectCaps();
+  // Phase 2 (docs/02 §5/§11.1): this build can elect a pair offerer and mesh any
+  // member with any member, so peers know they may use the lexicographic rule.
+  caps.mesh = true;
   try {
     const estimate = await navigator.storage?.estimate?.();
     if (estimate?.quota && estimate.quota > 0) {

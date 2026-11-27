@@ -113,6 +113,22 @@ export const copy = {
   adminOnly: "仅管理员可见",
   leaveRoom: "退出",
   confirmEveryReceive: "每次接收都需要你确认",
+  // 自动接收开关（docs/02 §11.3，默认关；本地设置）
+  autoAccept: "自动接收",
+  autoAcceptHint:
+    "开启后，房间里任何成员发来的文件都会自动接收，不再逐次确认。只在你信任当前房间时开启。",
+  autoAcceptReceiving: "已自动接收来自 {name} 的文件",
+  // 管理权移交（docs/02 §11.2）：服务端只广播 members，客户端据 isAdmin 变化提示
+  adminPromoted: "原管理员已离线，你现在是房间管理员，可以批准成员、结束房间。",
+  adminHandoverNotice: "管理员已离线，管理权已移交给 {name}。",
+  rejoinLostTitle: "你的管理员身份已失效",
+  rejoinLostBody:
+    "你离线期间管理权已移交给其他成员。房间还在，重新加入后需要新管理员批准。",
+  rejoinExpiredTitle: "重连凭证已失效",
+  rejoinExpiredBody:
+    "房间还在，但这次重连凭证已过期。重新加入后需要管理员再次批准。",
+  rejoinAsMember: "重新加入房间",
+  rejoinHome: "返回首页",
   howThisRoomWorks: "这个房间怎么传",
   roomStillLive: "房间仍在进行 · 你可以回到房间继续给成员发文件",
   // 入口页 / 房间页区块标题与按钮（web-agent 收尾用）

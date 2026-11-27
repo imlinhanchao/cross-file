@@ -150,6 +150,14 @@ export interface RoomView {
   hasKey?: boolean;
   /** v1 client hit a v2 server (docs/01 D22) or vice versa. */
   versionOutdated?: boolean;
+  /** Auto-accept preference (docs/02 §11.3): user setting, default off. */
+  autoAccept: boolean;
+  /** Visible toast while an auto-accepted manifest starts. */
+  autoAcceptNotice?: string;
+  /** Admin hand-over notice (promoted member / everyone else), docs/02 §11.2. */
+  handoverNotice?: string;
+  /** Reconnect went stale (old admin after hand-over, expired rejoin token). */
+  rejoinLost?: boolean;
   /** v1 compatibility: every other member, in join order. */
   guests: ReceiverView[];
 }
@@ -233,6 +241,7 @@ export const useApp = create<AppStore>((set) => ({
   transfers: {},
   queue: [],
   guests: [],
+  autoAccept: false,
   reset: (view) =>
     set({
       members: [],
@@ -250,6 +259,10 @@ export const useApp = create<AppStore>((set) => ({
       notice: undefined,
       roomClosed: false,
       versionOutdated: false,
+      autoAccept: false,
+      autoAcceptNotice: undefined,
+      handoverNotice: undefined,
+      rejoinLost: false,
       ...view,
     }),
   patch: (view) => set((state) => withCompat({ ...state, ...view })),

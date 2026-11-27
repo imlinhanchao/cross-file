@@ -234,7 +234,11 @@ export function RoomPage({ mode }: { mode: RoomMode }) {
           <span>{copy.secure}</span>
         </span>
         <span className="topbar__spacer" />
-        <span className="user-chip" data-testid="self-chip">
+        <span
+          className="user-chip"
+          data-testid="self-chip"
+          data-role={state.role}
+        >
           {state.selfName ?? copy.metaSelf}
           <span className="name-code">
             {state.role === "admin" ? copy.admin : copy.member}
@@ -316,11 +320,49 @@ export function RoomPage({ mode }: { mode: RoomMode }) {
               </div>
             ) : null}
 
+            {state.handoverNotice ? (
+              <div
+                className="warn-card"
+                role="status"
+                data-testid="handover-notice"
+              >
+                <Icon name="shield-check" />
+                <div>
+                  <div className="warn-card__title">{state.handoverNotice}</div>
+                </div>
+              </div>
+            ) : null}
+
             {state.error && !state.roomClosed ? (
               <>
-                <WarningCard title={copy.errorGeneric} body={state.error} />
+                <WarningCard
+                  title={
+                    state.rejoinLost
+                      ? state.role === "admin"
+                        ? copy.rejoinLostTitle
+                        : copy.rejoinExpiredTitle
+                      : copy.errorGeneric
+                  }
+                  body={
+                    state.rejoinLost
+                      ? state.role === "admin"
+                        ? copy.rejoinLostBody
+                        : copy.rejoinExpiredBody
+                      : state.error
+                  }
+                />
+                {state.rejoinLost && state.link ? (
+                  <button
+                    className="btn btn--primary btn--block"
+                    type="button"
+                    data-testid="rejoin-room"
+                    onClick={() => controller.current?.rejoin()}
+                  >
+                    {copy.rejoinAsMember}
+                  </button>
+                ) : null}
                 <a className="btn btn--secondary btn--block" href="/">
-                  {copy.statusBackHome}
+                  {state.rejoinLost ? copy.rejoinHome : copy.statusBackHome}
                 </a>
               </>
             ) : null}
@@ -809,6 +851,32 @@ export function RoomPage({ mode }: { mode: RoomMode }) {
               </section>
             ) : null}
 
+            <section className="card" aria-labelledby="settings-title">
+              <div className="card__head">
+                <span className="card__title" id="settings-title">
+                  {copy.autoAccept}
+                </span>
+              </div>
+              <label className="switch-row" htmlFor="auto-accept-toggle">
+                <input
+                  id="auto-accept-toggle"
+                  className="switch-row__input"
+                  type="checkbox"
+                  role="switch"
+                  checked={state.autoAccept}
+                  data-testid="auto-accept-toggle"
+                  aria-describedby="auto-accept-hint"
+                  onChange={(event) =>
+                    controller.current?.setAutoAccept(event.target.checked)
+                  }
+                />
+                <span className="switch-row__label">{copy.autoAccept}</span>
+              </label>
+              <p id="auto-accept-hint" className="small muted mt-2">
+                {copy.autoAcceptHint}
+              </p>
+            </section>
+
             <section className="card" aria-labelledby="members-title">
               <div className="card__head">
                 <span className="card__title" id="members-title">
@@ -1110,6 +1178,11 @@ export function RoomPage({ mode }: { mode: RoomMode }) {
       {toast ? (
         <div className="toast" role="status">
           {toast}
+        </div>
+      ) : null}
+      {state.autoAcceptNotice ? (
+        <div className="toast" role="status" data-testid="auto-accept-toast">
+          {state.autoAcceptNotice}
         </div>
       ) : null}
       {state.notice ? (

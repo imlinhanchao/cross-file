@@ -119,6 +119,12 @@ export interface Caps {
   deviceMemoryGB?: number;
   storageQuotaMB?: number;
   screen: "phone" | "tablet" | "desktop";
+  /**
+   * Phase-2 client: can lazily mesh with any member (docs/02 §5/§11.1). A peer
+   * without this flag is a phase-1 client, so pair roles fall back to the old
+   * "admin is the offerer" rule and old/new pages mixed in one room never glare.
+   */
+  mesh?: boolean;
 }
 
 export const capsSchema: z.ZodType<Caps> = z.object({
@@ -133,6 +139,7 @@ export const capsSchema: z.ZodType<Caps> = z.object({
   deviceMemoryGB: z.number().positive().optional(),
   storageQuotaMB: z.number().positive().optional(),
   screen: z.enum(["phone", "tablet", "desktop"]),
+  mesh: z.boolean().optional(),
 });
 
 // --- room membership (ADR 0010) ---------------------------------------------

@@ -121,6 +121,29 @@ describe("signaling message validation (v2)", () => {
     ).toThrow();
   });
 
+  it("keeps the optional phase-2 caps.mesh flag, and omits it when absent", () => {
+    const withMesh = parseClientMessage({
+      v: 2,
+      type: "create",
+      roomId: "a".repeat(26),
+      caps: { ...capsStub(), mesh: true },
+      name: "MacBook · 7K2F",
+    });
+    if (withMesh.type !== "create") throw new Error("expected create");
+    expect(withMesh.caps.mesh).toBe(true);
+
+    const withoutMesh = parseClientMessage({
+      v: 2,
+      type: "create",
+      roomId: "a".repeat(26),
+      caps: capsStub(),
+      name: "MacBook · 7K2F",
+    });
+    if (withoutMesh.type !== "create") throw new Error("expected create");
+    // A phase-1 client must stay indistinguishable from before (no `mesh: false`).
+    expect("mesh" in withoutMesh.caps).toBe(false);
+  });
+
   it("accepts a join with proof and rejoin token", () => {
     const message = parseClientMessage({
       v: 2,

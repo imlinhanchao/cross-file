@@ -32,10 +32,15 @@ import { ReceiverTransfer } from "./receive.js";
 import type { FileView, IncomingView, ResultView } from "../store.js";
 
 export interface PeerSessionHooks {
-  selfIsAdmin: boolean;
-  peerIsAdmin: boolean;
-  /** phase 1: the admin side creates the offer and the data channels */
-  offerer: boolean;
+  /** current role, read at use time: an admin hand-over may flip it mid-session */
+  selfIsAdmin(): boolean;
+  peerIsAdmin(): boolean;
+  /**
+   * This side is the pair's offerer (docs/02 §11.1: phase-2 lexicographic
+   * election, phase-1 admin fallback for old peers). Read dynamically so a
+   * role change or a late member-list update is honoured on the next attach.
+   */
+  offerer(): boolean;
   relayOnly: boolean;
   turn?: TurnCredential;
   caps(): Caps;
@@ -81,6 +86,8 @@ export class PeerSession {
   private readonly hooks: PeerSessionHooks;
   private peer?: Peer;
   private handles?: PeerHandles;
+  /** role this PC was created with; undefined while no PC is being negotiated */
+  private attachedAsOfferer?: boolean;
   private sender?: SenderTransfer;
   private receiver?: ReceiverTransfer;
   private readonly outQueue: File[][] = [];
@@ -109,14 +116,30 @@ export class PeerSession {
     return this.handles !== undefined;
   }
 
+  /** A PC is being negotiated (offer sent or answer expected) but not open yet. */
+  get connecting(): boolean {
+    return this.peer !== undefined;
+  }
+
   get queuedCount(): number {
     return this.outQueue.length + (this.sender ? 1 : 0);
   }
 
   /** Create a fresh peer connection (also used after a channel drop). */
   attach(): void {
+    this.attachAs(this.hooks.offerer());
+  }
+
+  /**
+   * Create a PC in an explicit role. Normally the role comes from the election;
+   * the exception is an elected offerer that receives an offer before it ever
+   * attached: answering is then the only way to form the pair (the sending side
+   * becomes the connection's offerer for this attempt).
+   */
+  private attachAs(offerer: boolean): void {
     if (this.closed) return;
     this.disposePeer();
+    this.attachedAsOfferer = offerer;
     const options = {
       iceServers: iceServersFromTurn(this.hooks.turn),
       relayOnly: this.hooks.relayOnly,
@@ -126,7 +149,7 @@ export class PeerSession {
         this.handleLost();
       },
     };
-    const peer = this.hooks.offerer
+    const peer = offerer
       ? createOffererPeer(options)
       : createAnswererPeer(options);
     this.peer = peer;
@@ -143,13 +166,17 @@ export class PeerSession {
 
   async handleSignal(payload: SignalPayload): Promise<void> {
     if (this.closed) return;
-    if (payload.k === "offer" && !this.hooks.offerer) {
-      // The admin rebuilds the pair after a drop: always start a fresh answerer. The
-      // old connection may still look alive because its close event is delivered late
-      // (Chrome timing differs across machines); reusing it would apply the new offer
-      // to a dead channel and leave the sender stuck.
+    if (payload.k === "offer") {
+      // The pair's offerer rebuilds after a drop; the answerer always starts a
+      // fresh answerer. The old connection may still look alive because its close
+      // event is delivered late (Chrome timing differs across machines); reusing it
+      // would apply the new offer to a dead channel and leave the sender stuck.
+      // If we created the offer ourselves, ours wins and the duplicate is ignored
+      // (glare). If we have no PC yet — an elected offerer whose peer offered
+      // first — answering is the only way to form the cold pair.
+      if (this.peer && this.attachedAsOfferer === true) return;
       if (this.peer) this.handleLost();
-      this.attach();
+      this.attachAs(false);
     }
     await this.peer?.handleSignal(payload);
   }
@@ -228,13 +255,15 @@ export class PeerSession {
     // ctrl hello announces our capabilities; the receiving side already knows
     // them from the member list, so this is informational only.
     this.sendCtrl({ v: 2, type: "hello", caps: this.hooks.caps() });
-    if (!this.hooks.offerer && this.hooks.hasKey()) {
-      // QR path (and any later rebuild): tell the admin we are ready to receive
-      // and send. On the 6-digit path this is sent after the key hand-over.
+    if (this.hooks.hasKey()) {
+      // Idempotent "this side holds the roomKey" signal (docs/02 §10.2). Both
+      // sides send it on every pair open, so any member↔member pair becomes
+      // ready without a second SAS ceremony; on the 6-digit path the keyless
+      // side sends it once the admin's room-key has arrived.
       this.sendCtrl({ v: 2, type: "key-ok" });
     }
     this.setPairReady(
-      this.hooks.offerer ? this.pairReady : this.hooks.hasKey(),
+      this.hooks.offerer() ? this.pairReady : this.hooks.hasKey(),
     );
     this.onReopen();
   }
@@ -255,6 +284,7 @@ export class PeerSession {
     this.peer?.close();
     this.peer = undefined;
     this.handles = undefined;
+    this.attachedAsOfferer = undefined;
   }
 
   private async pump(): Promise<void> {
@@ -393,11 +423,10 @@ export class PeerSession {
       // Priority rule (ADR 0010): the admin's direction wins when both sides
       // start at the same time. A member yields while its own manifest has not
       // been accepted yet; otherwise the pair answers BUSY and the peer retries.
-      const yieldToAdmin =
-        !this.hooks.selfIsAdmin &&
-        this.hooks.peerIsAdmin &&
-        !this.sender.hasAccepted;
-      if (!yieldToAdmin) {
+      // docs/02 §6.5: the pair's offerer wins a simultaneous start (the admin
+      // on phase-1 fallback pairs), so the other side yields its unaccepted send.
+      const yieldToPriority = !this.hooks.offerer() && !this.sender.hasAccepted;
+      if (!yieldToPriority) {
         this.rejectBusy(manifest.transferId);
         return;
       }

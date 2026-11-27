@@ -7,7 +7,10 @@
  * - the signaling socket, identity/roomKey, member list and rejoin window,
  * - the display name (default `平台 · 代号`, editable, remembered locally),
  * - SAS + roomKey hand-over on the 6-digit-code path,
- * - one {@link PeerSession} per other member (offerer: the admin),
+ * - one lazily attached {@link PeerSession} per pair; the offerer is elected by
+ *   {@link isPairOfferer} (phase 2), the admin keeps offering old/SAS pairs,
+ * - admin hand-over (role flip from a `members` broadcast) and the
+ *   auto-accept preference,
  * - the send queue (file × member matrix) and the UI-facing store updates.
  */
 import {
@@ -45,6 +48,13 @@ import {
 import { sasTimeoutMs, startTimeout, type TimeoutGuard } from "./timeout.js";
 import { resolveSignalingUrl, SignalingSocket } from "./signal.js";
 import { PeerSession, type PeerSessionHooks } from "./peer.js";
+import {
+  handoverInfo,
+  isPairOfferer,
+  pairElectionSettled,
+  pairNeedsSas,
+  roleAfterMembers,
+} from "./mesh.js";
 import type { SenderOutcome } from "./send.js";
 import {
   useApp,
@@ -60,8 +70,16 @@ export type RoomMode =
   | { kind: "auto" };
 
 const NAME_STORAGE_KEY = "crossfile.displayName";
+const AUTO_ACCEPT_STORAGE_KEY = "crossfile.autoAccept";
 const REBUILD_DELAY_MS = 600;
 const SAS_UNKNOWN_KEY_DELAY_MS = 1_200;
+
+/** Fill a `{name}` template from copy.ts (same helper shape as RoomPage). */
+function tpl(template: string, vars: Record<string, string | number>): string {
+  return template.replace(/\{(\w+)\}/g, (_match, key: string) =>
+    String(vars[key] ?? ""),
+  );
+}
 
 function readStoredName(): string | null {
   try {
@@ -85,6 +103,24 @@ function clearStoredName(): void {
     globalThis.localStorage?.removeItem(NAME_STORAGE_KEY);
   } catch {
     // ignore
+  }
+}
+
+/** Auto-accept preference (docs/02 §11.3): a plain local setting, default off. */
+function readAutoAccept(): boolean {
+  try {
+    return globalThis.localStorage?.getItem(AUTO_ACCEPT_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeAutoAccept(enabled: boolean): void {
+  try {
+    if (enabled) globalThis.localStorage?.setItem(AUTO_ACCEPT_STORAGE_KEY, "1");
+    else globalThis.localStorage?.removeItem(AUTO_ACCEPT_STORAGE_KEY);
+  } catch {
+    // Private mode / disabled storage: the setting lasts for this session only.
   }
 }
 
@@ -122,7 +158,21 @@ export class RoomController {
   private sasPeerConfirmed = false;
   private sasTimer: TimeoutGuard | null = null;
   private incomingResolver?: (granted: boolean) => void;
-  private autoAcceptDev = false;
+  private pendingIncoming?: IncomingView;
+  private autoAcceptSetting = false;
+  /** DEV-ONLY ?autoaccept=1 override, kept for the e2e suite (never persisted). */
+  private devAutoAccept = false;
+  /** pairs this side wants to send to (drives the lazy attach) */
+  private readonly wantedPeers = new Set<string>();
+  /** pairs whose peer sent a pair-request wake (it wants a channel but is not the offerer) */
+  private readonly pairRequests = new Set<string>();
+  /** wake was sent for this pair since its last attach attempt */
+  private readonly wakeSent = new Set<string>();
+  /** a reconnect attempt is in flight (a rejected create/rejoin then offers a re-join) */
+  private reconnecting = false;
+  /** true while the page is leaving for the normal join flow: never send `close` */
+  private suppressAdminClose = false;
+  private autoAcceptNoticeTimer?: ReturnType<typeof setTimeout>;
   private reportUrl: string | null = null;
   private native = isNativeShell();
 
@@ -140,6 +190,11 @@ export class RoomController {
     return this.role === "admin";
   }
 
+  /** The auto-accept preference in force (user setting, or the dev e2e override). */
+  get autoAccept(): boolean {
+    return this.autoAcceptSetting || this.devAutoAccept;
+  }
+
   get fileNames(): string[] {
     return this.fileList.map((file) => file.name);
   }
@@ -147,12 +202,17 @@ export class RoomController {
   async start(): Promise<void> {
     this.relayOnly = new URLSearchParams(location.search).get("relay") === "1";
     this.detectDevFlags();
+    this.autoAcceptSetting = readAutoAccept();
     const store = useApp.getState();
     this.role =
       this.mode.kind === "create" || this.mode.kind === "auto"
         ? "admin"
         : "member";
-    store.reset({ role: this.role, phase: "provisioning" });
+    store.reset({
+      role: this.role,
+      phase: "provisioning",
+      autoAccept: this.autoAccept,
+    });
     this.caps = await probeCaps();
     if (!this.native) {
       const shell = await readShellConfig();
@@ -215,11 +275,13 @@ export class RoomController {
     this.cleanupNative?.();
     void setTransferActive(false);
     this.resolveIncoming(false);
+    this.pendingIncoming = undefined;
     if (
       this.role === "admin" &&
       this.roomId &&
       this.connected &&
-      !this.roomClosed
+      !this.roomClosed &&
+      !this.suppressAdminClose
     ) {
       this.socket.send({
         v: 2,
@@ -257,7 +319,13 @@ export class RoomController {
     store.setFiles(views, assignments);
   }
 
-  /** Start the transfers for the file × member matrix (one job per member). */
+  /**
+   * Start the transfers for the file × member matrix (one job per receiver).
+   * Any member can send to any other member (docs/02 §11.1): the pair is created
+   * lazily — this side attaches when it is the pair's offerer, otherwise it wakes
+   * the offerer with a pair-request (see {@link wakePeer}) and the queued job
+   * starts as soon as the pair opens.
+   */
   sendNow(): void {
     const store = useApp.getState();
     if (this.fileList.length === 0) throw new Error(copy.selectFileFirst);
@@ -270,10 +338,21 @@ export class RoomController {
         (store.assignments[index + 1] ?? []).includes(member.id),
       );
       if (files.length === 0) continue;
-      this.ensurePeer(member).enqueue(files);
+      const session = this.ensurePeer(member);
+      this.wantedPeers.add(member.id);
+      this.maybeAttach(member.id);
+      if (!session.hasHandles) this.wakePeer(member);
+      session.enqueue(files);
       started += 1;
     }
     if (started === 0) throw new Error(copy.emptyReceivers);
+  }
+
+  /** Toggle the room-wide auto-accept preference (docs/02 §11.3, default off). */
+  setAutoAccept(enabled: boolean): void {
+    this.autoAcceptSetting = enabled;
+    writeAutoAccept(enabled);
+    useApp.getState().patch({ autoAccept: this.autoAccept });
   }
 
   approve(memberId: string): void {
@@ -330,6 +409,18 @@ export class RoomController {
 
   declineIncoming(): void {
     this.resolveIncoming(false);
+  }
+
+  /**
+   * Old admin after a hand-over (or a member whose rejoin token expired): the
+   * room still exists, so leave the dead session through the normal join flow —
+   * the peer's invite link carries the roomKey and the new admin approves.
+   */
+  rejoin(): void {
+    const link = this.link;
+    this.suppressAdminClose = true;
+    this.intentionalClose = true;
+    location.assign(link || "/");
   }
 
   /** AC12 test hook: kill the data path to one peer; it rebuilds and resumes. */
@@ -396,7 +487,7 @@ export class RoomController {
   private detectDevFlags(): void {
     const params = new URLSearchParams(location.search);
     if (import.meta.env.DEV) {
-      this.autoAcceptDev = params.get("autoaccept") === "1";
+      this.devAutoAccept = params.get("autoaccept") === "1";
       const report = params.get("report");
       this.reportUrl = report;
     }
@@ -477,6 +568,7 @@ export class RoomController {
 
   private scheduleReconnect(): void {
     if (this.reconnectTimer) return;
+    this.reconnecting = true;
     const deadline = Date.now() + RECONNECT_WINDOW_MS;
     const attempt = async (): Promise<void> => {
       this.reconnectTimer = undefined;
@@ -518,6 +610,7 @@ export class RoomController {
     switch (message.type) {
       case "created": {
         this.clearReconnect();
+        this.reconnecting = false;
         this.selfId = message.selfId;
         this.rejoinToken = message.rejoinToken;
         if (message.turn) this.turn = message.turn;
@@ -534,12 +627,9 @@ export class RoomController {
         });
         this.applyMembers(message.members);
         this.startHeartbeat();
-        // Admin reconnect: rebuild the pair connections that were lost.
-        for (const member of message.members) {
-          if (member.id === this.selfId) continue;
-          const peer = this.ensurePeer(member);
-          if (!peer.hasHandles) peer.attach();
-        }
+        // applyMembers() re-evaluates the lazy pairs (legacy/SAS pairs are
+        // attached eagerly there; the rest only when a transfer needs them), so a
+        // re-attached admin does not have to rebuild every pair by hand.
         break;
       }
       case "join_request": {
@@ -601,6 +691,8 @@ export class RoomController {
         break;
       }
       case "join_rejected": {
+        const rejected = this.reconnecting;
+        this.reconnecting = false;
         this.fail(
           message.code === "VERSION_MISMATCH"
             ? copy.versionOutdated
@@ -609,6 +701,13 @@ export class RoomController {
         );
         if (message.code === "VERSION_MISMATCH")
           store.patch({ versionOutdated: true });
+        else if (
+          rejected &&
+          (message.code === "ROOM_NOT_FOUND" || message.code === "ROOM_CLOSED")
+        ) {
+          this.suppressAdminClose = true;
+          store.patch({ rejoinLost: true });
+        }
         break;
       }
       case "members": {
@@ -618,7 +717,18 @@ export class RoomController {
       case "signal": {
         const member = this.memberInfo(message.from);
         if (!member) return;
-        await this.ensurePeer(member).handleSignal(message.payload);
+        const payload = message.payload;
+        if (payload.k === "candidate" && payload.candidate.candidate === "") {
+          // pair-request wake (docs/02 §11.1 implementation note): a peer wants a
+          // channel but is not the pair's offerer. If we are the offerer, attach;
+          // an already connected pair would just see end-of-candidates, which the
+          // answerer/offerer swallow harmlessly — so it is not forwarded.
+          this.pairRequests.add(member.id);
+          this.ensurePeer(member);
+          this.maybeAttach(member.id);
+          break;
+        }
+        await this.ensurePeer(member).handleSignal(payload);
         break;
       }
       case "member_left": {
@@ -652,10 +762,23 @@ export class RoomController {
           });
           return;
         }
+        const lostRoom = this.reconnecting;
+        this.reconnecting = false;
+        if (
+          lostRoom &&
+          (message.code === "ROOM_CLOSED" || message.code === "ROOM_NOT_FOUND")
+        )
+          this.suppressAdminClose = true;
         store.patch({
           phase: "error",
           error: errorText(message.code, message.msg),
           errorCode: message.code,
+          // Returning old admin / expired rejoin token: the room still exists, so
+          // the UI offers the normal join flow instead of a dead end.
+          ...(lostRoom &&
+          (message.code === "ROOM_CLOSED" || message.code === "ROOM_NOT_FOUND")
+            ? { rejoinLost: true }
+            : {}),
         });
         break;
       }
@@ -678,17 +801,43 @@ export class RoomController {
 
   private applyMembers(members: MemberInfo[]): void {
     const store = useApp.getState();
+    const previousAdmin = this.members.find((member) => member.isAdmin);
     this.members = members;
     store.setMembers(members);
     const self = members.find((member) => member.id === this.selfId);
     if (self) {
       this.selfName = self.name;
       store.patch({ selfName: self.name, selfId: self.id });
+      // Admin hand-over (docs/02 §11.2): the role follows the broadcast, so the
+      // admin-only controls appear/disappear without a page reload.
+      const nextRole = roleAfterMembers(this.role, self.isAdmin);
+      if (nextRole !== this.role) {
+        this.role = nextRole;
+        store.patch({ role: nextRole, hasKey: this.hasKey, link: this.link });
+      }
+    }
+    const currentAdmin = members.find((member) => member.isAdmin);
+    const handover = handoverInfo(previousAdmin, currentAdmin, this.selfId);
+    if (handover) {
+      const message =
+        handover.kind === "promoted"
+          ? copy.adminPromoted
+          : tpl(copy.adminHandoverNotice, { name: handover.name });
+      store.patch({ handoverNotice: message, notice: message });
     }
     for (const member of members) {
       if (member.id === this.selfId) continue;
       if (member.state === "offline") continue;
-      this.ensurePeer(member);
+      const session = this.ensurePeer(member);
+      // Phase-1 shaped pairs are still created eagerly: the 6-digit SAS
+      // hand-over, and peers that run a phase-1 client (they only wait for the
+      // admin's offer). Every phase-2 pair is lazy: a transfer or a wake
+      // attaches it (docs/02 §11.1).
+      this.maybeEagerAttach(member);
+      this.maybeAttach(member.id);
+      // A peer that comes back after a queued send may need the wake again.
+      if (this.wantedPeers.has(member.id) && !session.hasHandles)
+        this.wakePeer(member);
     }
     for (const peerId of [...this.peers.keys()]) {
       if (members.some((member) => member.id === peerId)) continue;
@@ -740,21 +889,121 @@ export class RoomController {
     };
   }
 
+  /**
+   * The pair's offerer election (docs/02 §11.1), evaluated against the live
+   * member list: a role hand-over or a late caps broadcast can change the answer
+   * for the next attach.
+   */
+  private isPairOfferer(peerId: string): boolean {
+    const peer = this.memberInfo(peerId);
+    return isPairOfferer({
+      selfId: this.selfId,
+      peerId,
+      selfIsAdmin: this.role === "admin",
+      peerIsAdmin: peer?.isAdmin ?? false,
+      selfMesh: true,
+      ...(peer ? { peerCaps: peer.caps } : {}),
+      selfHasKey: this.hasKey,
+      ...(this.memberHasKey.has(peerId)
+        ? { peerHasKey: this.memberHasKey.get(peerId) }
+        : {}),
+    });
+  }
+
+  /** True while this pair still needs the 6-digit-code SAS hand-over. */
+  private pairNeedsSas(peerId: string): boolean {
+    return pairNeedsSas({
+      selfHasKey: this.hasKey,
+      ...(this.memberHasKey.has(peerId)
+        ? { peerHasKey: this.memberHasKey.get(peerId) }
+        : {}),
+    });
+  }
+
+  /**
+   * Whether the peer holds the roomKey. The admin always does (it is the source
+   * of the key), and a `key-ok` proves it for everyone else.
+   */
+  private peerHasKey(peerId: string): boolean {
+    const known = this.memberHasKey.get(peerId);
+    if (known !== undefined) return known;
+    return this.memberInfo(peerId)?.isAdmin === true && this.hasKey;
+  }
+
   private ensurePeer(member: MemberInfo): PeerSession {
     const existing = this.peers.get(member.id);
     if (existing) return existing;
     const session = new PeerSession(member.id, this.peerHooks(member.id));
     this.peers.set(member.id, session);
-    if (this.role === "admin") {
-      session.attach();
-    }
     return session;
+  }
+
+  /**
+   * Attach this pair if this side is its offerer and something wants it: a local
+   * send (`wantedPeers`) or a pair-request wake from the peer (`pairRequests`).
+   * Nothing is created on member join, and a PC is never pre-emptively offered
+   * while the election is still unsettled (docs/02 §11.1 rule 3).
+   */
+  private maybeAttach(peerId: string): void {
+    const peer = this.memberInfo(peerId);
+    if (!peer || peer.state === "offline") return;
+    if (!this.hasKey) return;
+    if (this.pairNeedsSas(peerId)) return; // the SAS path attaches eagerly
+    if (!pairElectionSettled(peer.caps)) return;
+    if (!this.wantedPeers.has(peerId) && !this.pairRequests.has(peerId)) return;
+    if (!this.isPairOfferer(peerId)) return;
+    const session = this.peers.get(peerId);
+    if (!session || session.hasHandles || session.connecting) return;
+    session.attach();
+  }
+
+  /** Phase-1 pair shapes are still created eagerly by the admin. */
+  private maybeEagerAttach(member: MemberInfo): void {
+    if (this.role !== "admin" || !this.hasKey) return;
+    if (member.state === "offline") return;
+    const settled = pairElectionSettled(member.caps);
+    const sas = this.pairNeedsSas(member.id);
+    const legacy = settled && member.caps?.mesh !== true;
+    if (!sas && !legacy) return;
+    const session = this.ensurePeer(member);
+    if (session.hasHandles || session.connecting) return;
+    session.attach();
+  }
+
+  /**
+   * Pair-request wake (docs/02 §11.1 implementation note): the answerer cannot
+   * create a pair, so the first time it wants to send it asks the elected
+   * offerer with an empty `candidate` signal — an existing, schema-valid payload
+   * (trickle ICE end-of-candidates). Older clients ignore a candidate without a
+   * live PC (`PeerSession.handleSignal` no-ops when `peer` is undefined), and an
+   * already connected pair just drops the empty candidate in `addCandidate`.
+   * Sent at most once per attach attempt; cleared when the pair opens or drops.
+   */
+  private wakePeer(member: MemberInfo): void {
+    if (member.state === "offline") return;
+    if (!this.hasKey) return;
+    // The wake only means "create the pair"; whether the peer already holds the
+    // roomKey is settled by the key-ok exchange on the opened channel, so it is
+    // not required here (a keyless 6-digit member simply keeps the pair waiting).
+    if (member.caps?.mesh !== true) return; // phase-1 peers get the admin's offer
+    if (this.isPairOfferer(member.id)) return; // we attach ourselves
+    const session = this.peers.get(member.id);
+    if (!session || session.hasHandles || session.connecting) return;
+    if (this.wakeSent.has(member.id)) return;
+    this.wakeSent.add(member.id);
+    this.socket.signal(member.id, {
+      k: "candidate",
+      candidate: { candidate: "" },
+    });
   }
 
   private dropPeer(peerId: string): void {
     const peer = this.peers.get(peerId);
     peer?.close();
     this.peers.delete(peerId);
+    this.wantedPeers.delete(peerId);
+    this.pairRequests.delete(peerId);
+    this.wakeSent.delete(peerId);
     const timer = this.rebuildTimers.get(peerId);
     if (timer) clearTimeout(timer);
     this.rebuildTimers.delete(peerId);
@@ -763,9 +1012,9 @@ export class RoomController {
 
   private peerHooks(peerId: string): PeerSessionHooks {
     return {
-      selfIsAdmin: this.role === "admin",
-      peerIsAdmin: this.memberInfo(peerId)?.isAdmin ?? false,
-      offerer: this.role === "admin",
+      selfIsAdmin: () => this.role === "admin",
+      peerIsAdmin: () => this.memberInfo(peerId)?.isAdmin ?? false,
+      offerer: () => this.isPairOfferer(peerId),
       relayOnly: this.relayOnly,
       turn: this.turn,
       caps: () => this.caps,
@@ -773,7 +1022,7 @@ export class RoomController {
       sessionKey: () => this.sessionKey,
       hasKey: () => this.hasKey,
       nativeShell: () => this.native,
-      autoAccept: () => this.autoAcceptDev,
+      autoAccept: () => this.autoAccept,
       sendSignal: (payload: SignalPayload) =>
         this.socket.signal(peerId, payload),
       handleRoomCtrl: (message: CtrlMessage) =>
@@ -802,6 +1051,7 @@ export class RoomController {
       incomingFinished: (result) => this.onIncomingFinished(peerId, result),
       incomingDeclined: () => {
         useApp.getState().setIncoming(undefined);
+        useApp.getState().patch({ autoAcceptNotice: undefined });
         useApp.getState().patch({ notice: copy.decline });
       },
       outgoingStarted: (transferId, files, totalBytes) => {
@@ -869,25 +1119,35 @@ export class RoomController {
 
   private onPairOpen(peerId: string, handles: PeerHandles): void {
     const store = useApp.getState();
+    const peer = this.peers.get(peerId);
+    const member = this.memberInfo(peerId);
+    // A pair opened: the wake marker did its job (a later drop re-arms it).
+    this.wakeSent.delete(peerId);
+    this.pairRequests.delete(peerId);
     if (this.role === "admin") {
-      const knownKey = this.memberHasKey.get(peerId);
-      const peer = this.peers.get(peerId);
-      if (knownKey === true) {
-        peer?.setPairReady(true);
-      } else if (knownKey === false) {
+      const claim = this.memberHasKey.get(peerId);
+      if (claim === false) {
+        // 6-digit path: the admin drives the SAS hand-over for this member.
         this.beginSas(peerId, handles);
-      } else {
-        // Admin reconnect lost the proof hint: give the member a moment to
-        // announce that it already holds the roomKey (key-ok), else fall back to SAS.
+      } else if (claim === undefined && member?.caps?.mesh !== true) {
+        // Admin reconnect lost the join-request proof hint for a phase-1 peer:
+        // give it a moment to announce key-ok, else fall back to the SAS ceremony.
         setTimeout(() => {
           const current = this.peers.get(peerId);
           if (!current?.hasHandles || this.sasPeerId === peerId) return;
           if (this.memberHasKey.get(peerId) === true) return;
           this.beginSas(peerId, handles);
         }, SAS_UNKNOWN_KEY_DELAY_MS);
+      } else if (claim === true && this.hasKey) {
+        peer?.setPairReady(true);
       }
     } else if (!this.hasKey) {
-      this.beginSas(peerId, handles);
+      // 6-digit path on the member side: SAS with the admin. A member↔member
+      // pair never runs a second ceremony; it waits for the key and then
+      // announces key-ok on every open pair.
+      if (member?.isAdmin) this.beginSas(peerId, handles);
+    } else if (this.peerHasKey(peerId)) {
+      peer?.setPairReady(true);
     }
     if (store.phase === "waiting" && store.members.length > 1)
       store.patch({ phase: "joined" });
@@ -897,12 +1157,20 @@ export class RoomController {
     const store = useApp.getState();
     if (store.phase === "transferring")
       store.patch({ phase: "paused", notice: copy.resumeHint });
-    if (this.role !== "admin") return; // the admin rebuilds the pair
+    this.wakeSent.delete(peerId);
+    // docs/02 §6.5: the pair's offerer rebuilds it; the answerer waits for the
+    // fresh offer. Only pairs that were in use are rebuilt; an idle pair is
+    // recreated on demand.
+    if (!this.isPairOfferer(peerId)) return;
     if (this.rebuildTimers.has(peerId)) return;
     const timer = setTimeout(() => {
       this.rebuildTimers.delete(peerId);
       const peer = this.peers.get(peerId);
-      if (!peer || peer.hasHandles || this.intentionalClose) return;
+      if (!peer || peer.hasHandles || peer.connecting || this.intentionalClose)
+        return;
+      const member = this.memberInfo(peerId);
+      if (!member || member.state === "offline") return;
+      if (!this.wantedPeers.has(peerId) && !peer.busy) return;
       peer.attach();
     }, REBUILD_DELAY_MS);
     this.rebuildTimers.set(peerId, timer);
@@ -940,17 +1208,16 @@ export class RoomController {
         this.maybeSendRoomKey(peerId);
         return true;
       case "key-ok": {
+        // The peer proved it holds the roomKey. If we do too, the pair is ready
+        // (no SAS ceremony between two members); if we are still on the 6-digit
+        // path, only record it and wait for the admin's room-key.
         this.memberHasKey.set(peerId, true);
+        if (!this.hasKey) return true;
         this.peers.get(peerId)?.setPairReady(true);
-        this.sasTimer?.cancel();
-        this.sasTimer = null;
-        this.sasPeerId = undefined;
-        useApp.getState().patch({
-          sas: undefined,
-          sasPending: false,
-          sasConfirmedByMe: false,
-          hasKey: true,
-        });
+        // Only this pair's SAS card may be cleared: a key-ok from another member
+        // must not cancel the 6-digit hand-over currently on screen.
+        if (this.sasPeerId === undefined || this.sasPeerId === peerId)
+          this.clearSasState();
         return true;
       }
       case "room-key": {
@@ -964,19 +1231,18 @@ export class RoomController {
           this.sessionKey = deriveSessionKey(roomKey, this.roomIdBytes);
           this.hasKey = true;
           const peer = this.peers.get(peerId);
-          peer?.sendControl({ v: 2, type: "key-ok" });
           peer?.setPairReady(true);
-          this.sasTimer?.cancel();
-          this.sasTimer = null;
-          this.sasPeerId = undefined;
+          this.clearSasState();
           useApp.getState().patch({
             hasKey: true,
             roomId: this.roomId,
             link: this.link,
-            sas: undefined,
-            sasPending: false,
-            sasConfirmedByMe: false,
           });
+          // A key gained here may also unlock member↔member pairs that were
+          // opened (or asked for) while this device had no key: announce key-ok
+          // everywhere and retry the stalled offers/wakes.
+          this.announceKey();
+          this.retryWantedPairs();
         } catch {
           // A malformed key must abort rather than leave a half-open room.
           this.fail("房间密钥格式不正确，请重新加入。");
@@ -985,6 +1251,46 @@ export class RoomController {
       }
       default:
         return false;
+    }
+  }
+
+  /** Clear the 6-digit-code SAS card once the key is exchanged. */
+  private clearSasState(): void {
+    this.sasTimer?.cancel();
+    this.sasTimer = null;
+    this.sasPeerId = undefined;
+    this.sasConfirmedByMe = false;
+    this.sasPeerConfirmed = false;
+    useApp.getState().patch({
+      sas: undefined,
+      sasPending: false,
+      sasConfirmedByMe: false,
+    });
+  }
+
+  /**
+   * A pair that was waiting for the roomKey is not attached/offered yet (the
+   * offerer side had no key either). After the key arrives, retry the wanted
+   * pairs: attach the ones this side offers, re-wake the ones the peer offers.
+   */
+  private retryWantedPairs(): void {
+    for (const peerId of new Set([...this.wantedPeers, ...this.pairRequests])) {
+      this.maybeAttach(peerId);
+      const session = this.peers.get(peerId);
+      if (session?.hasHandles || session?.connecting) continue;
+      const member = this.memberInfo(peerId);
+      if (!member || this.isPairOfferer(peerId)) continue;
+      this.wakeSent.delete(peerId);
+      this.wakePeer(member);
+    }
+  }
+
+  /** Tell every open pair that this device holds the roomKey (idempotent). */
+  private announceKey(): void {
+    for (const [peerId, peer] of this.peers) {
+      if (!peer.hasHandles) continue;
+      peer.sendControl({ v: 2, type: "key-ok" });
+      if (this.peerHasKey(peerId)) peer.setPairReady(true);
     }
   }
 
@@ -1012,7 +1318,10 @@ export class RoomController {
   // --- transfers ------------------------------------------------------------
 
   private confirmIncoming(view: IncomingView): Promise<boolean> {
-    if (this.autoAcceptDev) return Promise.resolve(true);
+    if (this.autoAccept) {
+      this.pendingIncoming = view;
+      return Promise.resolve(true);
+    }
     useApp.getState().setIncoming(view);
     return new Promise((resolve) => {
       this.incomingResolver = resolve;
@@ -1026,12 +1335,32 @@ export class RoomController {
   }
 
   private onIncoming(view: IncomingView): void {
+    this.pendingIncoming = view;
+    if (this.autoAccept) {
+      // Auto-accept (docs/02 §11.3) skips the consent card but must still be
+      // visible: a toast announces it (it stays a few seconds even when the
+      // transfer itself is faster than a frame) and the transfer card takes over.
+      this.showAutoAcceptNotice(view.peerName);
+      return;
+    }
     useApp.getState().setIncoming(view);
+  }
+
+  private showAutoAcceptNotice(peerName: string): void {
+    if (this.autoAcceptNoticeTimer) clearTimeout(this.autoAcceptNoticeTimer);
+    useApp.getState().patch({
+      autoAcceptNotice: tpl(copy.autoAcceptReceiving, { name: peerName }),
+    });
+    this.autoAcceptNoticeTimer = setTimeout(() => {
+      this.autoAcceptNoticeTimer = undefined;
+      useApp.getState().patch({ autoAcceptNotice: undefined });
+    }, 4_000);
   }
 
   private onIncomingAccepted(): void {
     const store = useApp.getState();
-    const incoming = store.incoming;
+    const incoming = store.incoming ?? this.pendingIncoming;
+    this.pendingIncoming = undefined;
     if (!incoming) return;
     store.setIncoming(undefined);
     const path = store.members.find(
@@ -1104,6 +1433,7 @@ export class RoomController {
     useApp.getState().patch({
       phase: "error",
       error: message,
+      autoAcceptNotice: undefined,
       ...(code ? { errorCode: code } : {}),
     });
     void setTransferActive(false);

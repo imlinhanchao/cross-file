@@ -17,9 +17,11 @@ import {
 /**
  * AC2: force ICE onto TURN (relay-only) and prove the transfer still verifies.
  *
- * Requires a running coturn and a signaling server configured with TURN_URIS/TURN_SECRET:
- *   docker compose -f infra/docker-compose.yml up -d coturn
- *   TURN_SECRET=... TURN_URIS='turn:127.0.0.1:3478?transport=udp' E2E_RELAY=1 pnpm e2e
+ * Requires a signaling server configured with TURN_URIS/TURN_SECRET and a reachable TURN
+ * listener. The Go binary runs TURN in-process (pion/turn), so no coturn is needed:
+ *   E2E_RELAY=1 TURN_SECRET=... TURN_URIS='turn:127.0.0.1:3478?transport=udp' \
+ *     TURN_EXTERNAL_IP=127.0.0.1 pnpm e2e
+ * (Port 3478 must be free on the test host.)
  * Without E2E_RELAY=1 this file is skipped so the default suite stays hermetic.
  */
 test.skip(

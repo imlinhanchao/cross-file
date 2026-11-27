@@ -84,6 +84,10 @@ export interface Snapshot {
   notice?: string;
   roomClosed?: boolean;
   versionOutdated?: boolean;
+  /** reconnect went stale (old admin after a hand-over, expired rejoin token) */
+  rejoinLost?: boolean;
+  /** admin hand-over notice text shown on the page */
+  handoverNotice?: string;
   sas?: string[];
   sasPending?: boolean;
   sasConfirmedByMe?: boolean;

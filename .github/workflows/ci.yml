@@ -1,11 +1,32 @@
 name: ci
 
+# Every push/PR runs the same matrix; release.yml reuses it via `workflow_call` before
+# publishing. Jobs run in parallel where they can:
+#
+#   gates            typecheck · unit · design · web build
+#   e2e              Playwright against the Node signaling server (until cutover is accepted)
+#   zero-storage     docker-compose read-only audit of the Node bundle (until cutover)
+#   go               Go server: gofmt · go vet · go test · static binary build
+#   e2e-go           Playwright with E2E_SERVER=go (the Go binary answers /v1/ws)
+#   zero-storage-go  strace audit of the Go binary (no writable file, one startup line)
+#
+# The Node e2e/zero-storage jobs stay until the Go production cutover is accepted; adding the
+# Go jobs must not slow the existing ones down (they are independent, no `needs`).
+
 on:
   push:
     branches: [main, master]
   pull_request:
   # release.yml reuses the full gate suite before publishing a release.
   workflow_call:
+
+# Keep the Go caches inside the workspace. `apps/signaling-go/build.sh` defaults to this layout
+# (sandboxed machines have no writable $HOME), and actions/setup-go caches exactly these paths
+# when they are exported, so CI and local runs share one cache story.
+env:
+  GOPATH: ${{ github.workspace }}/.cache/go
+  GOMODCACHE: ${{ github.workspace }}/.cache/go/pkg/mod
+  GOCACHE: ${{ github.workspace }}/.cache/go-build
 
 jobs:
   gates:
@@ -58,3 +79,78 @@ jobs:
       - run: SKIP_BUILD=1 bash tests/audit/zero-storage.sh --container
         env:
           TURN_SECRET: ci-turn-secret
+
+  go:
+    name: go (fmt · vet · test · build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/signaling-go/go.mod
+          cache-dependency-path: apps/signaling-go/go.sum
+      - name: gofmt
+        working-directory: apps/signaling-go
+        run: |
+          set -euo pipefail
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "gofmt would change these files:" >&2
+            echo "$unformatted" >&2
+            exit 1
+          fi
+          echo "gofmt: all Go files formatted"
+      - name: go vet
+        working-directory: apps/signaling-go
+        run: go vet ./...
+      - name: go test
+        working-directory: apps/signaling-go
+        run: go test ./...
+      - name: build static binary (SKIP_WEB)
+        run: |
+          set -euo pipefail
+          SKIP_WEB=1 bash apps/signaling-go/build.sh
+          test -x apps/signaling-go/bin/crossfile-signaling
+          file apps/signaling-go/bin/crossfile-signaling
+          ls -lh apps/signaling-go/bin/crossfile-signaling
+
+  e2e-go:
+    name: playwright go signaling (chromium)
+    needs: [go, gates]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/signaling-go/go.mod
+          cache-dependency-path: apps/signaling-go/go.sum
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      # webServer #1 in playwright.config.ts builds the binary with SKIP_WEB=1 and starts it on
+      # the signaling port; Vite (webServer #2) serves the web app unchanged.
+      - run: E2E_SERVER=go pnpm e2e
+        env:
+          CI: "1"
+
+  zero-storage-go:
+    name: zero-storage audit (go binary)
+    needs: go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/signaling-go/go.mod
+          cache-dependency-path: apps/signaling-go/go.sum
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: install strace if missing
+        run: command -v strace >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y strace)
+      - run: bash tests/audit/zero-storage.sh --go

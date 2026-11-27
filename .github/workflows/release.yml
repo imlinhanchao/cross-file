@@ -1,16 +1,32 @@
 name: release
 
-# Tag-driven release: build every shippable artifact and attach it to a draft GitHub Release.
+# Tag-driven release: build every shippable artifact, publish the GitHub Release, and trigger the
+# production deploy.
 #
 #   git tag v0.1.0 && git push origin v0.1.0
 #
-# The draft is published by hand (GitHub UI / `gh release edit --draft=false`); publishing
-# triggers deploy.yml, which downloads the server tarball asset and deploys it.
-# `workflow_dispatch` with dry_run=true builds everything without creating a release.
+# With a tag push the release is published automatically (draft: false). GitHub does NOT emit
+# `release: published` for a release created with GITHUB_TOKEN (recursion prevention), so
+# deploy.yml's release trigger would never fire for this workflow. The last step therefore
+# dispatches deploy.yml explicitly with `gh workflow run` — workflow_dispatch is exempt from the
+# recursion rule, so GITHUB_TOKEN is enough and deploy.yml needs no changes. `release: published`
+# still covers a human publishing/re-publishing a release by hand, and deploy.yml's
+# `workflow_dispatch` remains the manual redeploy path.
+#
+# `workflow_dispatch` with dry_run=true builds everything without creating a release or deploying.
+#
+# The server artifact is the Go single binary (`apps/signaling-go/`, see docs/05): one static
+# executable that embeds the web app and runs the signaling WebSocket listener and TURN
+# in-process, so a deployment needs no Node runtime and no separate coturn. The `web-dist`
+# artifact is copied into the binary (`apps/signaling-go/webdist/`) before
+# `apps/signaling-go/build.sh` runs. The x64 tarball keeps the historical asset name and the
+# same `ecosystem.config.cjs` + `VERSION` layout, so deploy.yml works unchanged.
 #
 # Artifacts:
-#   crossfile-signaling-<version>-linux-x64.tar.gz   unpack-and-deploy (server.cjs + public + ecosystem)
-#   crossfile-signaling-<version>-linux-x64          single executable (Node SEA, web assets embedded)
+#   crossfile-signaling-<version>-linux-x64.tar.gz    unpack-and-deploy (Go binary + ecosystem + VERSION)
+#   crossfile-signaling-<version>-linux-arm64.tar.gz  same for arm64 hosts
+#   crossfile-signaling-<version>-linux-x64           single static Go binary (web app + TURN embedded)
+#   crossfile-signaling-<version>-linux-arm64         same for arm64
 #   CrossFile-<version>-x86_64.AppImage              Linux desktop (Electron)
 #   CrossFile_<version>_x64_en-US.msi / *-setup.exe  Windows desktop (Tauri, unsigned)
 #   CrossFile_<version>_universal.dmg                macOS desktop (Tauri, unsigned, universal)
@@ -32,6 +48,15 @@ on:
 
 permissions:
   contents: write
+  # Needed by the final `gh workflow run deploy.yml` dispatch (triggering a workflow run).
+  actions: write
+
+# Keep the Go caches inside the workspace so actions/setup-go caches exactly the paths
+# apps/signaling-go/build.sh uses by default (same story as ci.yml).
+env:
+  GOPATH: ${{ github.workspace }}/.cache/go
+  GOMODCACHE: ${{ github.workspace }}/.cache/go/pkg/mod
+  GOCACHE: ${{ github.workspace }}/.cache/go-build
 
 concurrency:
   group: release-${{ github.ref_name || inputs.version }}
@@ -96,7 +121,7 @@ jobs:
           retention-days: 1
 
   server:
-    name: server (tarball + binary)
+    name: server (go binary + tarballs)
     needs: [meta, web]
     runs-on: ubuntu-latest
     steps:
@@ -104,55 +129,112 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/signaling-go/go.mod
+          cache-dependency-path: apps/signaling-go/go.sum
       - run: corepack enable
-      - run: pnpm install --frozen-lockfile
+      - name: resolve version
+        run: echo "VERSION=${{ needs.meta.outputs.version }}" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v4
         with:
           name: web-dist
           path: apps/web/dist
-      - name: assemble tarball
-        env:
-          VERSION: ${{ needs.meta.outputs.version }}
+      - name: build Go binaries (linux x64 + arm64, web app embedded)
         run: |
           set -euo pipefail
-          node infra/signaling/build.mjs .
-          rm -rf release
-          mkdir -p release
-          cp infra/signaling/build/server.cjs release/server.cjs
-          cp -r apps/web/dist release/public
-          cp infra/pm2/ecosystem.config.cjs release/ecosystem.config.cjs
-          printf 'commit=%s\nversion=%s\nbuilt=%s\n' \
-            "$GITHUB_SHA" "$VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > release/VERSION
-          tar -czf "crossfile-signaling-${VERSION}-linux-x64.tar.gz" -C release .
-      - name: build single binary (SEA)
-        env:
-          VERSION: ${{ needs.meta.outputs.version }}
+          # The binary embeds the web app; feed it the already-built web-dist artifact instead of
+          # rebuilding the frontend here (`build.sh` skips its own web build with SKIP_WEB=1).
+          mkdir -p apps/signaling-go/webdist
+          cp -r apps/web/dist/. apps/signaling-go/webdist/
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 SKIP_WEB=1 bash apps/signaling-go/build.sh
+          cp apps/signaling-go/bin/crossfile-signaling "crossfile-signaling-${VERSION}-linux-x64"
+          chmod 0755 "crossfile-signaling-${VERSION}-linux-x64"
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 SKIP_WEB=1 bash apps/signaling-go/build.sh
+          cp apps/signaling-go/bin/crossfile-signaling "crossfile-signaling-${VERSION}-linux-arm64"
+          chmod 0755 "crossfile-signaling-${VERSION}-linux-arm64"
+          file "crossfile-signaling-${VERSION}-linux-x64"
+          file "crossfile-signaling-${VERSION}-linux-arm64"
+          # CGO_ENABLED=0 must give a self-contained executable: no Node, no libc, no coturn.
+          file "crossfile-signaling-${VERSION}-linux-x64" | grep -q "statically linked"
+          file "crossfile-signaling-${VERSION}-linux-arm64" | grep -q "statically linked"
+          echo "both binaries are static (CGO_ENABLED=0)"
+      - name: smoke test binary (embedded app, SPA fallback, v1 version gate)
         run: |
           set -euo pipefail
-          node infra/signaling/build-sea.mjs .
-          cp infra/signaling/build/crossfile-signaling \
-            "crossfile-signaling-${VERSION}-linux-x64"
-          chmod +x "crossfile-signaling-${VERSION}-linux-x64"
-          # Smoke test: embedded web assets + WebSocket listener must come up.
-          PORT=18998 HOST=127.0.0.1 "./crossfile-signaling-${VERSION}-linux-x64" &
+          BIN="./crossfile-signaling-${VERSION}-linux-x64"
+          PORT=18998 HOST=127.0.0.1 "$BIN" &
           BIN_PID=$!
           trap 'kill "$BIN_PID" 2>/dev/null || true' EXIT
-          for _ in $(seq 1 20); do
+          for _ in $(seq 1 40); do
             if curl -fsS -o /dev/null --max-time 1 http://127.0.0.1:18998/; then break; fi
-            sleep 0.5
+            sleep 0.25
           done
+          echo "-- embedded web app"
           curl -fsS http://127.0.0.1:18998/ | grep -q '<div id="root">'
+          echo "GET / -> root element present"
+          echo "-- SPA fallback"
           curl -fsS -o /dev/null http://127.0.0.1:18998/r/abcdefghijklmnopqrstuvwxyz
-          ls -lh "crossfile-signaling-${VERSION}-linux-x64"
+          echo "GET /r/<id> -> 200"
+          echo "-- protocol v2 version gate (a v1 client must be told to reload)"
+          node -e '
+            const ws = new WebSocket(process.argv[1]);
+            const timer = setTimeout(() => {
+              console.error("v1 gate: timed out waiting for VERSION_MISMATCH");
+              process.exit(1);
+            }, 5000);
+            ws.onopen = () => ws.send(JSON.stringify({ v: 1, type: "hello" }));
+            ws.onmessage = (event) => {
+              const message = JSON.parse(String(event.data));
+              clearTimeout(timer);
+              if (message.type !== "error" || message.code !== "VERSION_MISMATCH") {
+                console.error("v1 gate: unexpected frame " + JSON.stringify(message));
+                process.exit(1);
+              }
+              console.log("v1 gate ok: code=" + message.code + " msg=" + message.msg);
+              ws.close();
+              process.exit(0);
+            };
+            ws.onerror = () => {
+              clearTimeout(timer);
+              console.error("v1 gate: socket error");
+              process.exit(1);
+            };
+          ' "ws://127.0.0.1:18998/v1/ws"
+          ls -lh "crossfile-signaling-${VERSION}-linux-x64" \
+                 "crossfile-signaling-${VERSION}-linux-arm64"
+      - name: assemble tarballs
+        run: |
+          set -euo pipefail
+          printf 'commit=%s\nversion=%s\nbuilt=%s\n' \
+            "$GITHUB_SHA" "$VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > VERSION
+          for arch in x64 arm64; do
+            dir="release-$arch"
+            rm -rf "$dir"
+            mkdir -p "$dir"
+            cp "crossfile-signaling-${VERSION}-linux-$arch" "$dir/crossfile-signaling"
+            chmod 0755 "$dir/crossfile-signaling"
+            # The Go PM2 config runs the binary with interpreter "none"; deploy.yml sources
+            # shared/.env then `pm2 start <release>/ecosystem.config.cjs --update-env`.
+            cp infra/pm2/ecosystem.go.config.cjs "$dir/ecosystem.config.cjs"
+            chmod 0644 "$dir/ecosystem.config.cjs"
+            cp VERSION "$dir/VERSION"
+            tar -czf "crossfile-signaling-${VERSION}-linux-$arch.tar.gz" -C "$dir" .
+          done
+          echo "-- x64 tarball contents"
+          tar -tzf "crossfile-signaling-${VERSION}-linux-x64.tar.gz"
+          ls -lh "crossfile-signaling-${VERSION}-linux-x64.tar.gz" \
+                 "crossfile-signaling-${VERSION}-linux-arm64.tar.gz" \
+                 "crossfile-signaling-${VERSION}-linux-x64" \
+                 "crossfile-signaling-${VERSION}-linux-arm64"
       - uses: actions/upload-artifact@v4
         with:
-          name: server-tarball
-          path: crossfile-signaling-*-linux-x64.tar.gz
-          retention-days: 1
-      - uses: actions/upload-artifact@v4
-        with:
-          name: server-binary
-          path: crossfile-signaling-*-linux-x64
+          name: server
+          path: |
+            crossfile-signaling-*-linux-x64.tar.gz
+            crossfile-signaling-*-linux-arm64.tar.gz
+            crossfile-signaling-*-linux-x64
+            crossfile-signaling-*-linux-arm64
           retention-days: 1
 
   desktop-linux:
@@ -341,7 +423,7 @@ jobs:
           path: dist
           merge-multiple: true
           # `web-dist` is a build input for the desktop/server jobs, not a release asset.
-          pattern: "{server-tarball,server-binary,desktop-linux,desktop-windows,desktop-macos,android}"
+          pattern: "{server,desktop-linux,desktop-windows,desktop-macos,android}"
       - name: flatten artifacts and checksums
         run: |
           set -euo pipefail
@@ -367,6 +449,40 @@ jobs:
           draft: false
           generate_release_notes: true
           files: dist/*
+      - name: trigger deploy (workflow_dispatch)
+        if: needs.meta.outputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.meta.outputs.tag }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          # A release created with GITHUB_TOKEN does not emit `release: published` (GitHub's
+          # recursion prevention), so deploy.yml's event trigger never fires for this workflow.
+          # workflow_dispatch IS exempt from that rule: dispatch the deploy explicitly.
+          # deploy.yml stays unchanged (it still handles human-published releases and manual
+          # redeploys through `release: published` / `workflow_dispatch`).
+          dispatched=0
+          for attempt in 1 2 3; do
+            if gh workflow run deploy.yml --repo "$GITHUB_REPOSITORY" \
+              --ref "$DEFAULT_BRANCH" -f "tag=${TAG}"; then
+              dispatched=1
+              echo "dispatched deploy.yml for ${TAG} on ${DEFAULT_BRANCH}"
+              break
+            fi
+            echo "dispatch attempt ${attempt} failed; retrying in 5s" >&2
+            sleep 5
+          done
+          if [ "$dispatched" != "1" ]; then
+            echo "could not dispatch deploy.yml after 3 attempts; deploy manually: gh workflow run deploy.yml --ref ${DEFAULT_BRANCH} -f tag=${TAG}" >&2
+            exit 1
+          fi
+          # Give the dispatched run a moment to appear, then print it as evidence.
+          sleep 10
+          echo "-- recent deploy runs (the new one has event=workflow_dispatch):"
+          gh run list --repo "$GITHUB_REPOSITORY" --workflow deploy.yml --limit 5 \
+            --json databaseId,event,status,conclusion,headBranch,createdAt \
+            --template '{{range .}}{{.databaseId}} event={{.event}} status={{.status}} conclusion={{.conclusion}} ref={{.headBranch}} createdAt={{.createdAt}}{{"\n"}}{{end}}'
       - name: dry run summary
         if: needs.meta.outputs.dry_run == 'true'
         run: |

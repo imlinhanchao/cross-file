@@ -34,6 +34,13 @@ services:
       # docs/02 §6.7: empty TURN_URIS means "no TURN offered"; credentials are then omitted.
       TURN_URIS: ${TURN_URIS:-}
       TURN_SECRET: ${TURN_SECRET:?set TURN_SECRET in infra/.env (cp infra/.env.example infra/.env)}
+      # Go single binary (in-process TURN): the relay listener needs the address clients reach
+      # it on, and the tuning knobs are optional. The Node server ignores these variables.
+      # Empty values are treated as unset by both servers.
+      TURN_EXTERNAL_IP: ${TURN_EXTERNAL_IP:-}
+      TURN_LISTEN_PORT: ${TURN_LISTEN_PORT:-}
+      TURN_MIN_PORT: ${TURN_MIN_PORT:-}
+      TURN_MAX_PORT: ${TURN_MAX_PORT:-}
       # Room capacity excluding the admin (docs/01 D6); empty means the server default (4).
       MAX_MEMBERS: ${MAX_MEMBERS:-}
       NODE_ENV: production

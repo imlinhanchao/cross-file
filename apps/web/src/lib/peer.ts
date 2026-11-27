@@ -144,12 +144,12 @@ export class PeerSession {
   async handleSignal(payload: SignalPayload): Promise<void> {
     if (this.closed) return;
     if (payload.k === "offer" && !this.hooks.offerer) {
-      // The admin rebuilds the pair after a drop: adopt the new offer. If the old
-      // connection is still around, its close event may not have arrived yet (Chrome
-      // timing differs across machines); mark it lost first so the sender pauses and
-      // resumes from the bitmap instead of waiting on a dead channel.
-      if (this.peer && this.handles) this.handleLost();
-      if (!this.peer) this.attach();
+      // The admin rebuilds the pair after a drop: always start a fresh answerer. The
+      // old connection may still look alive because its close event is delivered late
+      // (Chrome timing differs across machines); reusing it would apply the new offer
+      // to a dead channel and leave the sender stuck.
+      if (this.peer) this.handleLost();
+      this.attach();
     }
     await this.peer?.handleSignal(payload);
   }

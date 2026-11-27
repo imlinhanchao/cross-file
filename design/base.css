@@ -166,6 +166,7 @@ strong, b { font-weight: 620; }
   letter-spacing: -0.005em;
   cursor: pointer;
   text-decoration: none;
+  white-space: nowrap;
   transition: background-color var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out),
     transform var(--dur-fast) var(--ease-out),
@@ -597,4 +598,42 @@ strong, b { font-weight: 620; }
   .entry-grid { grid-template-columns: minmax(0, 1fr); gap: var(--space-5); margin-top: var(--space-5); }
   .shell { padding: var(--space-4) var(--space-4) var(--space-7); }
   .topbar { padding: var(--space-3) var(--space-4); }
+}
+
+@media (max-width: 720px) {
+  /* Topbar: let the brand, name chip and room actions wrap instead of squeezing
+     Chinese labels into vertical single-character columns. */
+  .topbar {
+    flex-wrap: wrap;
+    row-gap: var(--space-2);
+    gap: var(--space-2) var(--space-3);
+  }
+  .topbar .pill--secure { display: none; }
+  .topbar .user-chip { order: 3; max-width: 100%; }
+  .topbar .btn { flex-shrink: 0; }
+  .topbar__spacer { flex: 1 1 0; }
+
+  /* Sticky action bar: text on its own row, buttons share the next row. */
+  .sticky-bar {
+    flex-wrap: wrap;
+    row-gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+  }
+  .sticky-bar > .small { flex: 1 1 100%; }
+  .sticky-bar .spacer { display: none; }
+  .sticky-bar .btn { flex: 1 1 0; white-space: nowrap; }
+
+  /* Member rows: keep the actions on the same row, progress on its own row. */
+  .receiver { grid-template-columns: 36px minmax(0, 1fr) auto; }
+  .receiver__actions { flex-wrap: wrap; justify-content: flex-end; }
+  .receiver__progress { grid-column: 1 / -1; }
+
+  /* The sticky action bar overlays the page; reserve its height so the last card
+     (including the incoming accept/decline buttons) can scroll clear of it. */
+  .shell--room { padding-bottom: calc(var(--space-8) + 116px); }
+  .sticky-bar {
+    z-index: 30;
+    background: var(--bg-page);
+    padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom));
+  }
 }

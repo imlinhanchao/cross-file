@@ -44,7 +44,18 @@ test("AC13: renaming broadcasts, 'forget' regenerates a default name, and the na
 
   // 1. Rename the admin; the member sees the new name in the member list.
   await admin.getByTestId("name-edit").click();
-  await admin.getByTestId("name-input").fill("管理员甲");
+  // Regression: the dialog used to re-run its focus effect on every keystroke (inline
+  // onCancel), stealing focus back to the confirm button while typing.
+  const nameInput = admin.getByTestId("name-input");
+  await nameInput.click();
+  await nameInput.press("End");
+  await admin.keyboard.type("x");
+  expect(
+    await admin.evaluate(() =>
+      document.activeElement?.getAttribute("data-testid"),
+    ),
+  ).toBe("name-input");
+  await nameInput.fill("管理员甲");
   await admin.getByTestId("name-save").click();
   await waitForSnapshot(
     member,

@@ -32,6 +32,13 @@ export function Dialog({
   const panelRef = useRef<HTMLDivElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
+  // Callers usually pass an inline `onCancel`; keeping it in a ref keeps the focus
+  // effect below tied to `open` only, so typing in a dialog input cannot re-run it
+  // (which used to steal focus back to the confirm button on every keystroke).
+  const onCancelRef = useRef(onCancel);
+  useEffect(() => {
+    onCancelRef.current = onCancel;
+  }, [onCancel]);
 
   useEffect(() => {
     if (!open) return;
@@ -40,7 +47,7 @@ export function Dialog({
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onCancel();
+        onCancelRef.current();
         return;
       }
       if (event.key !== "Tab") return;
@@ -65,7 +72,7 @@ export function Dialog({
       document.removeEventListener("keydown", onKeyDown);
       previouslyFocused.current?.focus?.();
     };
-  }, [open, onCancel]);
+  }, [open]);
 
   if (!open) return null;
 

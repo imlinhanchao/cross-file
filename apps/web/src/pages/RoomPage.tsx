@@ -270,7 +270,7 @@ export function RoomPage({ mode }: { mode: RoomMode }) {
         )}
       </header>
 
-      <main className="shell">
+      <main className="shell shell--room">
         <div className="room-grid">
           <section className="stack gap-5" aria-labelledby="room-title">
             <div className="stack gap-2">
@@ -373,6 +373,82 @@ export function RoomPage({ mode }: { mode: RoomMode }) {
                     {copy.dialogSasConfirm}
                   </button>
                 )}
+              </div>
+            ) : null}
+
+            {incoming ? (
+              <div className="card" data-testid="incoming-card">
+                <div className="card__head">
+                  <span className="card__title">{copy.incomingTitle}</span>
+                  <span className="spacer" />
+                  <span className="card__hint">
+                    {copy.incomingFrom} {incoming.peerName}
+                  </span>
+                </div>
+                <ul className="file-list">
+                  {incoming.files.map((file) => (
+                    <li className="file-row" key={file.id}>
+                      <span className="file-tile">
+                        <Icon
+                          name={
+                            file.mime.startsWith("video/")
+                              ? "file-video"
+                              : "file-text"
+                          }
+                        />
+                      </span>
+                      <span className="stack" style={{ gap: 2, minWidth: 0 }}>
+                        <span className="file-name">{file.name}</span>
+                        <span className="file-meta">
+                          {formatBytes(file.size)}
+                        </span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="small muted mt-3">
+                  {tpl(copy.statusIncomingSummary, {
+                    size: formatBytes(incoming.totalBytes),
+                    n: incoming.files.length,
+                  })}
+                </p>
+                {incomingRisk?.level === "warn" ? (
+                  <div className="mt-4">
+                    <WarningCard
+                      title={copy.errorIncomingRiskTitle}
+                      body={incomingRisk.message}
+                    />
+                  </div>
+                ) : null}
+                <div className="row gap-3 mt-4">
+                  <button
+                    className="btn btn--primary btn--lg btn--block"
+                    type="button"
+                    data-testid="accept"
+                    onClick={() => {
+                      if (incomingRisk?.level === "warn") setRiskDialog(true);
+                      else controller.current?.acceptIncoming();
+                    }}
+                  >
+                    <Icon name="arrow-right" size="sm" />
+                    {incomingRisk?.level === "warn"
+                      ? copy.dialogRiskConfirm
+                      : copy.acceptFiles}
+                  </button>
+                  <button
+                    className="btn btn--ghost btn--lg"
+                    type="button"
+                    data-testid="decline-incoming"
+                    onClick={() => controller.current?.declineIncoming()}
+                  >
+                    {copy.decline}
+                  </button>
+                </div>
+                <p className="note mt-4">
+                  <Icon name="lock" size="sm" />
+                  <span>{copy.privacyNote}</span>
+                </p>
+                <p className="small muted">{copy.confirmEveryReceive}</p>
               </div>
             ) : null}
 
@@ -523,82 +599,6 @@ export function RoomPage({ mode }: { mode: RoomMode }) {
                   limit: warned.verdict.softLimitMB,
                 })}
               />
-            ) : null}
-
-            {incoming ? (
-              <div className="card" data-testid="incoming-card">
-                <div className="card__head">
-                  <span className="card__title">{copy.incomingTitle}</span>
-                  <span className="spacer" />
-                  <span className="card__hint">
-                    {copy.incomingFrom} {incoming.peerName}
-                  </span>
-                </div>
-                <ul className="file-list">
-                  {incoming.files.map((file) => (
-                    <li className="file-row" key={file.id}>
-                      <span className="file-tile">
-                        <Icon
-                          name={
-                            file.mime.startsWith("video/")
-                              ? "file-video"
-                              : "file-text"
-                          }
-                        />
-                      </span>
-                      <span className="stack" style={{ gap: 2, minWidth: 0 }}>
-                        <span className="file-name">{file.name}</span>
-                        <span className="file-meta">
-                          {formatBytes(file.size)}
-                        </span>
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-                <p className="small muted mt-3">
-                  {tpl(copy.statusIncomingSummary, {
-                    size: formatBytes(incoming.totalBytes),
-                    n: incoming.files.length,
-                  })}
-                </p>
-                {incomingRisk?.level === "warn" ? (
-                  <div className="mt-4">
-                    <WarningCard
-                      title={copy.errorIncomingRiskTitle}
-                      body={incomingRisk.message}
-                    />
-                  </div>
-                ) : null}
-                <div className="row gap-3 mt-4">
-                  <button
-                    className="btn btn--primary btn--lg btn--block"
-                    type="button"
-                    data-testid="accept"
-                    onClick={() => {
-                      if (incomingRisk?.level === "warn") setRiskDialog(true);
-                      else controller.current?.acceptIncoming();
-                    }}
-                  >
-                    <Icon name="arrow-right" size="sm" />
-                    {incomingRisk?.level === "warn"
-                      ? copy.dialogRiskConfirm
-                      : copy.acceptFiles}
-                  </button>
-                  <button
-                    className="btn btn--ghost btn--lg"
-                    type="button"
-                    data-testid="decline-incoming"
-                    onClick={() => controller.current?.declineIncoming()}
-                  >
-                    {copy.decline}
-                  </button>
-                </div>
-                <p className="note mt-4">
-                  <Icon name="lock" size="sm" />
-                  <span>{copy.privacyNote}</span>
-                </p>
-                <p className="small muted">{copy.confirmEveryReceive}</p>
-              </div>
             ) : null}
 
             {transfers.map((transfer) => (
@@ -861,55 +861,58 @@ export function RoomPage({ mode }: { mode: RoomMode }) {
                             {memberLabel(member.caps)} · {stateText(member)}
                           </span>
                         </span>
-                        <span className="spacer" />
-                        {member.state === "pending" &&
-                        state.role === "admin" ? (
-                          <span className="receiver__actions">
+                        <span className="receiver__actions">
+                          {member.state === "pending" &&
+                          state.role === "admin" ? (
+                            <>
+                              <button
+                                className="btn btn--primary btn--sm"
+                                type="button"
+                                data-testid="approve"
+                                onClick={() =>
+                                  controller.current?.approve(member.id)
+                                }
+                              >
+                                {copy.approve}
+                              </button>
+                              <button
+                                className="btn btn--ghost btn--sm"
+                                type="button"
+                                onClick={() =>
+                                  controller.current?.deny(member.id)
+                                }
+                              >
+                                {copy.deny}
+                              </button>
+                            </>
+                          ) : member.path ? (
+                            <PathBadge path={member.path} />
+                          ) : null}
+                          {member.state === "joined" &&
+                          !isSelf &&
+                          state.role === "admin" ? (
                             <button
-                              className="btn btn--primary btn--sm"
+                              className="icon-btn"
                               type="button"
-                              data-testid="approve"
-                              onClick={() =>
-                                controller.current?.approve(member.id)
-                              }
+                              aria-label={`${copy.remove} ${member.name}`}
+                              data-testid={`remove-${member.id}`}
+                              onClick={() => {
+                                setRemoveTarget(member.id);
+                                setDialog("remove");
+                              }}
                             >
-                              {copy.approve}
+                              <Icon name="x" size="sm" />
                             </button>
-                            <button
-                              className="btn btn--ghost btn--sm"
-                              type="button"
-                              onClick={() =>
-                                controller.current?.deny(member.id)
-                              }
-                            >
-                              {copy.deny}
-                            </button>
-                          </span>
-                        ) : member.path ? (
-                          <PathBadge path={member.path} />
-                        ) : null}
-                        {member.state === "joined" &&
-                        !isSelf &&
-                        state.role === "admin" ? (
-                          <button
-                            className="icon-btn"
-                            type="button"
-                            aria-label={`${copy.remove} ${member.name}`}
-                            data-testid={`remove-${member.id}`}
-                            onClick={() => {
-                              setRemoveTarget(member.id);
-                              setDialog("remove");
-                            }}
-                          >
-                            <Icon name="x" size="sm" />
-                          </button>
-                        ) : null}
+                          ) : null}
+                        </span>
                         {member.progress && member.progress.totalBytes > 0 ? (
-                          <Progress
-                            compact
-                            sentBytes={member.progress.sentBytes}
-                            totalBytes={member.progress.totalBytes}
-                          />
+                          <span className="receiver__progress">
+                            <Progress
+                              compact
+                              sentBytes={member.progress.sentBytes}
+                              totalBytes={member.progress.totalBytes}
+                            />
+                          </span>
                         ) : null}
                       </li>
                     );

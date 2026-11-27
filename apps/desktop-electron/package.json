@@ -1,6 +1,6 @@
 {
   "name": "@crossfile/desktop-electron",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "CrossFile Linux desktop shell (Electron/Chromium) — used because distro WebKitGTK ships without WebRTC (ADR 0009)",
   "main": "main.cjs",

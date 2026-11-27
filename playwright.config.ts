@@ -6,24 +6,26 @@ const APP_PORT = Number(process.env.E2E_PORT ?? 5174);
 const APP_ORIGIN = process.env.E2E_BASE_URL ?? `http://127.0.0.1:${APP_PORT}`;
 const MANAGE_SERVERS = process.env.E2E_NO_WS !== "1";
 const SIGNALING_PORT = Number(process.env.E2E_SIGNALING_PORT ?? 8790);
+
 /**
- * Which signaling server the suite talks to:
- *  - `node` (default): the TypeScript server through `tsx packages/signaling/src/dev.ts`;
- *  - `go`: the production Go binary built by `apps/signaling-go/build.sh` (single static
- *    binary with the web app and an in-process TURN server embedded).
- * Vite still serves the web app in both modes; the Go binary only has to answer `/v1/ws`
- * on SIGNALING_PORT for the e2e suite.
+ * Signaling is the Go single binary (`apps/signaling-go`): one static executable that serves
+ * the embedded web app, `/v1/ws` and the in-process TURN relay. Vite still serves the web app
+ * for the e2e suite (fast reloads, dev-only test hooks); the binary only has to answer
+ * `/v1/ws` on SIGNALING_PORT.
+ *
+ * The Node implementation was removed (docs/05 §7.5), so `E2E_SERVER` is kept only as a
+ * guard: unset or `go` is accepted, anything else fails fast instead of silently running the
+ * wrong server.
  */
-const E2E_SERVER = process.env.E2E_SERVER ?? "node";
+const E2E_SERVER = process.env.E2E_SERVER ?? "go";
+if (E2E_SERVER !== "go") {
+  throw new Error(
+    `E2E_SERVER=${E2E_SERVER} is not supported: the Node signaling server was removed; unset it or set E2E_SERVER=go`,
+  );
+}
 const GO_ROOT = resolve("apps/signaling-go");
 const GO_BUILD = resolve(GO_ROOT, "build.sh");
 const GO_BIN = resolve(GO_ROOT, "bin/crossfile-signaling");
-
-if (E2E_SERVER !== "node" && E2E_SERVER !== "go") {
-  throw new Error(
-    `E2E_SERVER must be "node" or "go" (got "${E2E_SERVER}"); unset it for the default Node server`,
-  );
-}
 
 /**
  * Some sandboxes block inotify, so `fs.watch()` throws EMFILE and Vite's dev
@@ -49,11 +51,10 @@ function serverEnv(
 }
 
 /**
- * TURN passthrough shared by both signaling modes. With E2E_RELAY=1 the suite
- * forces ICE onto TURN (`tests/e2e/ac2-relay.spec.ts`); the Go binary starts its
- * in-process TURN listener from these variables, the Node server only issues
- * credentials for an external coturn. Only variables that are actually set are
- * forwarded so each mode keeps its own defaults.
+ * TURN passthrough. With `E2E_RELAY=1` the suite forces ICE onto TURN
+ * (`tests/e2e/ac2-relay.spec.ts`) and the binary starts its in-process TURN listener from
+ * these variables. Only variables that are actually set are forwarded so the server's own
+ * defaults apply otherwise.
  */
 function relayEnv(): Record<string, string> {
   if (process.env.E2E_RELAY !== "1") return {};
@@ -70,12 +71,23 @@ function relayEnv(): Record<string, string> {
     const value = process.env[key];
     if (value !== undefined) env[key] = value;
   }
-  // The Go binary runs TURN in-process and refuses to start when TURN_SECRET is set but
+  // The binary refuses to start TURN when TURN_SECRET/TURN_URIS are set but
   // TURN_EXTERNAL_IP is missing. E2E browsers run on the same host, so loopback is the
   // correct relay address unless the caller overrides it (LAN/phone testing).
-  if (E2E_SERVER === "go" && env.TURN_EXTERNAL_IP === undefined) {
-    env.TURN_EXTERNAL_IP = "127.0.0.1";
-  }
+  if (env.TURN_EXTERNAL_IP === undefined) env.TURN_EXTERNAL_IP = "127.0.0.1";
+  return env;
+}
+
+/**
+ * Test-only hooks forwarded to the Go server (unset keeps production behaviour).
+ * - `E2E_RECONNECT_MS` shortens the member reconnect window so the admin-handover
+ *   (`rejoinToken`) e2e can run in seconds; the server reads `RECONNECT_WINDOW_MS`.
+ */
+function testHookEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  const reconnect = process.env.E2E_RECONNECT_MS;
+  if (reconnect !== undefined && reconnect !== "")
+    env.RECONNECT_WINDOW_MS = reconnect;
   return env;
 }
 
@@ -123,36 +135,22 @@ export default defineConfig({
   ],
   webServer: MANAGE_SERVERS
     ? [
-        E2E_SERVER === "go"
-          ? {
-              // First run compiles pion + the binary; the Go build cache makes later runs
-              // cheap, but a cold CI runner needs more than the Node branch's 60 s.
-              command: goSignalingCommand(),
-              env: serverEnv({
-                // The whole suite talks from 127.0.0.1 to one signaling process; the
-                // production per-IP budget would throttle the run (the Go server reads
-                // the same test-only escape hatch as dev.ts).
-                RATE_LIMIT_MAX: "100000",
-                ...relayEnv(),
-              }),
-              port: SIGNALING_PORT,
-              reuseExistingServer: !process.env.CI,
-              gracefulShutdown: { signal: "SIGTERM", timeout: 5_000 },
-              timeout: 300_000,
-            }
-          : {
-              command: `PORT=${SIGNALING_PORT} ./node_modules/.bin/tsx packages/signaling/src/dev.ts`,
-              env: serverEnv({
-                // The whole suite talks from 127.0.0.1 to one signaling process; the
-                // production per-IP budget would throttle the run (dev.ts reads these).
-                RATE_LIMIT_MAX: "100000",
-                ...relayEnv(),
-              }),
-              port: SIGNALING_PORT,
-              reuseExistingServer: !process.env.CI,
-              gracefulShutdown: { signal: "SIGTERM", timeout: 5_000 },
-              timeout: 60_000,
-            },
+        {
+          // First run compiles pion + the binary; the Go build cache makes later runs cheap,
+          // but a cold CI runner needs a generous start timeout.
+          command: goSignalingCommand(),
+          env: serverEnv({
+            // The whole suite talks from 127.0.0.1 to one signaling process; the
+            // production per-IP budget would throttle the run (test-only escape hatch).
+            RATE_LIMIT_MAX: "100000",
+            ...testHookEnv(),
+            ...relayEnv(),
+          }),
+          port: SIGNALING_PORT,
+          reuseExistingServer: !process.env.CI,
+          gracefulShutdown: { signal: "SIGTERM", timeout: 5_000 },
+          timeout: 300_000,
+        },
         {
           command: `CROSSFILE_SIGNALING_URL=ws://127.0.0.1:${SIGNALING_PORT} ./node_modules/.bin/vite apps/web --host 0.0.0.0 --port ${APP_PORT} --strictPort`,
           env: serverEnv(),

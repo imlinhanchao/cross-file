@@ -8,10 +8,11 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "PORT=8788 CROSSFILE_SIGNALING_URL=ws://127.0.0.1:8788 pnpm -r --parallel --filter @crossfile/signaling --filter @crossfile/web dev",
+    "dev": "node scripts/dev.mjs",
     "dev:web": "pnpm --filter @crossfile/web dev",
-    "dev:signal": "PORT=8788 pnpm --filter @crossfile/signaling dev",
+    "dev:signal": "SKIP_WEB=1 bash apps/signaling-go/build.sh && PORT=8788 HOST=127.0.0.1 apps/signaling-go/bin/crossfile-signaling",
     "build": "pnpm --filter @crossfile/web build",
+    "build:signal": "bash apps/signaling-go/build.sh",
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -38,7 +39,6 @@
     "@vitest/coverage-v8": "^3.2.7",
     "electron": "^45.4.1",
     "electron-builder": "^26.18.0",
-    "postject": "1.0.0-alpha.6",
     "prettier": "^3.7.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

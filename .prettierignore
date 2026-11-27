@@ -8,7 +8,6 @@ apps/signaling-go/webdist
 playwright-report
 test-results
 pnpm-lock.yaml
-infra/signaling/build
 # design assets are hand-authored / generated as-is
 design
 # long-form docs are prose, formatted by hand

@@ -1,32 +1,36 @@
 #!/usr/bin/env bash
-# Zero-storage audit for the CrossFile signaling server (docs/01 AC8, docs/02 §7).
+# Zero-storage audit for the CrossFile signaling server (docs/01 AC8, docs/02 §7, AC15).
 #
-# Three modes:
-#   (default) local     — build the Node production bundle, run it under
-#                         `strace -f -e trace=openat,openat2,write`, drive a real
-#                         create → join → approve → signal → close session through it, then assert
-#                         that the process opened no writable file, wrote to no regular file,
-#                         touched no database, logged only its startup line, left its cwd empty,
-#                         and never echoed the session's roomId/code/display names.
-#   --go                — same strace and same 8-step v2 session, but the process under test is
-#                         the Go binary: `SKIP_WEB=1 apps/signaling-go/build.sh` then
-#                         `apps/signaling-go/bin/crossfile-signaling`. Needs the Go toolchain;
-#                         does NOT build or need the Node bundle. SKIP_BUILD=1 reuses an existing
-#                         binary. TURN_* is scrubbed so the in-process TURN server stays out of
-#                         this audit (the claim under test is "the signaling process writes
-#                         nothing", not TURN behaviour).
-#   --container         — build and start the docker-compose signaling service with a read-only
-#                         rootfs / non-root user / no volumes, run the same session against it,
-#                         assert Docker-level read-only + health + single startup log line, prove
-#                         writes fail with EROFS, then `docker compose down -v`.
+# The server is the Go single binary in `apps/signaling-go/` (the Node implementation was
+# removed). Two modes:
+#
+#   (default) local — build the binary with `SKIP_WEB=1 apps/signaling-go/build.sh`, run it under
+#                     `strace -f -e trace=openat,openat2,write` in an empty working directory,
+#                     drive the real 8-step v2 session (create → 2×join/approve → members
+#                     broadcast → profile rename → arbitrary-member signals → close), then assert:
+#                     no writable-file open, no write(2) to a regular file, no database path,
+#                     exactly ONE startup line on stdout, no roomId / 6-digit code / display name
+#                     in stdout, the real session succeeded, and the process cwd stayed empty.
+#
+#   --container     — build and run the Go image from `infra/docker-compose.yml` with a read-only
+#                     rootfs, non-root user, no volumes and all capabilities dropped; run the same
+#                     8-step session against it, assert exactly one startup line, and prove the
+#                     container filesystem never changed (`docker diff` is empty). Then
+#                     `docker compose down -v`.
 #
 # Usage:
-#   tests/audit/zero-storage.sh                 # local Node strace audit
-#   tests/audit/zero-storage.sh --go            # local Go binary strace audit
-#   SKIP_BUILD=1 tests/audit/zero-storage.sh --go   # reuse an existing Go binary
-#   tests/audit/zero-storage.sh --container     # container audit (needs Docker)
+#   tests/audit/zero-storage.sh                    # local Go strace audit (default)
+#   tests/audit/zero-storage.sh --local            # same as the default
+#   SKIP_BUILD=1 tests/audit/zero-storage.sh       # reuse apps/signaling-go/bin/crossfile-signaling
+#   tests/audit/zero-storage.sh --container        # container audit (needs Docker)
+#   SKIP_BUILD=1 tests/audit/zero-storage.sh --container   # reuse the existing image
 #   AUDIT_PORT=18787 tests/audit/zero-storage.sh
-#   KEEP_TMP=1 tests/audit/zero-storage.sh      # keep trace/logs for inspection
+#   KEEP_TMP=1 tests/audit/zero-storage.sh         # keep trace/logs for inspection
+#
+# The container mode uses infra/docker-compose.audit.yml, which publishes only the signalling
+# port on loopback (TURN is off in this audit, and mapping the 41-port relay range can collide
+# with host/ephemeral ports); the deployment compose file is layered underneath so image,
+# read-only rootfs, user, capabilities and mounts are still the production configuration.
 #
 # Exit code: 0 = PASS, 1 = FAIL. Never requires sudo: strace traces its own children.
 set -u -o pipefail
@@ -39,8 +43,7 @@ PORT="${AUDIT_PORT:-18787}"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --container) MODE="container" ;;
-    --go) MODE="go" ;;
-    --local) MODE="local" ;;
+    --local|--go) MODE="local" ;;
     --port) shift; PORT="${1:?--port needs a value}" ;;
     -h|--help) awk 'NR > 1 && /^set -u -o pipefail$/{exit} NR > 1' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "[FAIL] unknown argument: $1 (try --help)"; exit 1 ;;
@@ -58,7 +61,9 @@ mkdir -p "$AUDIT_CWD"
 STRACE_PID=""
 SERVER_PID=""
 CONTAINER_ID=""
-COMPOSE=(docker compose -p crossfile-audit -f "$ROOT/infra/docker-compose.yml")
+COMPOSE=(docker compose -p crossfile-audit \
+  -f "$ROOT/infra/docker-compose.yml" \
+  -f "$ROOT/infra/docker-compose.audit.yml")
 FAILED=0
 
 cleanup() {
@@ -87,80 +92,10 @@ fail() { FAILED=1; say "[FAIL] $*"; }
 evidence() { say "[EVIDENCE] $*"; }
 
 # ---------------------------------------------------------------------------------------------
-# Local mode: strace the real production bundle.
+# Local mode: build and strace the production Go binary.
 # ---------------------------------------------------------------------------------------------
 run_local() {
   command -v strace >/dev/null 2>&1 || { fail "strace is not installed (apt install strace); use --container instead"; return 1; }
-  command -v node >/dev/null 2>&1 || { fail "node is not installed"; return 1; }
-  [ -f node_modules/tsx/package.json ] || { fail "workspace dependencies are missing: run 'pnpm install' first"; return 1; }
-
-  say "== Zero-storage audit (local process, strace) =="
-  if ! node infra/signaling/build.mjs "$ROOT" >"$TMP/build.log" 2>&1; then
-    fail "could not build the production bundle (infra/signaling/build.mjs)"
-    tail -n 20 "$TMP/build.log" | sed 's/^/[EVIDENCE]   /'
-    return 1
-  fi
-  pass "production bundle built (infra/signaling/build/server.cjs)"
-
-  # Scrub proxy variables: the server is local, and proxy warnings would add non-startup lines.
-  (
-    cd "$AUDIT_CWD" || exit 1
-    exec env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u all_proxy -u NODE_USE_ENV_PROXY \
-      PORT="$PORT" HOST=127.0.0.1 \
-      strace -f -qq -s 256 -e trace=openat,openat2,write -o "$TRACE" -- \
-      node "$ROOT/infra/signaling/build/server.cjs" >"$SERVER_LOG" 2>&1
-  ) &
-  STRACE_PID=$!
-
-  local ready=0 i
-  for i in $(seq 1 150); do
-    SERVER_PID="$(pgrep -P "$STRACE_PID" 2>/dev/null | head -n 1)"
-    if grep -q "listening on" "$SERVER_LOG" 2>/dev/null; then ready=1; break; fi
-    if ! kill -0 "$STRACE_PID" 2>/dev/null; then break; fi
-    sleep 0.1
-  done
-  if [ "$ready" -ne 1 ]; then
-    fail "signaling process did not start under strace"
-    tail -n 20 "$SERVER_LOG" 2>/dev/null | sed 's/^/[EVIDENCE]   /'
-    tail -n 20 "$TRACE" 2>/dev/null | sed 's/^/[EVIDENCE]   /'
-    return 1
-  fi
-  evidence "server pid=${SERVER_PID:-unknown} (child of strace pid=$STRACE_PID), port=$PORT"
-  evidence "server stdout: $(head -n 1 "$SERVER_LOG")"
-
-  # Real session over the audited process (create → join → approve → signal → close).
-  node --import tsx tests/audit/signal-client.mts "ws://127.0.0.1:$PORT/v1/ws" >"$CLIENT_LOG" 2>&1
-  local client_rc=$?
-  grep '^CLIENT OK' "$CLIENT_LOG" | sed 's/^/[EVIDENCE] /'
-  if [ "$client_rc" -ne 0 ]; then
-    fail "signaling session failed (exit $client_rc)"
-    tail -n 10 "$CLIENT_LOG" | sed 's/^/[EVIDENCE]   /'
-  fi
-
-  # Graceful SIGTERM, exactly what the container gets on `docker compose down`.
-  if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
-    kill -TERM "$SERVER_PID" 2>/dev/null || true
-    for i in $(seq 1 50); do kill -0 "$SERVER_PID" 2>/dev/null || break; sleep 0.1; done
-    kill -KILL "$SERVER_PID" 2>/dev/null || true
-  fi
-  wait "$STRACE_PID" 2>/dev/null || true
-  STRACE_PID=""
-  evidence "trace: $TRACE ($(wc -l <"$TRACE" 2>/dev/null || echo 0) strace lines), server log: $SERVER_LOG"
-
-  node tests/audit/analyze-trace.mjs \
-    --trace "$TRACE" \
-    --log "$SERVER_LOG" \
-    --client-log "$CLIENT_LOG" \
-    --workdir "$AUDIT_CWD"
-  return $?
-}
-
-# ---------------------------------------------------------------------------------------------
-# Go mode: strace the production Go binary (single static binary, web app + TURN embedded).
-# Same session and the same assertions as local mode; the Node bundle is never built or used.
-# ---------------------------------------------------------------------------------------------
-run_go() {
-  command -v strace >/dev/null 2>&1 || { fail "strace is not installed (apt install strace)"; return 1; }
   command -v node >/dev/null 2>&1 || { fail "node is not installed (needed for the audit client)"; return 1; }
   [ -f node_modules/tsx/package.json ] || { fail "workspace dependencies are missing: run 'pnpm install' first"; return 1; }
   [ -f apps/signaling-go/go.mod ] || { fail "apps/signaling-go is missing (expected the Go signaling server)"; return 1; }
@@ -170,13 +105,13 @@ run_go() {
   if [ "${SKIP_BUILD:-0}" = "1" ] && [ -x "$bin" ]; then
     evidence "SKIP_BUILD=1: reusing existing binary $bin"
   else
-    # SKIP_WEB=1: the audit never needs the web app, only the /v1/ws listener.
+    # SKIP_WEB=1: the audit only needs the /v1/ws listener, not the embedded web app.
     if ! env SKIP_WEB=1 bash apps/signaling-go/build.sh >"$TMP/build.log" 2>&1; then
       fail "could not build the Go signaling binary (SKIP_WEB=1 apps/signaling-go/build.sh)"
       tail -n 20 "$TMP/build.log" | sed 's/^/[EVIDENCE]   /'
       return 1
     fi
-    pass "Go signaling binary built (SKIP_WEB=1; the Node bundle is not involved)"
+    pass "Go signaling binary built (SKIP_WEB=1)"
   fi
   [ -x "$bin" ] || { fail "Go binary is missing or not executable: $bin"; return 1; }
   local bin_size
@@ -184,7 +119,7 @@ run_go() {
   evidence "binary: apps/signaling-go/bin/crossfile-signaling ($bin_size bytes)"
 
   # Scrub proxy and TURN variables: the server is local (no proxy warnings on stdout) and the
-  # in-process TURN listener stays out of the signaling-process audit.
+  # in-process TURN listener stays out of this signaling-process audit.
   (
     cd "$AUDIT_CWD" || exit 1
     exec env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u all_proxy \
@@ -212,7 +147,7 @@ run_go() {
   evidence "server stdout: $(head -n 1 "$SERVER_LOG")"
 
   # Real session over the audited process (create → 2×join/approve → members/profile broadcast
-  # → arbitrary-member signals → close), the same client the Node audit uses.
+  # → arbitrary-member signals → close).
   node --import tsx tests/audit/signal-client.mts "ws://127.0.0.1:$PORT/v1/ws" >"$CLIENT_LOG" 2>&1
   local client_rc=$?
   grep '^CLIENT OK' "$CLIENT_LOG" | sed 's/^/[EVIDENCE] /'
@@ -240,7 +175,7 @@ run_go() {
 }
 
 # ---------------------------------------------------------------------------------------------
-# Container mode: read-only rootfs / non-root / no volumes, same session, then down -v.
+# Container mode: Go image with read-only rootfs / non-root / no volumes, same 8-step session.
 # ---------------------------------------------------------------------------------------------
 ws_probe() {
   node -e '
@@ -255,12 +190,18 @@ run_container() {
   command -v docker >/dev/null 2>&1 || { fail "docker is not installed; run without --container for the local audit"; return 1; }
   docker compose version >/dev/null 2>&1 || { fail "docker compose plugin is not available"; return 1; }
   command -v node >/dev/null 2>&1 || { fail "node is not installed (needed for the audit client)"; return 1; }
+  [ -f node_modules/tsx/package.json ] || { fail "workspace dependencies are missing: run 'pnpm install' first"; return 1; }
 
-  say "== Zero-storage audit (container, read-only rootfs) =="
+  say "== Zero-storage audit (Go container, read-only rootfs) =="
+  # Hermetic: no TURN in this audit (TURN needs TURN_URIS+TURN_SECRET and binds extra ports;
+  # the claim under test is "the signaling process writes nothing"). A generated secret keeps
+  # compose's interpolation happy while TURN_URIS stays empty, so the relay never starts.
   export TURN_SECRET="${TURN_SECRET:-crossfile-audit-$(date +%s)-$RANDOM}"
+  export TURN_URIS=""
   export SIGNAL_PORT="$PORT"
-  export TURN_URIS="${TURN_URIS:-}"
-  evidence "compose project=crossfile-audit, published signaling port=$PORT, TURN_SECRET=(generated/supplied, not printed)"
+  export SIGNAL_BIND="127.0.0.1"
+  export MAX_MEMBERS=""
+  evidence "compose project=crossfile-audit (base + audit override), published signaling port=$PORT on 127.0.0.1, TURN off (TURN_URIS empty), no TURN ports published"
 
   if [ "${SKIP_BUILD:-0}" = "1" ]; then
     # Pre-built image (CI, or a sandbox where the docker builder cannot write its state dir).
@@ -272,7 +213,7 @@ run_container() {
       tail -n 25 "$TMP/build.log" | sed 's/^/[EVIDENCE]   /'
       return 1
     fi
-    pass "signaling image built"
+    pass "Go signaling image built"
   fi
 
   if ! "${COMPOSE[@]}" up -d --no-build signaling >"$TMP/up.log" 2>&1; then
@@ -287,7 +228,7 @@ run_container() {
   fi
 
   # --- Docker-level immutability assertions ------------------------------------------------
-  local readonly_rootfs config_user mount_count binds capdrop security status
+  local readonly_rootfs config_user mount_count binds capdrop security
   readonly_rootfs="$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$CONTAINER_ID" 2>/dev/null)"
   config_user="$(docker inspect -f '{{.Config.User}}' "$CONTAINER_ID" 2>/dev/null)"
   mount_count="$(docker inspect -f '{{len .Mounts}}' "$CONTAINER_ID" 2>/dev/null)"
@@ -309,22 +250,22 @@ run_container() {
   case "$capdrop" in *ALL*) pass "all Linux capabilities dropped (CapDrop=$capdrop)" ;; *) fail "capabilities not fully dropped (CapDrop=$capdrop)" ;; esac
   case "$security" in *no-new-privileges*) pass "no-new-privileges is set" ;; *) fail "no-new-privileges is not set (SecurityOpt=$security)" ;; esac
 
-  # --- Wait for health, then run the real session ------------------------------------------
+  # --- Wait for the /v1/ws listener (distroless image has no in-container healthcheck) ------
   local i
-  status=""
-  for i in $(seq 1 60); do
-    status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$CONTAINER_ID" 2>/dev/null)"
-    [ "$status" = "healthy" ] && break
-    sleep 1
+  local ready=0
+  for i in $(seq 1 120); do
+    if ws_probe "ws://127.0.0.1:$PORT/v1/ws"; then ready=1; break; fi
+    if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER_ID" 2>/dev/null)" != "true" ]; then break; fi
+    sleep 0.5
   done
-  if [ "$status" = "healthy" ]; then
-    pass "container healthcheck reports healthy (node ws probe on /v1/ws)"
+  if [ "$ready" = "1" ]; then
+    pass "container /v1/ws listener accepts a WebSocket upgrade"
   else
-    fail "container healthcheck did not become healthy (status=$status)"
+    fail "container /v1/ws listener did not come up"
     docker logs "$CONTAINER_ID" 2>&1 | tail -n 15 | sed 's/^/[EVIDENCE]   /'
   fi
 
-  for i in $(seq 1 30); do ws_probe "ws://127.0.0.1:$PORT/v1/ws" && break; sleep 0.5; done
+  # --- Real 8-step session against the container -------------------------------------------
   node --import tsx tests/audit/signal-client.mts "ws://127.0.0.1:$PORT/v1/ws" >"$CLIENT_LOG" 2>&1
   local client_rc=$?
   grep '^CLIENT OK' "$CLIENT_LOG" | sed 's/^/[EVIDENCE] /'
@@ -346,24 +287,14 @@ run_container() {
     sed 's/^/[EVIDENCE]   /' "$SERVER_LOG" | head -n 10
   fi
 
-  # --- Read-only proof: a write must fail with EROFS (or EACCES) ---------------------------
-  local probe_out write_code
-  probe_out="$(docker exec "$CONTAINER_ID" node -e '
-    const fs = require("node:fs");
-    const probe = (path) => {
-      try { fs.writeFileSync(path, "audit"); return "WROTE"; }
-      catch (error) { return String(error.code || error.message); }
-    };
-    const app = probe("/app/.audit-probe");
-    const tmp = probe("/tmp/.audit-probe");
-    console.log(`app=${app} tmp=${tmp}`);
-    process.exit(/^(EROFS|EACCES)$/.test(app) && /^(EROFS|EACCES)$/.test(tmp) ? 0 : 1);
-  ' 2>&1)"
-  write_code=$?
-  if [ "$write_code" -eq 0 ]; then
-    pass "writes inside the container fail as expected ($probe_out)"
+  # --- Zero-write proof: the container filesystem never changed -----------------------------
+  local diff_out
+  diff_out="$(docker diff "$CONTAINER_ID" 2>&1)"
+  if [ -z "$diff_out" ]; then
+    pass "docker diff is empty: the process wrote nothing to the container filesystem"
   else
-    fail "container filesystem accepted a write ($probe_out)"
+    fail "container filesystem changed while running"
+    printf '%s\n' "$diff_out" | head -n 10 | sed 's/^/[EVIDENCE]   /'
   fi
 
   # --- Clean shutdown ----------------------------------------------------------------------
@@ -376,11 +307,13 @@ run_container() {
 }
 
 # ---------------------------------------------------------------------------------------------
-case "$MODE" in
-  container) run_container; RC=$? ;;
-  go) run_go; RC=$? ;;
-  *) run_local; RC=$? ;;
-esac
+if [ "$MODE" = "container" ]; then
+  run_container
+  RC=$?
+else
+  run_local
+  RC=$?
+fi
 
 if [ "$RC" -eq 0 ] && [ "$FAILED" -eq 0 ]; then
   say "RESULT PASS (zero-storage audit, $MODE)"

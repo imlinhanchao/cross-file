@@ -1,18 +1,22 @@
-# Build context is the repository root; keep the context small and deterministic (BuildKit reads
-# the file named after the Dockerfile: infra/signaling/Dockerfile.dockerignore).
+# Build context is the repository root; keep it small and deterministic. BuildKit reads the
+# file named after the Dockerfile: infra/signaling/Dockerfile.dockerignore.
 node_modules
 **/node_modules
 .git
 .cache
 test-results
 playwright-report
+coverage
 docs
 apps/desktop
 apps/mobile
 tests
 scripts
 infra/deploy
-infra/signaling/build
+# Generated Go build output must not be copied into the image build context (the Go stage
+# recreates webdist/ from the Vite stage and bin/ from build.sh).
+apps/signaling-go/bin
+apps/signaling-go/webdist
 **/*.log
 .env
 .env.*

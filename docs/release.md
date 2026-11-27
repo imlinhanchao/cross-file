@@ -17,7 +17,7 @@
 > `GITHUB_TOKEN`，所以 `deploy.yml` 的 `on: release: published` **不会**因它触发——P0 `v0.1.0` 就是这样
 > 发布成功但 deploy 没有自动跑（当时人工补部署）。`workflow_dispatch` 不受该限制，因此 release job 的最后一步
 > 执行 `gh workflow run deploy.yml --ref <默认分支> -f tag=<tag>`（工作流已声明 `permissions.actions: write`），
-> `deploy.yml` 只额外修了 tarball 落地路径（`strip_components: 1`，见 §7「部署脚本修复」）。人工在 GitHub 上发布/重新发布 release 仍走 `release: published`；
+> `deploy.yml` 只额外修了 tarball 落地路径（`strip_components: 1`，见 §8「部署脚本修复」）。人工在 GitHub 上发布/重新发布 release 仍走 `release: published`；
 > `deploy.yml` 的 `workflow_dispatch` 仍是手动重部署入口。
 
 > **该修复只能在下一次打 tag 时端到端证明**（本地无法触发 GitHub 事件）。届时看：`release` run 是否全绿 →
@@ -46,7 +46,7 @@ iOS 暂不打包（需要 Apple 开发者账号与签名/TestFlight 流程）。
 
 ### 2.1 服务器包内容与运行时环境
 
-`crossfile-signaling-<version>-linux-x64.tar.gz`（arm64 同理）解开后是三个文件，没有 `node_modules`、没有 `public/`、没有 `server.cjs`：
+`crossfile-signaling-<version>-linux-x64.tar.gz`（arm64 同理）解开后是三个文件，没有 `node_modules`、没有 `public/`、也没有 `server.cjs`（仓库里的 Node 实现已删除；只有旧 tag 的 release 资产里还带 `server.cjs`，仅供回滚）：
 
 ```text
 crossfile-signaling     静态 Go 二进制（模式 0755；网页 + /v1/ws + in-process TURN）
@@ -67,11 +67,11 @@ VERSION                 commit / version / built 三行
 | `TURN_LISTEN_PORT` | `3478` | 内嵌 TURN 监听端口（udp+tcp） |
 | `TURN_MIN_PORT` / `TURN_MAX_PORT` | `49160` / `49200` | relay 端口段（防火墙需同步放行） |
 
-`deploy.yml` **无需改动**：它下载的资产名与解压后路径不变，`pm2 delete` + `pm2 start <release>/ecosystem.config.cjs --update-env` 对 Go 包和旧的 Node 包都成立（每个 release 自带自己的 ecosystem 配置），健康检查 `curl http://127.0.0.1:$PORT/` 由 Go 二进制内嵌的 Web 应用应答。
+`deploy.yml` **无需为本流水线改动**：资产名与解压后路径不变，`pm2 delete` + `pm2 start <release>/ecosystem.config.cjs --update-env` 对新的 Go 包和旧 tag 的 Node 包都成立（每个 release 自带自己的 ecosystem 配置），健康检查 `curl http://127.0.0.1:$PORT/` 由 Go 二进制内嵌的 Web 应用应答。它唯一一次改动是 v0.2.0 首次自动部署暴露的 scp 落地路径修复（见 §8）。
 
 体积参考（2026-11-27 本地按本工作流命令实测）：x64 静态二进制约 10 MB、arm64 约 9.5 MB；gzip 后的 tarball 分别约 3.9 MB / 3.5 MB（旧 Node SEA 单文件为 123 MB）。
 
-> 旧的 Node 解压包（`server.cjs` + `public/`，需要服务器有 Node 22）与 Node SEA 单二进制不再随 release 产出；`infra/signaling/build*.mjs` 暂时保留到 Go 生产切换验收通过后再删除。
+> 仓库里的 Node 信令实现（`packages/signaling/`、`infra/signaling/build*.mjs`、`entry.ts`、`sea-entry.ts`、Node 版 PM2 配置）已于 v0.2.0 后删除：Go 是唯一实现，本流水线只产出 Go 资产。旧 tag 的 release 资产不受影响，回滚仍可部署（见 §7）。
 
 > ✅ **切换已完成**：`v0.2.0`（commit `2d2d5fd`）起，master 上的 release 流水线产出的 server 资产是 Go 单二进制，生产 `https://file.time-pack.com` 已切到 Go（内嵌 TURN，不再需要 coturn）。P0 的 `v0.1.0` tag 指向旧 commit（`acdd78f`），产物仍是 Node 版本，可作为回滚目标。
 
@@ -122,7 +122,7 @@ release，`actions: write` 用于最后一步 `gh workflow run deploy.yml` 的 d
 - **Windows / macOS**：当前无证书，产物可下载可运行，但 Windows 会弹 SmartScreen、macOS 会提示"无法验证开发者"（右键打开或 `xattr -dr com.apple.quarantine`）。要正式分发需要代码签名证书（Windows）与 Apple Developer ID + 公证（macOS）。
 - **Android**：release APK 用 `org.hancel.file` 包名与 release keystore 签名，可直接侧载安装；上架 Google Play 需要 AAB（后续可加 `--aab`）。
 - **server**：Go 单二进制（`apps/signaling-go/`，`CGO_ENABLED=0` 静态链接，`-trimpath -ldflags="-s -w"`），一个进程内嵌 Web 应用、`/v1/ws` 与 TURN。生产部署不再需要 Node 运行时或单独的 coturn，协议仍是 v2、客户端零改动。x64 与 arm64 各产出一个 tarball 和一个裸二进制；二进制只能在与构建相同的 OS/架构上运行（当前只出 linux）。
-- **server 包的回滚兼容性**：每个 release 的 tarball 自带自己的 `ecosystem.config.cjs`（Node 版指向 `server.cjs`，Go 版 `interpreter: "none"` 直接跑二进制），所以 `deploy.yml` 用旧 tag 重跑即可回滚到 Node 或 Go 版本，工作流不需要区分。
+- **server 包的回滚兼容性**：每个 release 的 tarball 自带自己的 `ecosystem.config.cjs`（旧 Node 版指向 `server.cjs`，Go 版 `interpreter: "none"` 直接跑二进制），所以 `deploy.yml` 用旧 tag 重跑即可回滚到 Node 或 Go 版本，工作流不需要区分；仓库里不再需要（也没有）Node 源码。
 
 ## 6. dry run 与本地验证
 
@@ -139,9 +139,9 @@ PORT=18998 HOST=127.0.0.1 apps/signaling-go/bin/crossfile-signaling   # 单进�
 curl -fsS http://127.0.0.1:18998/ | grep -q '<div id="root">'
 curl -fsS -o /dev/null http://127.0.0.1:18998/r/abcdefghijklmnopqrstuvwxyz   # SPA 回退
 
-# 用真实 e2e 与零存储审计验证 Go 二进制
-E2E_SERVER=go pnpm exec playwright test        # 全量 e2e（Go 信令 + Vite 页面）
-bash tests/audit/zero-storage.sh --go          # strace：0 写盘 / 0 DB / 1 行启动日志
+# 用真实 e2e 与零存储审计验证 Go 二进制（默认就是 Go 信令，无需 E2E_SERVER）
+pnpm exec playwright test              # 全量 e2e（Go 信令 + Vite 页面）
+bash tests/audit/zero-storage.sh       # strace：0 写盘 / 0 DB / 1 行启动日志
 ```
 
 ## 7. 回滚
@@ -150,7 +150,8 @@ bash tests/audit/zero-storage.sh --go          # strace：0 写盘 / 0 DB / 1 �
   或手动跑 `deploy` workflow 并输入旧 tag。
 - Release：GitHub 上把旧 release 标记为 Latest / 重新下载旧产物即可；tag 不要删除（已发布产物保持可追溯）。
 - 回滚到 Node 版（v0.1.0）：先 `sudo systemctl enable --now coturn`（Go 内嵌 TURN 让出了 3478），再 `deploy` 工作流输入旧 tag。
-  两个版本的 tarball 各自带适配自己运行时的 `ecosystem.config.cjs`，`deploy.yml` 不需要区分。
+  两个版本的 tarball 各自带适配自己运行时的 `ecosystem.config.cjs`，`deploy.yml` 不需要区分；回滚不依赖仓库里的 Node 代码（已删除），
+  只需旧 release 资产仍然存在。服务器上 Node 仅用于运行 PM2 本身（或改用 systemd，见 `docs/self-host.md` §12）。
 
 ## 8. 部署脚本修复（2026-11-27，v0.2.0 首次自动部署发现）
 

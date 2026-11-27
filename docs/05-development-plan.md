@@ -21,7 +21,7 @@
 
 | 项 | 值 | 说明 |
 |---|---|---|
-| 技术栈 | TS + React 19 + Vite 7 + Node 22/ws + Tauri 2 + coturn + MIT | `01` §10 推荐值 |
+| 技术栈 | TS + React 19 + Vite 7 + **Go 1.23 单二进制（pion/turn，内嵌 TURN）** + Tauri 2 + MIT | `01` §10 推荐值；Node 信令已于 v0.2.0 后删除 |
 | 产品名 | CrossFile（代号），包前缀 `@crossfile/` | 品牌名延后 |
 | 样式 | 不引 Tailwind；`design/tokens/tokens.css` + 迁移后的 `base.css` | 避免双体系、满足"零硬编码色值"门禁 |
 | UI 语言 | 仅中文，文案集中 `packages/ui/src/copy.ts` | 留 i18n 口 |
@@ -40,14 +40,14 @@
 | **M3 产品化** | 多接收方队列 + 文件×人矩阵、审批/移除/结束、6 位码 + SAS emoji、全状态与无障碍 | AC5 AC6 | ☐ |
 | **M4 发布可用** | docker-compose 一键自托管、官方实例、隐私页、自托管文档、LICENSE | U1–U8 复跑 | ☐ |
 | **M5 发布后** | 鸿蒙 API 26 冒烟、真机待办、v1.x backlog | 报告归档 | ☐ |
-| **M6 Go 单二进制后端** | 用 Go 重写信令（协议 v2 不变、客户端零改动），单进程内嵌 Web 静态资源与 TURN；CI / e2e / 零存储审计 / 发布流水线适配 | e2e（`E2E_SERVER=go`）全绿 + 零存储 `--go` PASS + release 产出 Go 资产 + 生产切换验收 | ✅ 完成（2026-11-27 生产 v0.2.0 上线） |
+| **M6 Go 单二进制后端** | 用 Go 重写信令（协议 v2 不变、客户端零改动），单进程内嵌 Web 静态资源与 TURN；CI / e2e / 零存储审计 / 发布流水线适配 | e2e（Go 信令）全绿 + 零存储审计 PASS + release 产出 Go 资产 + 生产切换验收 | ✅ 完成（2026-11-27 生产 v0.2.0 上线） |
 
 ## 4. 工作包（WBS）
 
 | WS | 内容 | 人日 | 状态 |
 |---|---|---|---|
 | WS0 | 仓库/工具链/CI/dev-env/Playwright/Tauri CLI | 1.0 | ☐ |
-| WS1 | `packages/signaling`：房间状态机、消息表、短码、TTL、限流、TURN 凭据、零存储 | 3.0 | ☐ |
+| WS1 | `apps/signaling-go`：房间状态机、消息表、短码、TTL、限流、TURN 凭据 + 内嵌 TURN、零存储（原 `packages/signaling` Node 实现已删除） | 3.0 | ✅ |
 | WS2 | `core/crypto`：HKDF、AES-256-GCM 分片、SAS、joinProof、增量 SHA-256 | 1.5 | ☐ |
 | WS3 | `core/protocol`：消息 schema、帧编解码、manifest、错误码、状态机 | 1.5 | ☐ |
 | WS4 | `core/transfer`：分片器、流控、队列、续传 bitmap、进度、哈希校验 | 3.0 | ☐ |
@@ -58,8 +58,8 @@
 | WS9 | `apps/desktop`：Tauri 2 桌面壳 | 2.0 | ✅ 工程/原生写盘/关窗/菜单/deb，Web 侧已接线 |
 | WS10 | `apps/mobile`：Tauri 2 iOS/Android | 3.0 | ☐ |
 | WS11 | 鸿蒙 ArkWeb 冒烟 | 0.5 | ☐ |
-| WS12 | e2e/perf/审计 | 4.0 | ☐ |
-| WS13 | infra/deploy/文档 | 2.5 | ☐ |
+| WS12 | e2e/perf/审计（Go 默认、零存储 local+container） | 4.0 | ✅ |
+| WS13 | infra/deploy/文档（Go 镜像/compose、PM2、发布、自托管） | 2.5 | ✅ |
 | WS14 | `apps/signaling-go`：协议 v2 parity、内嵌 TURN、单静态二进制；e2e/CI/零存储/发布适配 | 3.0 | ✅ |
 
 ## 5. 环境事实（实测）
@@ -355,26 +355,38 @@ https://room.net.time-pack.com  --TLS-->  nginx (既有反代)  -->  Vite :5173
 
 **流水线适配（本次完成）**：
 
-- e2e：`playwright.config.ts` 支持 `E2E_SERVER=go`（默认仍是 Node `dev.ts`）；Go 模式先 `SKIP_WEB=1 bash apps/signaling-go/build.sh` 再启动二进制，Vite webServer 与默认 Node 分支不变。
-- CI：`.github/workflows/ci.yml` 新增 `go`（gofmt / go vet / go test / 静态构建）、`e2e-go`（`E2E_SERVER=go pnpm e2e`）、`zero-storage-go`；Node 的 e2e 与容器零存储 job 保留到 Go 生产切换验收通过。
-- 零存储：`tests/audit/zero-storage.sh --go` 用同一套 `strace` + 8 步 v2 会话审计 Go 二进制，并额外断言启动日志不含 roomId / 6 位码 / 显示名。
+- e2e：`playwright.config.ts` 只保留 Go 分支（`E2E_SERVER` 仅作守卫，未设置 = Go）：先 `SKIP_WEB=1 bash apps/signaling-go/build.sh` 再启动二进制；`E2E_RELAY=1` 转发 TURN_*、`E2E_RECONNECT_MS` 转发 `RECONNECT_WINDOW_MS`。
+- CI：`.github/workflows/ci.yml` 的 job 为 `gates`、`go`（gofmt / go vet / go test / 静态构建）、`e2e`（Playwright + Go 信令）、`zero-storage`（strace 本机 Go 二进制）、`zero-storage-container`（只读 Go 镜像 + 同一 8 步会话）；Node 的 e2e/容器审计 job 已随 Node 实现一起删除。
+- 零存储：`tests/audit/zero-storage.sh`（默认）用 `strace` + 8 步 v2 会话审计 Go 二进制，并额外断言启动日志不含 roomId / 6 位码 / 显示名；`--container` 改为构建/运行 Go 镜像并断言只读 rootfs、非 root、无 volume、`docker diff` 为空。
 - 发布：`release.yml` 的 server job 改为 Go 构建（linux x64 + arm64），tarball 资产名保持 `crossfile-signaling-<version>-linux-x64.tar.gz` 不变，内含 Go 二进制 + `interpreter: "none"` 的 `ecosystem.config.cjs` + `VERSION`；另出裸二进制资产，并在发布前做「内嵌页面 / SPA 回退 / v1 版本门禁」冒烟。`deploy.yml` 仅修了一处 tarball 落地路径（`strip_components: 1` + `find` 兜底，见 docs/06「发布链路缺陷 2」）。
-- 文档：`docs/release.md`、`docs/self-host.md`、README 同步为单二进制部署；旧 Node 构建脚本（`infra/signaling/build*.mjs`）暂留，切换验收后再删。
+- 文档：`docs/release.md`、`docs/self-host.md`、`docs/deploy-official-instance.md`、README 同步为单二进制部署；随后按「彻底移除 Node」要求删除了 Node 实现（见下）。
 
 **状态**：已完成并**上线生产 v0.2.0**（2026-11-27）：停 coturn（释放 3478）→ 打 tag `v0.2.0` → release 自动发布并 dispatch deploy。首次自动部署暴露了 `deploy.yml` 的 scp 嵌套路径缺陷（已修，见 docs/06「发布链路缺陷 2」），该版本按等价步骤手动部署；生产实测 AC10 双向 10 MB 与 AC2 relay-only 10 MB（内嵌 TURN）均通过，PM2 内存从 ~65 MB 降到 ~5.6 MB。回滚用旧 tag 重跑 deploy 并重启 coturn（见 `docs/release.md` §7）。
 
-**本地实测（2026-11-27，流水线本身）**：
+**收尾（2026-11-27）：Node 实现已彻底删除，Go 是唯一实现。** 删除 `packages/signaling/**`（17 个文件）、`infra/signaling/{build.mjs,build-sea.mjs,entry.ts,sea-entry.ts}` 及其生成物、Node 版 `infra/pm2/ecosystem.config.cjs`、`scripts/smoke-signaling.mts`、根目录 `postject` 依赖与 `dev`/`dev:signal` 的 Node 入口。改写：`infra/signaling/Dockerfile` 为 Go 多阶段（node builder 只构建 Vite → Go builder 用 `SKIP_WEB=1 apps/signaling-go/build.sh` → distroless/static 运行时）、`infra/docker-compose.yml` 为单个 Go 服务（删除 coturn、内嵌 TURN、只读 rootfs/非 root、healthcheck 由 distroless 无损探测替代）、`tests/audit/zero-storage.sh` 默认 Go 并删除 Node 模式、`playwright.config.ts` 只保留 Go、`scripts/dev.mjs` 负责 `pnpm dev` 同时起 Go 二进制与 Vite。`pnpm install` 已更新 lockfile；`pnpm gate` 全绿（删除 Node 后单测数下降属预期；core 覆盖率门禁仍 92.47%/85.44%）。
+
+**验证（2026-11-27，去 Node 后实测）**：
+
+- `pnpm install --frozen-lockfile` ✅（lockfile 一致）
+- `pnpm gate` ✅：prettier / typecheck / **133 单测**（含 phase2-web 的 mesh/handover 用例；删除 Node 后数量低于 178 属预期）/ core 覆盖率 92.47% stmts / 85.44% branch / 对比度 33/33 / 零硬编码色值
+- `pnpm exec playwright test tests/e2e/m0-transfer.spec.ts`（默认 Go）→ **1 passed**（10.7 s）
+- `bash tests/audit/zero-storage.sh`（默认 Go）→ **RESULT PASS**（0 可写文件、0 普通文件 write、stdout 恰 1 行、无 roomId/6 位码/显示名、cwd 为空）
+- `bash tests/audit/zero-storage.sh --container`（Go 镜像，SKIP_BUILD=1 复用构建产物）→ **RESULT PASS**：只读 rootfs、非 root 65532、无 volume、CapDrop ALL、no-new-privileges、`/v1/ws` 升级、同一 8 步会话、stdout 恰一行、**`docker diff` 为空**、`down -v` 干净
+- `docker compose -f infra/docker-compose.yml config` ✅（单服务；`infra/docker-compose.audit.yml` 为审计叠加，只发布信令端口）
+- `pnpm dev`（`scripts/dev.mjs`：Go 二进制 :8788 + Vite :5173）✅：`/` 200、`/v1/ws` WebSocket 升级成功
+
+**本地实测（2026-11-27，去 Node 前；当时的 `--go`/`E2E_SERVER=go` 现在分别是默认审计模式和兼容别名，命令仍可照跑）**：
 
 - `SKIP_WEB=1 bash apps/signaling-go/build.sh` → `bin/crossfile-signaling`（7.4 MB、静态 ELF、stripped）；含内嵌网页的完整构建 **10,457,248 B（10 MB）**；
-- `E2E_SERVER=go pnpm exec playwright test tests/e2e/m0-transfer.spec.ts` → **1 passed**（7.7 s，Go 信令 + Vite 页面）；
-- `bash tests/audit/zero-storage.sh --go` → **RESULT PASS**：8 步 v2 会话、0 可写文件、0 普通文件 write、1 行启动日志、无 roomId/6 位码/显示名、cwd 为空；
+- `E2E_SERVER=go pnpm exec playwright test tests/e2e/m0-transfer.spec.ts` → **1 passed**（7.7 s，Go 信令 + Vite 页面；现在直接 `pnpm exec playwright test tests/e2e/m0-transfer.spec.ts`）；
+- `bash tests/audit/zero-storage.sh --go` → **RESULT PASS**（现在默认模式即可）：8 步 v2 会话、0 可写文件、0 普通文件 write、1 行启动日志、无 roomId/6 位码/显示名、cwd 为空；
 - release `server` job 的三段 `run` 脚本原文实跑：x64/arm64 均静态链接（含内嵌网页时 10 MB / 9.5 MB）、冒烟通过（`<div id="root">`、`/r/<id>` SPA 回退、v1 客户端收到 `VERSION_MISMATCH`）、tarball 内容为 `crossfile-signaling`(0755) + `ecosystem.config.cjs` + `VERSION`；
 - 本机 PM2 用 tarball 内的 `ecosystem.config.cjs` 实跑：`interpreter: none`、`online`、`curl /` 200、`/r/<id>` 200、日志仅一行启动、`pm2 delete` 后端口释放（`deploy.yml` 的 pm2 步骤等价）。
 - **全量 e2e（Go 信令）**：`E2E_SERVER=go pnpm e2e` → **20 passed / 1 skipped（AC2 relay）**，2.0 min，与 Node 基线一致；
 - **内嵌 TURN 的 AC2 relay（不依赖 coturn）**：`E2E_SERVER=go E2E_RELAY=1 TURN_SECRET=… TURN_URIS='turn:127.0.0.1:3478?…' TURN_EXTERNAL_IP=127.0.0.1 pnpm exec playwright test tests/e2e/ac2-relay.spec.ts` → **1 passed（9.7 s）**，双方 `path === "relay"` 断言通过（DTLS-SCTP 真的走进程内 relay）；
 - **Go 单测**：`go test ./...` → **93 个测试全过，85.2% 语句覆盖率，`-race` 干净**；`gofmt -l` 空、`go vet` 干净；
 - **parity 审查**：独立只读审查（Node `server.ts`/`rooms.ts`/`static.ts`/`identity.ts`/`turn.ts` vs Go）→ 无 blocker；修复了 TURN 门禁（改为 `TURN_URIS` 与 `TURN_SECRET` 都非空才启动，与 Node 一致）、`/v1%2Fws` 原始路径、`.gitkeep` 不下发、连接 goroutine panic 恢复、profile 窗口哨兵等 7 项差异；
-- **零存储（Go）**：`bash tests/audit/zero-storage.sh --go` → **RESULT PASS**（0 可写文件、0 普通文件 write、stdout 恰 1 行、无 roomId/6 位码/显示名、cwd 为空）。
+- **零存储（Go）**：`bash tests/audit/zero-storage.sh` → **RESULT PASS**（0 可写文件、0 普通文件 write、stdout 恰 1 行、无 roomId/6 位码/显示名、cwd 为空）。
 
 ## 8. 待办（需外部输入）
 

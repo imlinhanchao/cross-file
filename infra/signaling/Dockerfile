@@ -1,16 +1,19 @@
 # syntax=docker/dockerfile:1
 #
-# Self-hosted CrossFile signaling image (docs/02 §7, docs/03 M4).
+# CrossFile signaling image: one static Go binary that serves the embedded web app, the
+# `/v1/ws` protocol and an in-process TURN relay (docs/02 §7, docs/03 M4, docs/05 §7.5).
 #
-# Build context is the repository root (`infra/docker-compose.yml` sets `context: ..`) because the
-# server imports the pnpm workspace packages. Only the filtered workspace is installed, and the
-# final image contains a single pre-bundled file: no node_modules and no source tree.
+# Build context is the repository root (`infra/docker-compose.yml` sets `context: ..`).
+#   docker build -f infra/signaling/Dockerfile -t crossfile/signaling:local .
+#   docker run --rm --read-only --user 65532:65532 -p 8788:8787 \
+#     -e HOST=0.0.0.0 -e PORT=8787 crossfile/signaling:local
 #
-# Runtime is deliberately boring: plain `node /app/server.cjs`, read-only rootfs, non-root user,
-# no volumes, no database, one startup log line. See docs/self-host.md for the audit commands.
+# Runtime properties that matter for AC8/zero-storage: read-only rootfs works, no volumes,
+# no shell, non-root (distroless `nonroot` uid 65532), one startup line on stdout, no access
+# logs. There is no Node runtime in the final image; Node appears only in the web-build stage.
 
-# --- build stage: install the workspace and bundle the server --------------------------------
-FROM node:22-alpine AS build
+# --- stage 1: build the web app (Vite) ------------------------------------------------------
+FROM node:22-alpine AS web
 
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
@@ -20,57 +23,68 @@ RUN corepack enable && corepack prepare pnpm@12.6.0 --activate
 
 WORKDIR /app
 
-# Dependency manifests first so the install layer is cached independently of sources.
+# Manifests first so the install layer is cached independently of sources.
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.base.json ./
 COPY packages/core/package.json packages/core/package.json
-COPY packages/signaling/package.json packages/signaling/package.json
 COPY packages/ui/package.json packages/ui/package.json
 COPY apps/web/package.json apps/web/package.json
 # `--trust-lockfile` skips pnpm's supply-chain-policy network verification, which makes a
-# reproducible container build depend on registry metadata round-trips. The committed lockfile
-# plus --frozen-lockfile still pin every version; bumping a dependency is a reviewed repo change.
-# `--ignore-scripts` is deliberate: the workspace root's devDependencies (electron-builder chain)
-# are installed even under --filter, and pnpm 12 fails the install on their unapproved lifecycle
-# scripts. Neither the esbuild bundle nor the Vite web build needs a lifecycle script.
+# reproducible container build depend on registry metadata round-trips; the committed lockfile
+# plus --frozen-lockfile still pin every version. `--ignore-scripts` is deliberate: the
+# workspace root's devDependencies (electron-builder chain) are installed even under --filter,
+# and pnpm 12 fails the install on their unapproved lifecycle scripts. The Vite build needs no
+# lifecycle script.
 RUN pnpm install --frozen-lockfile --trust-lockfile --ignore-scripts \
-      --filter @crossfile/signaling... --filter @crossfile/web...
+      --filter @crossfile/web...
 
-# Sources needed by the bundle and the web build (the design system is imported by web styles).
+# Sources needed by the web build (the design system is imported by web styles).
 COPY packages/core/src packages/core/src
-COPY packages/signaling/src packages/signaling/src
 COPY packages/ui/src packages/ui/src
 COPY apps/web apps/web
 COPY design design
-COPY infra/signaling infra/signaling
 
-# esbuild bundles entry.ts + @crossfile/* + ws + zod into one CommonJS file (see build.mjs for why
-# the image does not run TypeScript directly).
-RUN node infra/signaling/build.mjs /app && node --check infra/signaling/build/server.cjs
-# Production single-origin: the build stage also produces the static web app.
-# The runtime image must contain the SPA entry; fail the build early if it is missing.
 RUN pnpm --filter @crossfile/web build && test -f apps/web/dist/index.html
 
-# --- runtime stage: one file, one process, zero writes ---------------------------------------
-FROM node:22-alpine AS runtime
+# --- stage 2: build the static Go binary with the web app embedded --------------------------
+FROM golang:1.23-alpine AS gobuild
+
+# apps/signaling-go/build.sh is a bash script; the alpine Go image ships `sh` only.
+RUN apk add --no-cache bash
+
+WORKDIR /src
+
+# Module cache layer first, so source edits do not re-download pion/turn.
+COPY apps/signaling-go/go.mod apps/signaling-go/go.sum ./apps/signaling-go/
+WORKDIR /src/apps/signaling-go
+RUN go mod download
+
+COPY apps/signaling-go/ ./
+# `//go:embed all:webdist` needs the directory; replace the clean-checkout placeholder with the
+# real build (the .gitkeep copy is harmless). SKIP_WEB=1 because stage 1 already built the app.
+COPY --from=web /app/apps/web/dist/ ./webdist/
+RUN SKIP_WEB=1 bash build.sh \
+ && test -x bin/crossfile-signaling \
+ && ls -lh bin/crossfile-signaling
+
+# --- stage 3: runtime — distroless static, non-root, no shell, no package manager -----------
+FROM gcr.io/distroless/static-debian12:nonroot
 
 LABEL org.opencontainers.image.title="crossfile-signaling" \
-      org.opencontainers.image.description="CrossFile ephemeral signaling server (zero storage)" \
+      org.opencontainers.image.description="CrossFile ephemeral signaling server (Go single binary: web app + WebSocket v2 + in-process TURN, zero storage)" \
       org.opencontainers.image.licenses="MIT"
 
-ENV NODE_ENV=production \
-    HOST=0.0.0.0 \
-    PORT=8787 \
-    STATIC_DIR=/app/public
+ENV HOST=0.0.0.0 \
+    PORT=8787
 
 WORKDIR /app
 
-# Single artifact + static app: no node_modules, no source tree, nothing writable at runtime.
-COPY --from=build --chown=node:node /app/infra/signaling/build/server.cjs /app/server.cjs
-COPY --from=build --chown=node:node /app/apps/web/dist /app/public
+COPY --from=gobuild --chown=nonroot:nonroot /src/apps/signaling-go/bin/crossfile-signaling /app/crossfile-signaling
 
-USER node
+# distroless `nonroot` is uid 65532; the process never needs to write.
+USER nonroot:nonroot
 
-EXPOSE 8787
+# HTTP/WS + the in-process TURN listener (the relay port range is published by compose).
+EXPOSE 8787 3478/tcp 3478/udp
 
-# docs/02 §7: no request logs, no access logs. Container logs carry one startup line only.
-CMD ["node", "/app/server.cjs"]
+# docs/02 §7: no request logs, no access logs. stdout carries one startup line only.
+ENTRYPOINT ["/app/crossfile-signaling"]

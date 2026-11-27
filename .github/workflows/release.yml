@@ -413,7 +413,7 @@ jobs:
           retention-days: 1
 
   release:
-    name: publish draft release
+    name: publish release & dispatch deploy
     needs:
       [meta, server, desktop-linux, desktop-windows, desktop-macos, android]
     runs-on: ubuntu-latest
@@ -440,7 +440,7 @@ jobs:
           ls -lh
           sha256sum * > SHA256SUMS
           cat SHA256SUMS
-      - name: create draft release
+      - name: publish release
         if: needs.meta.outputs.dry_run != 'true'
         uses: softprops/action-gh-release@v2
         with:

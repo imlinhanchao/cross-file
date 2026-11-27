@@ -12,7 +12,8 @@ cross-file/
 ├── apps/
 │   ├── web/                 # React + Vite，统一 Room 页 UI（管理员/成员共用；/ 入口、/room 创建、/r/<id>、/j/<code>）
 │   ├── desktop/             # Tauri 2，Win/macOS/Linux；内嵌 web 构建 + 原生保存/保活
-│   └── mobile/              # Tauri 2，iOS/Android；分享面板、写盘、前台服务
+│   ├── mobile/              # Tauri 2，iOS/Android；分享面板、写盘、前台服务
+│   └── signaling-go/        # Go 单二进制：/v1/ws + 内嵌 Web + 进程内 pion/turn（唯一信令实现）
 ├── packages/
 │   ├── core/                # 协议核心（无 DOM 依赖，可单测）
 │   │   ├── src/crypto/      # HKDF、AES-GCM 分片、SAS、增量 SHA-256
@@ -20,11 +21,11 @@ cross-file/
 │   │   ├── src/transfer/    # 分片器、流控、队列、续传 bitmap
 │   │   ├── src/capability/  # 能力检测 + 阈值表
 │   │   └── src/rtc/         # PeerConnection 封装、ICE 路径识别、TURN 配置
-│   ├── signaling/           # Node 22 + ws；内存房间、限流、TURN 凭据签发
 │   └── ui/                  # 共享 React 组件（房间页、队列、进度、错误）
 ├── infra/
-│   ├── docker-compose.yml   # signaling + coturn
-│   ├── coturn/turnserver.conf
+│   ├── docker-compose.yml   # 单个 Go signaling 服务（内嵌 TURN）
+│   ├── signaling/Dockerfile # Go 多阶段构建（Vite 构建 → 静态二进制 → distroless）
+│   ├── pm2/                 # PM2 ecosystem（interpreter: none）
 │   └── deploy/              # 官方实例部署脚本
 ├── tests/
 │   ├── e2e/                 # Playwright 双上下文，真实文件传输
@@ -52,8 +53,8 @@ cross-file/
 | 状态 | Zustand（轻） | 房间/队列状态简单，无需重型框架 |
 | 单测 | Vitest | 与 Vite 同体系 |
 | E2E | Playwright（Chromium/WebKit/Firefox 三引擎） | 真实浏览器覆盖 Safari 内核；可驱动双端 |
-| 信令 | Node 22 + `ws`，Docker 单镜像 | 部署简单、团队熟悉；无数据库 |
-| TURN | coturn（Docker）+ `static-auth-secret` 短凭据 | 成熟、可自托管、支持 ephemeral 凭据 |
+| 信令 | **Go 1.23 单二进制**（`net/http` + gorilla/websocket；静态链接，内嵌 Web 与 TURN） | 一个进程一个文件，部署简单；无数据库；内存房间 |
+| TURN | **进程内 pion/turn** + `static-auth-secret` 短凭据 | 不再需要单独的 coturn 容器；与信令同进程，凭据算法不变 |
 | 桌面/手机壳 | Tauri 2（Rust 只写壳层胶水） | 体积小、复用 web 代码、官方支持 iOS/Android |
 | 加密 | WebCrypto AES-256-GCM；增量哈希用 `@noble/hashes` | WebCrypto 无流式摘要，noble 补位 |
 | 保存层 | 原生直写 / 文件系统 API（Chromium）/ Service Worker 流式下载（Safari 15.4+，自研）/ Blob 兜底 | 各浏览器写盘能力差异大，统一抽象成 sink |
@@ -67,7 +68,7 @@ cross-file/
 
 ### M0 — 骨架联调（≈2 天）
 - monorepo、lint/format、CI（typecheck + vitest）。
-- `signaling` 最小版：`create / join / approve / signal` 透传，内存房间。
+- `signaling` 最小版（现为 `apps/signaling-go`）：`create / join / approve / signal` 透传，内存房间。
 - `core` 最小版：roomId/roomKey 生成、QR 链接生成、PeerConnection 建连、`data` 通道。
 - `web` 两个页面：`/` 建房（显示二维码）、`/r/:id` 加入（自动建连）。
 - **验收**：同一台机器两个 Chrome 标签页互传 10MB，哈希一致。
@@ -77,7 +78,7 @@ cross-file/
 - 能力握手 + 阈值表（先接 §5 初值）。
 - 续传：断流检测、bitmap、60 s 重连。
 - 全文件 SHA-256 校验、错误码与 UI 文案。
-- 本地 coturn（docker-compose）跑通中继路径；`getStats` 识别路径标签。
+- 内嵌 TURN（进程内）跑通中继路径；`getStats` 识别路径标签。
 - **验收**：AC1、AC2、AC3、AC7、AC8 全绿（Chromium↔Chromium）。
 
 ### M2 — 三端壳 + 保存路径（≈4–6 天）
@@ -94,7 +95,7 @@ cross-file/
 - **验收**：AC5、AC6 + 手工走查全流程。
 
 ### M4 — 发布与自托管（≈2–3 天）
-- `docker-compose` 一键自托管（signaling + coturn + 反代示例）。
+- `docker-compose` 一键自托管（单个 Go 服务 + 反代示例）。
 - 官方实例部署（域名、TLS、限流、TURN 配额）。
 - 隐私说明页、README、自托管文档、许可证文件。
 - 发布验收：在官方实例上跑 AC1–AC3 + AC8 审计。
@@ -109,11 +110,11 @@ cross-file/
 |---|---|
 | 浏览器 | Chrome、Edge、Safari 27(桌面+iOS)、Firefox、鸿蒙 ArkWeb/华为浏览器 |
 | 壳 | 无壳（Web）、桌面壳（Win/macOS/Linux）、手机壳（iOS/Android） |
-| 网络 | 同网直连、跨网打洞、仅中继（本地 coturn）、弱网（netem 丢包 1%/延迟 80ms）、断流重连 |
+| 网络 | 同网直连、跨网打洞、仅中继（进程内 TURN）、弱网（netem 丢包 1%/延迟 80ms）、断流重连 |
 | 文件 | 10MB、100MB、300MB、500MB；单文件、多文件；中文/emoji 文件名 |
 | 场景 | 单成员、多成员顺序、加入审批、移除成员、房间过期、管理员崩溃 |
 
-自动化：Playwright 双上下文跑 AC1/AC3/AC5/AC6；AC2/AC8 在 CI 里用 docker-compose 起 coturn + strace 审计；性能脚本输出吞吐表格留档。
+自动化：Playwright 双上下文跑 AC1/AC3/AC5/AC6；AC2 用进程内 TURN、AC8 用 strace + 只读 Go 镜像审计（CI `e2e`/`zero-storage`/`zero-storage-container`）；性能脚本输出吞吐表格留档。
 
 ## 5. 风险清单
 
@@ -131,7 +132,7 @@ cross-file/
 
 ## 6. 需要你确认的事项（同 `01-design.md` §10）
 
-1. 技术栈：TS + React/Vite + Node/ws + Tauri 2 + coturn + MIT。
+1. 技术栈：TS + React/Vite + Go 单二进制（内嵌 TURN）+ Tauri 2 + MIT。
 2. 产品名：CrossFile 代号 or 现在定名。
 3. iOS 上架有无 Apple 开发者账号；没有的话手机端 v1 先出 Android + iOS 开发版。
 4. 官方实例先本机 docker、M4 再上公网域名，是否 OK。
@@ -140,6 +141,6 @@ cross-file/
 ## 7. 开工顺序（确认后执行）
 
 1. 建仓 + 工具链 + CI。
-2. `packages/signaling` 最小实现 + `packages/core` 信令封装。
+2. `apps/signaling-go` 最小实现 + `packages/core` 信令封装。
 3. `apps/web` 建房/加入两页 + PeerConnection 建连（M0 demo）。
 4. 进入 M1 协议核心。

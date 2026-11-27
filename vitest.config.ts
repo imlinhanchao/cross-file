@@ -17,8 +17,8 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       // docs/01 §8 / plan DoD: the protocol core must stay above 80% line coverage.
-      // The signaling server is exercised by integration tests and the container audit
-      // instead of a percentage target (much of it is I/O and timer wiring).
+      // The Go signaling server lives outside the TypeScript workspace; it is covered by
+      // `go test` and the zero-storage/e2e jobs in CI, not by this coverage target.
       include: ["packages/core/src/**/*.ts"],
       // rtc.ts is browser WebRTC glue exercised by the Playwright suite; index.ts is a barrel.
       exclude: [

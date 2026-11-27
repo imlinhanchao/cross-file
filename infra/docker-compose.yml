@@ -1,17 +1,15 @@
-# CrossFile self-hosting: signaling + coturn, one .env, no volumes, no database (docs/02 §7).
+# CrossFile self-hosting: ONE container, one static Go binary serving the web app, `/v1/ws`
+# and an in-process TURN relay (docs/02 §7, docs/self-host.md).
 #
-#   cp infra/.env.example infra/.env    # then edit TURN_SECRET / TURN_URIS / PUBLIC_HOST
+#   cp infra/.env.example infra/.env    # then edit TURN_SECRET / TURN_URIS / TURN_EXTERNAL_IP
 #   docker compose -f infra/docker-compose.yml up -d --build
 #   docker compose -f infra/docker-compose.yml ps
 #   docker compose -f infra/docker-compose.yml logs signaling
 #   docker compose -f infra/docker-compose.yml down -v
 #
-# Everything the signaling container might persist lives in RAM (rooms, rate-limit counters).
-# The container itself runs with a read-only rootfs and a non-root user; there is no volume.
-#
-# For a local relay test (browser on the same machine), also load the host-network override so
-# TURN relay candidates carry the host's address:
-#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.hostnet.yml up -d --build
+# There is no coturn service and no Node runtime: the binary runs the TURN listener itself.
+# Everything it might persist lives in RAM (rooms, rate-limit counters); the container runs with
+# a read-only rootfs and the distroless non-root user, and has no volume.
 name: crossfile
 
 services:
@@ -25,43 +23,38 @@ services:
     image: ${SIGNALING_IMAGE:-crossfile/signaling:local}
     restart: unless-stopped
     read_only: true
-    user: "1000:1000"
-    init: true
+    # distroless/static `nonroot` (uid/gid 65532); the process never writes.
+    # No `init: true`: the Go binary is PID 1, handles SIGTERM itself and spawns no children,
+    # so no injected docker-init file is needed (this also keeps `docker diff` empty for the
+    # zero-storage audit).
+    user: "65532:65532"
     environment:
       PORT: "8787"
       # Must bind 0.0.0.0 inside the container: a published port cannot reach 127.0.0.1.
       HOST: "0.0.0.0"
-      # docs/02 §6.7: empty TURN_URIS means "no TURN offered"; credentials are then omitted.
+      # docs/02 §6.7: empty TURN_URIS means "no TURN offered". The in-process TURN listener
+      # starts only when TURN_URIS and TURN_SECRET are BOTH non-empty (same gate as the old
+      # Node server); TURN_EXTERNAL_IP is required only then.
       TURN_URIS: ${TURN_URIS:-}
-      TURN_SECRET: ${TURN_SECRET:?set TURN_SECRET in infra/.env (cp infra/.env.example infra/.env)}
-      # Go single binary (in-process TURN): the relay listener needs the address clients reach
-      # it on, and the tuning knobs are optional. The Node server ignores these variables.
-      # Empty values are treated as unset by both servers.
+      TURN_SECRET: ${TURN_SECRET:-}
+      # Address that TURN relay candidates advertise: the host's public IPv4 on a VPS,
+      # 127.0.0.1 for two browsers on this machine, the LAN IP for a phone on the same Wi-Fi.
       TURN_EXTERNAL_IP: ${TURN_EXTERNAL_IP:-}
-      TURN_LISTEN_PORT: ${TURN_LISTEN_PORT:-}
-      TURN_MIN_PORT: ${TURN_MIN_PORT:-}
-      TURN_MAX_PORT: ${TURN_MAX_PORT:-}
+      # Inside-container listener; the published host port must stay equal to it.
+      TURN_LISTEN_PORT: "3478"
+      TURN_MIN_PORT: ${TURN_MIN_PORT:-49160}
+      TURN_MAX_PORT: ${TURN_MAX_PORT:-49200}
       # Room capacity excluding the admin (docs/01 D6); empty means the server default (4).
       MAX_MEMBERS: ${MAX_MEMBERS:-}
-      NODE_ENV: production
     ports:
       - "${SIGNAL_BIND:-0.0.0.0}:${SIGNAL_PORT:-8788}:8787"
-    healthcheck:
-      # The image has no curl/wget; Node 22 ships a global WebSocket. A completed upgrade on
-      # /v1/ws is enough to prove the listener is serving (no message is sent or logged).
-      test:
-        - CMD
-        - node
-        - -e
-        - >-
-          const ws = new WebSocket("ws://127.0.0.1:8787/v1/ws");
-          const timer = setTimeout(() => process.exit(1), 3000);
-          ws.onopen = () => { clearTimeout(timer); ws.close(); process.exit(0); };
-          ws.onerror = () => { clearTimeout(timer); process.exit(1); };
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
+      # TURN listener + relay allocation range. Relay ports are advertised to browsers, so the
+      # published range must equal the container's TURN_MIN_PORT/TURN_MAX_PORT.
+      - "${TURN_BIND:-0.0.0.0}:${TURN_PORT:-3478}:3478/tcp"
+      - "${TURN_BIND:-0.0.0.0}:${TURN_PORT:-3478}:3478/udp"
+      - "${TURN_BIND:-0.0.0.0}:${TURN_MIN_PORT:-49160}-${TURN_MAX_PORT:-49200}:${TURN_MIN_PORT:-49160}-${TURN_MAX_PORT:-49200}/udp"
+    # No healthcheck: the runtime image is distroless (no shell, no curl/node). Readiness is
+    # the `/v1/ws` listener; the deploy workflow probes `http://127.0.0.1:$PORT/` from the host.
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -74,45 +67,3 @@ services:
         max-size: "1m"
         max-file: "1"
     stop_grace_period: 10s
-
-  coturn:
-    image: coturn/coturn:4.19.2-alpine
-    restart: unless-stopped
-    # docs/02 §6.7: coturn static-auth-secret mode matches packages/signaling/src/turn.ts
-    #   username   = "<expiryEpoch>:<peerId>"
-    #   credential = base64(HMAC-SHA1(TURN_SECRET, username))
-    #
-    # Notes for coturn 4.19 (the pinned image):
-    #  - the admin CLI is off by default, so the old `--no-cli` flag is gone (it is deprecated and
-    #    logs an ERROR); nothing to add here;
-    #  - DTLS is off by default, so the old `--no-dtls` flag no longer exists;
-    #  - loopback peers are not blocked explicitly: `--allow-loopback-peers` stays off for a public
-    #    instance (it would let relayed peers reach the host's loopback services). Local relay tests
-    #    do not need it — browsers present their LAN address as the peer candidate.
-    command:
-      - --listening-port=3478
-      - --static-auth-secret=${TURN_SECRET:?set TURN_SECRET in infra/.env (cp infra/.env.example infra/.env)}
-      - --realm=crossfile
-      - --no-multicast-peers
-      - --fingerprint
-      # No TLS/DTLS listener: TLS termination is the reverse proxy's job; TURN stays on 3478.
-      - --no-tls
-      # Behind Docker's bridge the relay would advertise the container address; tell coturn which
-      # address clients actually reach. Set TURN_EXTERNAL_IP to the host's public/LAN IPv4.
-      - --external-ip=${TURN_EXTERNAL_IP:-127.0.0.1}
-      - --min-port=${COTURN_MIN_PORT:-49160}
-      - --max-port=${COTURN_MAX_PORT:-49200}
-      # Lowest verbosity: no -v/-V flags; all logs to stdout, nothing to disk.
-      - --log-file=stdout
-      - --simple-log
-    ports:
-      - "${COTURN_BIND:-0.0.0.0}:${COTURN_PORT:-3478}:3478/tcp"
-      - "${COTURN_BIND:-0.0.0.0}:${COTURN_PORT:-3478}:3478/udp"
-      # Relay allocation range; keep it equal to the container's --min-port/--max-port.
-      - "${COTURN_BIND:-0.0.0.0}:${COTURN_MIN_PORT:-49160}-${COTURN_MAX_PORT:-49200}:${COTURN_MIN_PORT:-49160}-${COTURN_MAX_PORT:-49200}/udp"
-    # No volumes: coturn writes no persistent state in this configuration.
-    logging:
-      driver: json-file
-      options:
-        max-size: "1m"
-        max-file: "1"

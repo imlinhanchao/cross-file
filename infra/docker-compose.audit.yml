@@ -1,0 +1,12 @@
+# Audit-only compose override (tests/audit/zero-storage.sh --container).
+#
+# The zero-storage audit runs the signaling service with TURN OFF (TURN_URIS empty), so it must
+# not publish the TURN listener/relay ports: mapping a 41-port UDP range can collide with host
+# services or the ephemeral port range and is unnecessary for the audit. Only the signalling
+# port is published, on loopback. `!override` replaces the base `ports` list (compose >= 2.24).
+#
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.audit.yml up -d signaling
+services:
+  signaling:
+    ports: !override
+      - "${SIGNAL_BIND:-127.0.0.1}:${SIGNAL_PORT:-8788}:8787"

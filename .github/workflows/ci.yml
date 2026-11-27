@@ -3,15 +3,14 @@ name: ci
 # Every push/PR runs the same matrix; release.yml reuses it via `workflow_call` before
 # publishing. Jobs run in parallel where they can:
 #
-#   gates            typecheck · unit · design · web build
-#   e2e              Playwright against the Node signaling server (until cutover is accepted)
-#   zero-storage     docker-compose read-only audit of the Node bundle (until cutover)
-#   go               Go server: gofmt · go vet · go test · static binary build
-#   e2e-go           Playwright with E2E_SERVER=go (the Go binary answers /v1/ws)
-#   zero-storage-go  strace audit of the Go binary (no writable file, one startup line)
+#   gates                   typecheck · unit · design · web build
+#   go                      Go server: gofmt · go vet · go test · static binary build
+#   e2e                     Playwright (chromium) against the Go single binary
+#   zero-storage            strace audit of the Go binary (no writable file, one startup line)
+#   zero-storage-container  read-only Go image audit (docker compose, same 8-step session)
 #
-# The Node e2e/zero-storage jobs stay until the Go production cutover is accepted; adding the
-# Go jobs must not slow the existing ones down (they are independent, no `needs`).
+# The Node signaling implementation was removed (docs/05 §7.5): there is no Node server to
+# test, so no Node e2e/zero-storage job remains. The Go binary is the only signaling server.
 
 on:
   push:
@@ -45,40 +44,6 @@ jobs:
       - run: pnpm gate:contrast
       - run: pnpm gate:colors
       - run: pnpm --filter @crossfile/web build
-
-  e2e:
-    name: playwright (chromium)
-    needs: gates
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: corepack enable
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install --with-deps chromium
-      - run: pnpm e2e
-        env:
-          CI: "1"
-
-  zero-storage:
-    name: zero-storage audit (container)
-    needs: gates
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: corepack enable
-      - run: pnpm install --frozen-lockfile
-      - run: docker compose -f infra/docker-compose.yml build signaling
-        env:
-          TURN_SECRET: ci-turn-secret
-      - run: SKIP_BUILD=1 bash tests/audit/zero-storage.sh --container
-        env:
-          TURN_SECRET: ci-turn-secret
 
   go:
     name: go (fmt · vet · test · build)
@@ -114,8 +79,8 @@ jobs:
           file apps/signaling-go/bin/crossfile-signaling
           ls -lh apps/signaling-go/bin/crossfile-signaling
 
-  e2e-go:
-    name: playwright go signaling (chromium)
+  e2e:
+    name: playwright (chromium, go signaling)
     needs: [go, gates]
     runs-on: ubuntu-latest
     steps:
@@ -132,11 +97,11 @@ jobs:
       - run: pnpm exec playwright install --with-deps chromium
       # webServer #1 in playwright.config.ts builds the binary with SKIP_WEB=1 and starts it on
       # the signaling port; Vite (webServer #2) serves the web app unchanged.
-      - run: E2E_SERVER=go pnpm e2e
+      - run: pnpm e2e
         env:
           CI: "1"
 
-  zero-storage-go:
+  zero-storage:
     name: zero-storage audit (go binary)
     needs: go
     runs-on: ubuntu-latest
@@ -153,4 +118,20 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: install strace if missing
         run: command -v strace >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y strace)
-      - run: bash tests/audit/zero-storage.sh --go
+      - run: bash tests/audit/zero-storage.sh
+
+  zero-storage-container:
+    name: zero-storage audit (go image)
+    needs: gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      # The image builds the web app and the Go binary inside Docker; the audit then starts the
+      # service with a read-only rootfs, runs the real 8-step session and checks `docker diff`.
+      - run: docker compose -f infra/docker-compose.yml build signaling
+      - run: SKIP_BUILD=1 bash tests/audit/zero-storage.sh --container

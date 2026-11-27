@@ -23,6 +23,7 @@
     "gate:contrast": "node design/tools/check-contrast.mjs",
     "gate:colors": "bash scripts/check-hardcoded-colors.sh",
     "gate": "pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm gate:contrast && pnpm gate:colors",
+    "verify": "pnpm gate && pnpm e2e && bash tests/audit/zero-storage.sh",
     "build:desktop": "pnpm --filter @crossfile/desktop build",
     "dev:desktop-electron": "electron apps/desktop-electron"
   },

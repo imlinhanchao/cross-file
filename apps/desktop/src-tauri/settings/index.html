@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>服务器设置 · CrossFile</title>
+    <link rel="stylesheet" href="settings.css" />
+  </head>
+  <body>
+    <main class="page" aria-labelledby="settings-title">
+      <header class="head">
+        <h1 id="settings-title">服务器设置</h1>
+        <p class="lede">
+          CrossFile
+          需要一个信令服务器。默认使用官方实例；自托管时填写你自己的服务器地址。
+        </p>
+      </header>
+
+      <section class="card" aria-labelledby="current-title">
+        <h2 id="current-title">当前服务器</h2>
+        <p class="current__origin" id="current-origin">读取中…</p>
+        <p class="current__meta" id="current-meta"></p>
+        <p class="current__signal" id="current-signal"></p>
+      </section>
+
+      <p class="banner" id="banner-first-run" hidden>
+        首次使用：请确认服务器地址（已填好官方实例，可直接保存）。
+      </p>
+      <p class="banner" id="banner-env" hidden>
+        当前服务器由环境变量指定（CROSSFILE_SIGNALING_URL），应用内保存不会覆盖它。
+      </p>
+
+      <form id="server-form" novalidate>
+        <div class="field">
+          <label class="field__label" for="server-origin">服务器地址</label>
+          <input
+            class="field__input"
+            id="server-origin"
+            name="origin"
+            type="url"
+            inputmode="url"
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false"
+            aria-describedby="server-hint server-error"
+            placeholder="https://file.time-pack.com"
+            required
+          />
+          <p class="field__hint" id="server-hint">
+            填写服务器主页地址即可，例如
+            https://file.time-pack.com；本地开发可用
+            http://127.0.0.1:8788。也可以直接粘贴 wss://…/v1/ws，路径会被忽略。
+          </p>
+          <p class="field__error" id="server-error" role="alert" hidden></p>
+        </div>
+
+        <div class="actions">
+          <button class="btn btn--primary" id="save" type="submit">
+            保存并连接
+          </button>
+          <button class="btn" id="test" type="button">测试连接</button>
+          <button
+            class="btn"
+            id="reset"
+            type="button"
+            aria-label="恢复官方实例 https://file.time-pack.com"
+          >
+            恢复官方实例
+          </button>
+          <button class="btn btn--quiet" id="cancel" type="button">取消</button>
+        </div>
+        <p class="status" id="status" role="status" aria-live="polite"></p>
+      </form>
+
+      <p class="foot">
+        官方实例：<code>https://file.time-pack.com</code> · 信令地址：<code
+          >wss://file.time-pack.com/v1/ws</code
+        >
+      </p>
+    </main>
+    <script src="settings.js"></script>
+  </body>
+</html>

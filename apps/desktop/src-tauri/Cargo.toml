@@ -13,10 +13,13 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 base64 = "0.22"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 # The shell only needs the core runtime; native save/menu/close logic is hand-written.
 tauri = { version = "2", features = [] }
 # External links from the native help menu open in the system browser.
 tauri-plugin-opener = "2"
+# Server-address validation / normalisation in the settings page.
+url = "2"
 
 [profile.release]
 codegen-units = 1

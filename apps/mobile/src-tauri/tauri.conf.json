@@ -17,7 +17,8 @@
         "title": "CrossFile",
         "width": 390,
         "height": 844,
-        "resizable": false
+        "resizable": false,
+        "visible": false
       }
     ],
     "security": {

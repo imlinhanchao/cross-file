@@ -7,6 +7,7 @@
   "scripts": {
     "start": "electron .",
     "start:no-sandbox": "electron . --no-sandbox",
+    "check": "node --check main.cjs && node --check preload.cjs && node --check server-config.cjs && node --check settings.js && node --test server-config.test.cjs",
     "package:linux": "electron-builder --linux AppImage --config electron-builder.yml"
   },
   "devDependencies": {

@@ -3,12 +3,15 @@
 // Responsibilities kept on the native side:
 //   1. native save sink for large files (AC9): open / random-offset write / close / abort
 //   2. "transfering, do not close" guard on the window close button
-//   3. native menu (房间 / 编辑 / 帮助) with external help links
+//   3. native menu (房间 / 编辑 / 设置 / 帮助) with external help links
+//   4. server-address settings page (self-hosted instances), see server_config.rs
 //
 // The web app talks to these through Tauri IPC (`window.__TAURI__.core.invoke`
 // because `app.withGlobalTauri` is on, or `@tauri-apps/api/core` if it is added).
 // See docs/desktop.md for the JS-side contract.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod server_config;
 
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
@@ -17,18 +20,23 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
-use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::{Emitter, Manager, State, Window, WindowEvent};
+use tauri::menu::{Menu, MenuEvent, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu};
+use tauri::webview::{PageLoadEvent, PageLoadPayload};
+use tauri::{AppHandle, Emitter, Manager, State, Webview, Window, WindowEvent};
 use tauri_plugin_opener::OpenerExt;
+use url::Url;
+
+use server_config::{
+    normalize_server_input, ServerSettingsSnapshot, OFFICIAL_ORIGIN, OFFICIAL_SIGNALING_URL,
+};
 
 /// Official instance doubles as the project home until a marketing site exists.
 const DEFAULT_HOMEPAGE_URL: &str = "https://file.time-pack.com/";
 /// The privacy statement is a route in the web app (`apps/web/src/pages/PrivacyPage.tsx`).
 const DEFAULT_PRIVACY_URL: &str = "https://file.time-pack.com/privacy";
-
-/// Default signaling endpoint for a packaged desktop build; overridable at runtime
-/// with `CROSSFILE_SIGNALING_URL` (self-hosted instance, docs/02 §7).
-const DEFAULT_SIGNALING_URL: &str = "ws://127.0.0.1:8788/v1/ws";
+/// URI scheme serving the shell-owned settings page (local origin -> IPC allowed).
+const SETTINGS_SCHEME: &str = "crossfile-settings";
+const SETTINGS_MENU_ID: &str = "server-settings";
 
 #[derive(serde::Serialize)]
 struct ShellConfig {
@@ -44,13 +52,11 @@ struct ShellConfig {
 /// The web app calls this at connect time so a packaged shell can point at a
 /// self-hosted signaling server without rebuilding the frontend.
 #[tauri::command]
-fn get_shell_config() -> ShellConfig {
-    let signaling_url = std::env::var("CROSSFILE_SIGNALING_URL")
-        .unwrap_or_else(|_| DEFAULT_SIGNALING_URL.to_string());
+fn get_shell_config(app: AppHandle) -> ShellConfig {
     ShellConfig {
         shell: "desktop",
         platform: std::env::consts::OS,
-        signaling_url,
+        signaling_url: server_config::effective_choice(&app).signaling_url,
         save_strategy: "native",
         debug_auto_accept: cfg!(debug_assertions)
             && std::env::var("CROSSFILE_DEV_AUTOACCEPT").is_ok_and(|value| value == "1"),
@@ -73,6 +79,15 @@ struct AppState {
     transfer_active: AtomicBool,
     next_handle: AtomicU64,
     saves: Mutex<HashMap<u64, SaveHandle>>,
+}
+
+/// Shell UI state for the settings page round-trip.
+#[derive(Default)]
+struct ShellUiState {
+    /// Last URL of the bundled web app page (where the settings page returns to).
+    app_url: Mutex<Option<String>>,
+    /// True until the first server choice is saved: 取消/关闭 exits the app.
+    first_run: AtomicBool,
 }
 
 // ---------------------------------------------------------------------------
@@ -227,13 +242,245 @@ async fn save_abort(state: State<'_, AppState>, handle: u64) -> Result<(), Strin
 }
 
 // ---------------------------------------------------------------------------
+// Server settings (see server_config.rs)
+// ---------------------------------------------------------------------------
+
+fn transfer_active(app: &AppHandle) -> bool {
+    app.state::<AppState>()
+        .transfer_active
+        .load(Ordering::SeqCst)
+}
+
+fn is_settings_url(url: &Url) -> bool {
+    url.scheme() == SETTINGS_SCHEME
+        || url.host_str() == Some(&format!("{SETTINGS_SCHEME}.localhost"))
+}
+
+/// URL of the shell-served settings page. On Windows/Android custom protocols
+/// are exposed as `http://<scheme>.localhost/…`; wry maps it back to the scheme.
+fn settings_page_url() -> Url {
+    #[cfg(any(windows, target_os = "android"))]
+    let raw = format!("http://{SETTINGS_SCHEME}.localhost/index.html");
+    #[cfg(not(any(windows, target_os = "android")))]
+    let raw = format!("{SETTINGS_SCHEME}://localhost/index.html");
+    Url::parse(&raw).expect("static settings URL is valid")
+}
+
+/// Serve the settings page assets embedded in the binary (no files on disk).
+fn settings_asset(path: &str) -> Option<(&'static str, &'static str)> {
+    match path {
+        "/" | "/index.html" => Some((
+            "text/html; charset=utf-8",
+            include_str!("../settings/index.html"),
+        )),
+        "/settings.css" => Some((
+            "text/css; charset=utf-8",
+            include_str!("../settings/settings.css"),
+        )),
+        "/settings.js" => Some((
+            "text/javascript; charset=utf-8",
+            include_str!("../settings/settings.js"),
+        )),
+        _ => None,
+    }
+}
+
+fn settings_protocol_response(
+    _context: tauri::UriSchemeContext<'_, tauri::Wry>,
+    request: tauri::http::Request<Vec<u8>>,
+) -> tauri::http::Response<Vec<u8>> {
+    use tauri::http::{header, Response, StatusCode};
+    let path = request.uri().path().to_string();
+    match settings_asset(&path) {
+        Some((mime, body)) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, mime)
+            .header(header::CACHE_CONTROL, "no-store")
+            .body(body.as_bytes().to_vec())
+            .expect("valid settings response"),
+        None => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+            .body("not found".as_bytes().to_vec())
+            .expect("valid not-found response"),
+    }
+}
+
+/// The web app resolves its signaling endpoint from this injected global first
+/// (then `get_shell_config`, then same-origin). Injecting it makes the saved
+/// choice authoritative, exactly like the mobile shell does.
+fn shell_init_script(app: &AppHandle) -> String {
+    shell_init_script_for(&server_config::effective_choice(app).signaling_url)
+}
+
+fn shell_init_script_for(signaling_url: &str) -> String {
+    let url = serde_json::to_string(signaling_url)
+        .unwrap_or_else(|_| format!("\"{OFFICIAL_SIGNALING_URL}\""));
+    format!(
+        r#"(function () {{
+  window.__CROSSFILE_NATIVE__ = true;
+  if (!window.__CROSSFILE_SIGNALING_URL__) {{
+    window.__CROSSFILE_SIGNALING_URL__ = {url};
+  }}
+}})();"#
+    )
+}
+
+fn server_settings_snapshot(app: &AppHandle) -> ServerSettingsSnapshot {
+    let shell = app.state::<ShellUiState>();
+    ServerSettingsSnapshot::new(
+        &server_config::effective_choice(app),
+        shell.first_run.load(Ordering::SeqCst),
+        transfer_active(app),
+    )
+}
+
+fn remember_app_url(app: &AppHandle, url: &Url) {
+    if is_settings_url(url) {
+        return;
+    }
+    if let Ok(mut slot) = app.state::<ShellUiState>().app_url.lock() {
+        *slot = Some(url.to_string());
+    }
+}
+
+fn navigate_to_settings(app: &AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "找不到主窗口".to_string())?;
+    let current = window.url().ok();
+    if let Some(current) = current {
+        remember_app_url(app, &current);
+    }
+    window
+        .navigate(settings_page_url())
+        .map_err(|error| format!("无法打开服务器设置：{error}"))
+}
+
+fn return_to_app(app: &AppHandle) -> Result<bool, String> {
+    if transfer_active(app) {
+        return Ok(false);
+    }
+    let target = app
+        .state::<ShellUiState>()
+        .app_url
+        .lock()
+        .ok()
+        .and_then(|slot| slot.clone());
+    let Some(target) = target else {
+        return Err("找不到应用页面地址，请重新打开应用".to_string());
+    };
+    let url = Url::parse(&target).map_err(|error| format!("应用页面地址无效：{error}"))?;
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "找不到主窗口".to_string())?;
+    window
+        .navigate(url)
+        .map_err(|error| format!("无法返回应用页面：{error}"))?;
+    Ok(true)
+}
+
+fn open_settings(app: &AppHandle) -> Result<(), String> {
+    if transfer_active(app) {
+        return Err("正在传输文件，传输结束后才能打开服务器设置".to_string());
+    }
+    navigate_to_settings(app)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NormalizedServer {
+    origin: String,
+    signaling_url: String,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SettingsMutation {
+    settings: ServerSettingsSnapshot,
+    applied: bool,
+    message: String,
+}
+
+#[tauri::command]
+fn get_server_settings(app: AppHandle) -> ServerSettingsSnapshot {
+    server_settings_snapshot(&app)
+}
+
+#[tauri::command]
+fn normalize_server_origin(origin: String) -> Result<NormalizedServer, String> {
+    let (origin, signaling_url) = normalize_server_input(&origin)?;
+    Ok(NormalizedServer {
+        origin,
+        signaling_url,
+    })
+}
+
+#[tauri::command]
+fn open_server_settings(app: AppHandle) -> Result<(), String> {
+    open_settings(&app)
+}
+
+#[tauri::command]
+fn save_server_settings(app: AppHandle, origin: String) -> Result<SettingsMutation, String> {
+    let path = server_config::settings_path(&app)?;
+    server_config::save_choice(&path, &origin)?;
+    app.state::<ShellUiState>()
+        .first_run
+        .store(false, Ordering::SeqCst);
+    let applied = return_to_app(&app)?;
+    Ok(SettingsMutation {
+        settings: server_settings_snapshot(&app),
+        applied,
+        message: if applied {
+            "已保存，正在连接…".to_string()
+        } else {
+            "已保存；当前正在传输文件，重新打开应用后生效。".to_string()
+        },
+    })
+}
+
+#[tauri::command]
+fn reset_server_settings(app: AppHandle) -> Result<SettingsMutation, String> {
+    let path = server_config::settings_path(&app)?;
+    server_config::clear_saved_choice(&path)?;
+    app.state::<ShellUiState>()
+        .first_run
+        .store(false, Ordering::SeqCst);
+    let applied = return_to_app(&app)?;
+    Ok(SettingsMutation {
+        settings: server_settings_snapshot(&app),
+        applied,
+        message: if applied {
+            format!("已恢复官方实例 {OFFICIAL_ORIGIN}，正在连接…")
+        } else {
+            "已恢复官方实例；当前正在传输文件，重新打开应用后生效。".to_string()
+        },
+    })
+}
+
+#[tauri::command]
+fn close_server_settings(app: AppHandle) -> Result<(), String> {
+    if app.state::<ShellUiState>().first_run.load(Ordering::SeqCst) {
+        app.exit(0);
+        return Ok(());
+    }
+    return_to_app(&app).map(|_| ())
+}
+
+// ---------------------------------------------------------------------------
 // Close protection
 // ---------------------------------------------------------------------------
 
 /// Web app tells the shell whether bytes are in flight.
 #[tauri::command]
-fn set_transfer_active(state: State<'_, AppState>, active: bool) -> Result<(), String> {
+fn set_transfer_active(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    active: bool,
+) -> Result<(), String> {
     state.transfer_active.store(active, Ordering::SeqCst);
+    set_settings_menu_enabled(&app, !active);
     Ok(())
 }
 
@@ -274,8 +521,22 @@ fn request_quit(app: &tauri::AppHandle) {
     }
 }
 
+/// The settings page destroys the app page (and any running transfer), so its
+/// menu entry is disabled while bytes are in flight.
+fn set_settings_menu_enabled(app: &AppHandle, enabled: bool) {
+    let Some(menu) = app.menu() else {
+        return;
+    };
+    let Some(MenuItemKind::Submenu(submenu)) = menu.get("settings-menu") else {
+        return;
+    };
+    if let Some(MenuItemKind::MenuItem(item)) = submenu.get(SETTINGS_MENU_ID) {
+        let _ = item.set_enabled(enabled);
+    }
+}
+
 // ---------------------------------------------------------------------------
-// Native menu: 房间 / 编辑 / 帮助
+// Native menu: 房间 / 编辑 / 设置 / 帮助
 // ---------------------------------------------------------------------------
 
 fn help_url(env_key: &str, fallback: &str) -> String {
@@ -325,6 +586,17 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         ],
     )?;
 
+    // Self-hosted instances: open the shell-owned server-address page. The item
+    // is disabled while a transfer is active (set_settings_menu_enabled).
+    let server_settings = MenuItem::with_id(
+        app,
+        SETTINGS_MENU_ID,
+        "服务器地址…",
+        true,
+        Some("CmdOrCtrl+,"),
+    )?;
+    let settings = Submenu::with_items(app, "设置", true, &[&server_settings])?;
+
     let privacy = MenuItem::with_id(app, "privacy", "隐私说明", true, None::<&str>)?;
     let homepage = MenuItem::with_id(app, "homepage", "项目主页", true, None::<&str>)?;
     let help = Submenu::with_items(app, "帮助", true, &[&privacy, &homepage])?;
@@ -345,6 +617,7 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     }
     menu.append(&room)?;
     menu.append(&edit)?;
+    menu.append(&settings)?;
     menu.append(&help)?;
     Ok(menu)
 }
@@ -358,6 +631,11 @@ fn on_menu_event(app: &tauri::AppHandle, event: MenuEvent) {
                 let _ = window.emit("menu-action", id.to_string());
             }
         }
+        SETTINGS_MENU_ID => {
+            if let Err(error) = open_settings(app) {
+                eprintln!("[crossfile] 无法打开服务器设置：{error}");
+            }
+        }
         "privacy" => open_external(app, &help_url("CROSSFILE_PRIVACY_URL", DEFAULT_PRIVACY_URL)),
         "homepage" => open_external(
             app,
@@ -369,8 +647,53 @@ fn on_menu_event(app: &tauri::AppHandle, event: MenuEvent) {
 }
 
 // ---------------------------------------------------------------------------
+// Page loads: remember the app page URL and keep the debug diagnostics
+// ---------------------------------------------------------------------------
+
+fn on_page_load(webview: &Webview, payload: &PageLoadPayload<'_>) {
+    let started = payload.event() == PageLoadEvent::Started;
+    let url = payload.url().clone();
+    println!("[shell] page load start={} url={}", started, url);
+
+    if started {
+        // Remember where to return after the settings page.
+        remember_app_url(webview.app_handle(), &url);
+    }
+    if is_settings_url(&url) {
+        // Shell-owned page: no web-app diagnostics and no shell globals needed.
+        return;
+    }
+    if started {
+        // Install the shell globals (signaling URL, native flag) before the page
+        // scripts run; the web app reads them at connect time.
+        let _ = webview.eval(shell_init_script(webview.app_handle()));
+        // Install an error recorder before the page scripts run.
+        let _ = webview.eval(
+            "window.__cfErrors=[];window.addEventListener('error',function(e){window.__cfErrors.push(String(e.message))});window.addEventListener('unhandledrejection',function(e){window.__cfErrors.push('rej:'+String(e.reason))});",
+        );
+    } else {
+        // After load: prove JS/network work, expose mount state, and test WSS separately.
+        let _ = webview.eval(
+            "setTimeout(function(){var st=null;try{st=window.__crossfile&&window.__crossfile.snapshot?window.__crossfile.snapshot():null}catch(e){}var s={title:document.title,href:location.href,root:(document.getElementById('root')||{}).innerHTML?document.getElementById('root').innerHTML.length:0,hook:typeof window.__crossfile,phase:st&&st.phase,error:st&&st.error,hasKey:st&&st.hasKey,errors:(window.__cfErrors||[]).slice(-4)};fetch('https://room.net.time-pack.com/__report?tag=shell-probe&data='+encodeURIComponent(JSON.stringify(s))).catch(function(){})},3000);",
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
+
+/// Debug acceptance runs (docs/desktop.md §6) navigate the webview themselves, so
+/// the first-run settings page must not intercept them.
+#[cfg(debug_assertions)]
+fn dev_harness_skips_settings() -> bool {
+    std::env::var("CROSSFILE_DEV_JOIN").is_ok_and(|value| !value.trim().is_empty())
+}
+
+#[cfg(not(debug_assertions))]
+fn dev_harness_skips_settings() -> bool {
+    false
+}
 
 /// Debug-only acceptance harness: with CROSSFILE_DEV_JOIN set, the shell navigates
 /// the webview to that room link after load so an automated run can drive the real
@@ -393,24 +716,11 @@ fn main() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::default())
+        .manage(ShellUiState::default())
+        .register_uri_scheme_protocol(SETTINGS_SCHEME, settings_protocol_response)
         .menu(build_menu)
         .on_menu_event(on_menu_event)
-        .on_page_load(|webview, payload| {
-            // Debug aid for headless acceptance runs: prove what the webview actually loaded.
-            let started = payload.event() == tauri::webview::PageLoadEvent::Started;
-            println!("[shell] page load start={} url={}", started, payload.url());
-            if started {
-                // Install an error recorder before the page scripts run.
-                let _ = webview.eval(
-                    "window.__cfErrors=[];window.addEventListener('error',function(e){window.__cfErrors.push(String(e.message))});window.addEventListener('unhandledrejection',function(e){window.__cfErrors.push('rej:'+String(e.reason))});",
-                );
-            } else {
-                // After load: prove JS/network work, expose mount state, and test WSS separately.
-                let _ = webview.eval(
-                    "setTimeout(function(){var st=null;try{st=window.__crossfile&&window.__crossfile.snapshot?window.__crossfile.snapshot():null}catch(e){}var s={title:document.title,href:location.href,root:(document.getElementById('root')||{}).innerHTML?document.getElementById('root').innerHTML.length:0,hook:typeof window.__crossfile,phase:st&&st.phase,error:st&&st.error,hasKey:st&&st.hasKey,errors:(window.__cfErrors||[]).slice(-4)};fetch('https://room.net.time-pack.com/__report?tag=shell-probe&data='+encodeURIComponent(JSON.stringify(s))).catch(function(){})},3000);",
-                );
-            }
-        })
+        .on_page_load(on_page_load)
         .on_window_event(on_window_event)
         .invoke_handler(tauri::generate_handler![
             get_shell_config,
@@ -420,11 +730,37 @@ fn main() {
             save_write,
             save_close,
             save_abort,
-        ])
-        ;
-    #[cfg(debug_assertions)]
+            get_server_settings,
+            normalize_server_origin,
+            open_server_settings,
+            save_server_settings,
+            reset_server_settings,
+            close_server_settings,
+        ]);
     let builder = builder.setup(|app| {
+        // Main window starts hidden (tauri.conf.json "visible": false) so the
+        // settings page is the first thing a new user sees.
+        if let Some(window) = app.get_webview_window("main") {
+            if let Ok(url) = window.url() {
+                remember_app_url(&app.handle(), &url);
+            }
+        }
+        let first_run = !dev_harness_skips_settings() && server_config::is_first_run(&app.handle());
+        app.state::<ShellUiState>()
+            .first_run
+            .store(first_run, Ordering::SeqCst);
+        #[cfg(debug_assertions)]
         navigation_harness(app.handle().clone());
+        if first_run {
+            if let Err(error) = navigate_to_settings(&app.handle()) {
+                eprintln!("[crossfile] 无法打开服务器设置：{error}");
+            }
+        }
+        if let Some(window) = app.get_webview_window("main") {
+            if let Err(error) = window.show() {
+                eprintln!("[crossfile] 无法显示主窗口：{error}");
+            }
+        }
         Ok(())
     });
     builder
@@ -457,5 +793,59 @@ mod tests {
         File::create(&first).expect("first file");
         assert_eq!(unique_path(&dir, "a.bin"), dir.join("a (1).bin"));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn settings_page_url_matches_the_platform_origin() {
+        let url = settings_page_url();
+        #[cfg(any(windows, target_os = "android"))]
+        {
+            assert_eq!(url.scheme(), "http");
+            assert_eq!(url.host_str(), Some("crossfile-settings.localhost"));
+        }
+        #[cfg(not(any(windows, target_os = "android")))]
+        {
+            assert_eq!(url.scheme(), SETTINGS_SCHEME);
+        }
+        assert_eq!(url.path(), "/index.html");
+        assert!(is_settings_url(&url));
+    }
+
+    #[test]
+    fn settings_assets_are_embedded() {
+        let (mime, body) = settings_asset("/index.html").expect("index");
+        assert!(mime.starts_with("text/html"));
+        assert!(body.contains("服务器设置"));
+        assert_eq!(
+            settings_asset("/settings.css").expect("css").0,
+            "text/css; charset=utf-8"
+        );
+        assert_eq!(
+            settings_asset("/settings.js").expect("js").0,
+            "text/javascript; charset=utf-8"
+        );
+        assert!(settings_asset("/etc/passwd").is_none());
+        assert!(settings_asset("/../../main.rs").is_none());
+    }
+
+    #[test]
+    fn shell_init_script_contains_the_shell_globals_and_a_signaling_url() {
+        let script = shell_init_script_for("wss://files.example.com/v1/ws");
+        assert!(script.contains("__CROSSFILE_NATIVE__ = true"));
+        assert!(script.contains("__CROSSFILE_SIGNALING_URL__"));
+        assert!(script.contains("wss://files.example.com/v1/ws"));
+    }
+
+    #[test]
+    fn app_urls_are_not_mistaken_for_settings_urls() {
+        assert!(!is_settings_url(
+            &Url::parse("tauri://localhost/index.html").unwrap()
+        ));
+        assert!(!is_settings_url(
+            &Url::parse("http://tauri.localhost/index.html").unwrap()
+        ));
+        assert!(is_settings_url(
+            &Url::parse("crossfile-settings://localhost/index.html").unwrap()
+        ));
     }
 }

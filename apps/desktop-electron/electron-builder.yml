@@ -10,6 +10,10 @@ directories:
 files:
   - main.cjs
   - preload.cjs
+  - server-config.cjs
+  - settings.html
+  - settings.css
+  - settings.js
   - package.json
 asar: true
 executableName: crossfile-desktop

@@ -1,6 +1,6 @@
 {
   "name": "@crossfile/desktop",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "type": "module",
   "description": "CrossFile desktop shell (Tauri 2)",

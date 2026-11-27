@@ -21,6 +21,8 @@ export type Phase =
   | "transferring"
   | "paused"
   | "done"
+  /** the user (or the peer) cancelled a transfer: a normal end, never an error */
+  | "cancelled"
   | "error";
 
 /**
@@ -77,11 +79,24 @@ export interface TransferView {
   speedBps: number;
   /** waiting for the other direction of the same pair to finish */
   queued?: boolean;
+  /**
+   * Transfer ended without success. `local` = this device cancelled, `peer` =
+   * the other device cancelled. Never reported as `error` (docs/02 §10.2 note).
+   */
+  cancelled?: "local" | "peer";
+  /** the transfer failed (protocol/hash/IO error); the card offers 重试 */
+  failed?: boolean;
+  /** the controller still holds the files, so 重试 can re-send them */
+  canRetry?: boolean;
+  /** finished successfully: the card is a report, not an active transfer */
+  completed?: boolean;
 }
 
-/** One queued outgoing transfer for a pair (phase 1: at most one pair). */
+/** One queued outgoing transfer job for a pair. */
 export interface QueueView {
   peerId: string;
+  /** per-pair monotonic id: lets the UI cancel exactly this waiting job */
+  jobId: number;
   files: FileView[];
   totalBytes: number;
 }

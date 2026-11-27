@@ -22,6 +22,9 @@ import type { Caps } from "@crossfile/core";
 import { copy } from "@crossfile/ui";
 import type { FileView, IncomingView, ResultView, RiskView } from "../store.js";
 
+/** Who ended the transfer: this device's user or the sending peer (`cancel`). */
+export type ReceiverCancelSource = "local" | "peer";
+
 export interface ReceiverCallbacks {
   /** manifest arrived and consent is needed (or auto-accepted) */
   incoming(view: IncomingView): void;
@@ -34,6 +37,8 @@ export interface ReceiverCallbacks {
   finished(result: ResultView): void;
   /** the receiver declined / refused the manifest */
   declined(reason: string): void;
+  /** a side cancelled an accepted transfer (docs/02 §10.2 cancel note) */
+  cancelled(by: ReceiverCancelSource): void;
   failed(message: string, code?: string): void;
 }
 
@@ -146,7 +151,13 @@ export class ReceiverTransfer {
     this.opts.callbacks.incoming(view);
 
     const granted = this.opts.autoAccept() || (await this.opts.confirm(view));
-    if (!granted || this.closed) {
+    // The sender may have cancelled the manifest while the consent card was up:
+    // clean up silently instead of answering a transfer that no longer exists.
+    if (this.closed) {
+      this.finishSignal.resolve();
+      return;
+    }
+    if (!granted) {
       this.send({
         v: 2,
         type: "error",
@@ -195,6 +206,9 @@ export class ReceiverTransfer {
   onCtrl(message: CtrlMessage): boolean {
     if (!("transferId" in message) || message.transferId !== this.transferId)
       return false;
+    // A cancelled transfer keeps consuming its own late frames (instead of
+    // letting them fall through to `failed`), but never acts on them again.
+    if (this.closed) return true;
     switch (message.type) {
       case "done":
         void this.finishFile(message);
@@ -232,18 +246,52 @@ export class ReceiverTransfer {
     this.receiverPaused = false;
   }
 
+  /**
+   * Cancel an accepted transfer. The local side stops receiving, aborts the
+   * partial save and drops buffered chunks; a user cancel also tells the sender
+   * via ctrl `cancel` so it stops sending and the pair returns to idle. A
+   * `peer` cancel (we received the sender's `cancel`) is never echoed back.
+   */
+  cancel(by: ReceiverCancelSource = "local"): void {
+    if (this.closed) return;
+    if (by === "local")
+      this.send({
+        v: 2,
+        type: "cancel",
+        transferId: this.transferId,
+        reason: "user",
+      });
+    this.closed = true;
+    this.releaseBuffers();
+    this.opts.callbacks.cancelled(by);
+    this.finishSignal.resolve();
+  }
+
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.releaseBuffers();
+    this.finishSignal.resolve();
+  }
+
+  /** Abort half-written files and drop in-memory chunk buffers (blob fallback). */
+  private releaseBuffers(): void {
     for (const file of this.files.values()) {
       if (file.sink) void file.sink.abort().catch(() => undefined);
     }
-    this.finishSignal.resolve();
+    this.files.clear();
+    this.fileBytes.clear();
+    this.pendingFrameBytes = 0;
   }
 
   /** Pending decrypted bytes (docs/02 §6.4 backpressure), read by the pair. */
   get pendingBytes(): number {
     return this.pendingFrameBytes;
+  }
+
+  /** True once the transfer ended (done/failed/cancelled) or was cancelled. */
+  get isClosed(): boolean {
+    return this.closed;
   }
 
   private async ensureFile(
@@ -310,6 +358,7 @@ export class ReceiverTransfer {
     while (!file.receiver.isComplete() && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
+    if (this.closed) return; // cancelled while waiting for the last chunk
     const result = file.receiver.finish();
     const ok = result.complete && result.sha256 === message.sha256;
     this.send({

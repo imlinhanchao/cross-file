@@ -41,7 +41,16 @@ export type SenderOutcome =
   | { ok: true; sha256?: string; bytes?: number }
   | { ok: false; busy: true }
   | { ok: false; error: string }
-  | { ok: false; cancelled: true };
+  /**
+   * `by` says who ended it (docs/02 §10.2 cancel note):
+   * - `local`: this device's user pressed 取消 (job is dropped, retry offered),
+   * - `peer`: the receiver sent `cancel` (job dropped, retry offered),
+   * - `yield`: this side yielded the pair to a higher-priority manifest (job
+   *   stays queued and starts again when the pair is idle).
+   */
+  | { ok: false; cancelled: true; by: CancelSource };
+
+export type CancelSource = "local" | "peer" | "yield";
 
 export interface SenderCallbacks {
   /** manifest is about to be sent (UI shows the transfer card) */
@@ -92,6 +101,10 @@ export class SenderTransfer {
   private lossDeferred: Deferred<void> | null = null;
   private lost = false;
   private aborted = false;
+  /** who ended the transfer; null until {@link cancel} is called */
+  private cancelSource: CancelSource | null = null;
+  /** aborts the chunk loop immediately instead of waiting for the next yield */
+  private readonly sendAbort = new AbortController();
   private flowPaused = false;
   private flowWaiters: Array<() => void> = [];
   private startedAt = 0;
@@ -138,7 +151,7 @@ export class SenderTransfer {
       );
 
       const accepted = await this.negotiateAccept();
-      if (this.aborted) return { ok: false, cancelled: true };
+      if (this.aborted) return this.cancelledOutcome();
       if (accepted.kind === "busy") return { ok: false, busy: true };
       if (accepted.kind === "error")
         return { ok: false, error: accepted.message };
@@ -164,7 +177,7 @@ export class SenderTransfer {
         bytes: this.totalBytes,
       };
     } catch (error) {
-      if (this.aborted) return { ok: false, cancelled: true };
+      if (this.aborted) return this.cancelledOutcome();
       return { ok: false, error: errorText(error) };
     } finally {
       this.aborted = true;
@@ -175,11 +188,28 @@ export class SenderTransfer {
     }
   }
 
-  cancel(): void {
+  /**
+   * Stop the transfer. `by` records who asked: the local user (`local`, the pair
+   * then sends `cancel` to the peer), the peer's `cancel` message (`peer`), or a
+   * priority yield (`yield`, the job stays queued).
+   */
+  cancel(by: CancelSource = "local"): void {
+    if (this.aborted) return;
+    this.cancelSource = by;
     this.aborted = true;
+    this.sendAbort.abort();
     this.acceptDeferred?.resolve({ kind: "error", message: "cancelled" });
+    // Wake a `done`→`ack` wait too, otherwise a cancel landing in that window
+    // would sit until the 120 s ack timeout before the pair becomes idle.
+    for (const waiter of this.ackWaiters.values())
+      waiter.resolve({ ok: false, error: "cancelled" });
+    this.ackWaiters.clear();
     this.flushFlowWaiters();
     for (const resolve of this.openWaiters.splice(0)) resolve();
+  }
+
+  private cancelledOutcome(): SenderOutcome {
+    return { ok: false, cancelled: true, by: this.cancelSource ?? "local" };
   }
 
   /** Channel to the peer went away; wait for the rebuilt one. */
@@ -358,6 +388,7 @@ export class SenderTransfer {
           salt,
           key,
           channel: handles.data,
+          signal: this.sendAbort.signal,
           computeHash: false,
           onlyChunks: missing,
           maxMessageSize: CHUNK_MAX + 28,

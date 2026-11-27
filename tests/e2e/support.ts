@@ -45,6 +45,11 @@ export interface TransferSnapshot {
   totalBytes: number;
   path?: string;
   queued?: boolean;
+  /** terminal decoration (docs/02 §10.2 cancel note) */
+  cancelled?: "local" | "peer";
+  failed?: boolean;
+  canRetry?: boolean;
+  completed?: boolean;
 }
 
 export interface IncomingSnapshot {
@@ -73,7 +78,12 @@ export interface Snapshot {
   files: FileSnapshot[];
   assignments: Record<string, string[]>;
   transfers: Record<string, TransferSnapshot>;
-  queue: Array<{ peerId: string; files: FileSnapshot[]; totalBytes: number }>;
+  queue: Array<{
+    peerId: string;
+    jobId: number;
+    files: FileSnapshot[];
+    totalBytes: number;
+  }>;
   incoming?: IncomingSnapshot;
   /** v1-compatibility view of the most relevant active transfer. */
   transfer?: TransferSnapshot;

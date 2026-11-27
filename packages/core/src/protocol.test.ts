@@ -367,6 +367,7 @@ describe("control message validation (v2)", () => {
       { v: 2, type: "ack", fileId: 1, ok: true },
       { v: 2, type: "pause" },
       { v: 2, type: "resume" },
+      { v: 2, type: "cancel" },
     ];
     for (const message of scoped) {
       expect(() => parseCtrlMessage(message)).toThrow();
@@ -374,6 +375,46 @@ describe("control message validation (v2)", () => {
         message.type,
       );
     }
+  });
+
+  it("parses the cancel message with an optional reason", () => {
+    expect(
+      parseCtrlMessage({ v: 2, type: "cancel", transferId: "me:3" }),
+    ).toEqual({ v: 2, type: "cancel", transferId: "me:3" });
+    expect(
+      parseCtrlMessage({
+        v: 2,
+        type: "cancel",
+        transferId: "me:3",
+        reason: "user",
+      }),
+    ).toEqual({ v: 2, type: "cancel", transferId: "me:3", reason: "user" });
+    expect(() =>
+      parseCtrlMessage({ v: 2, type: "cancel", transferId: "me:3", reason: 1 }),
+    ).toThrow();
+  });
+
+  it("parses channel-level ping/pong without a transfer id", () => {
+    expect(parseCtrlMessage({ v: 2, type: "ping" })).toEqual({
+      v: 2,
+      type: "ping",
+    });
+    expect(parseCtrlMessage({ v: 2, type: "pong" })).toEqual({
+      v: 2,
+      type: "pong",
+    });
+    // Channel-level: no transfer scope is required, and a stray one is stripped
+    // by the zod object shape (it never reaches the handler).
+    expect(
+      parseCtrlMessage({ v: 2, type: "ping", transferId: "me:1" }),
+    ).toEqual({ v: 2, type: "ping" });
+  });
+
+  it("throws on an unknown ctrl type so old pages can drop newer frames", () => {
+    // peer.ts catches this and silently ignores the frame: that is the
+    // compatibility contract for messages added after a page was built.
+    expect(() => parseCtrlMessage({ v: 2, type: "future-thing" })).toThrow();
+    expect(() => parseCtrlMessage({ v: 1, type: "ping" })).toThrow();
   });
 
   it("accepts an error with or without a transfer id", () => {

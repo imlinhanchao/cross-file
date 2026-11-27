@@ -28,7 +28,9 @@ import {
   type TurnCredential,
 } from "@crossfile/core";
 import { SenderTransfer, type SenderOutcome } from "./send.js";
-import { ReceiverTransfer } from "./receive.js";
+import { ReceiverTransfer, type ReceiverCancelSource } from "./receive.js";
+import { CtrlHeartbeat } from "./heartbeat.js";
+import { ctrlHeartbeatMs, ctrlTimeoutMs } from "./timeout.js";
 import type { FileView, IncomingView, ResultView } from "../store.js";
 
 export interface PeerSessionHooks {
@@ -63,6 +65,8 @@ export interface PeerSessionHooks {
   incomingFileDone(result: ResultView): void;
   incomingFinished(result: ResultView): void;
   incomingDeclined(reason: string): void;
+  /** the active incoming transfer was cancelled (by this user or by the sender) */
+  incomingCancelled(by: ReceiverCancelSource): void;
   outgoingStarted(
     transferId: string,
     files: FileView[],
@@ -70,9 +74,10 @@ export interface PeerSessionHooks {
   ): void;
   outgoingProgress(sentBytes: number, totalBytes: number): void;
   outgoingPaused(paused: boolean): void;
-  outgoingFinished(outcome: SenderOutcome): void;
-  /** queue for this pair changed (for the UI) */
-  queueChanged(jobs: FileView[][], busy: boolean): void;
+  /** `files` are kept by the controller so a failed/cancelled job can be retried */
+  outgoingFinished(outcome: SenderOutcome, files: File[]): void;
+  /** queue for this pair changed (for the UI); the active job is not listed */
+  queueChanged(jobs: QueuedJobView[], busy: boolean): void;
   failed(message: string, code?: string): void;
   confirmIncoming(view: IncomingView): Promise<boolean>;
   /** `${selfId}:${counter}` — monotonic, unique per sender per session */
@@ -80,6 +85,18 @@ export interface PeerSessionHooks {
 }
 
 const REBUILD_RETRY_MS = 800;
+
+/** One queued (not yet running) outgoing job for this pair. */
+interface OutJob {
+  /** monotonic per pair; lets the UI cancel exactly this job */
+  id: number;
+  files: File[];
+}
+
+export interface QueuedJobView {
+  jobId: number;
+  files: FileView[];
+}
 
 export class PeerSession {
   readonly peerId: string;
@@ -90,7 +107,8 @@ export class PeerSession {
   private attachedAsOfferer?: boolean;
   private sender?: SenderTransfer;
   private receiver?: ReceiverTransfer;
-  private readonly outQueue: File[][] = [];
+  private readonly outQueue: OutJob[] = [];
+  private jobCounter = 0;
   /** data frames are ordered on the wire; process them strictly in order too */
   private dataChain: Promise<void> = Promise.resolve();
   private openWaiters: Array<{
@@ -100,8 +118,8 @@ export class PeerSession {
   private pumping = false;
   private closed = false;
   private pairReady = false;
-  private requeueOnCancel = false;
   private retryTimer?: ReturnType<typeof setTimeout>;
+  private heartbeat?: CtrlHeartbeat;
 
   constructor(peerId: string, hooks: PeerSessionHooks) {
     this.peerId = peerId;
@@ -109,7 +127,10 @@ export class PeerSession {
   }
 
   get busy(): boolean {
-    return this.sender !== undefined || this.receiver !== undefined;
+    return (
+      this.sender !== undefined ||
+      (this.receiver !== undefined && !this.receiver.isClosed)
+    );
   }
 
   get hasHandles(): boolean {
@@ -122,7 +143,7 @@ export class PeerSession {
   }
 
   get queuedCount(): number {
-    return this.outQueue.length + (this.sender ? 1 : 0);
+    return this.outQueue.length;
   }
 
   /** Create a fresh peer connection (also used after a channel drop). */
@@ -189,9 +210,46 @@ export class PeerSession {
   /** Queue files for this pair; starts as soon as the pair is idle and ready. */
   enqueue(files: File[]): void {
     if (this.closed || files.length === 0) return;
-    this.outQueue.push(files);
+    this.jobCounter += 1;
+    this.outQueue.push({ id: this.jobCounter, files });
     this.notifyQueue();
     void this.pump();
+  }
+
+  /**
+   * Cancel the pair's active transfer (either direction), docs/02 §10.2 cancel.
+   * The local side ends immediately; the peer is told with a ctrl `cancel` and
+   * the pair becomes idle so the next queued job can start without waiting for
+   * an acknowledgement (older pages cannot answer one anyway).
+   */
+  cancelActive(): boolean {
+    const sender = this.sender;
+    if (sender) {
+      const transferId = sender.transferId;
+      sender.cancel("local");
+      this.sendCtrl({ v: 2, type: "cancel", transferId, reason: "user" });
+      return true;
+    }
+    const receiver = this.receiver;
+    if (receiver) {
+      receiver.cancel("local");
+      return true;
+    }
+    return false;
+  }
+
+  /** Remove one waiting job (no peer notification is needed for a queued job). */
+  cancelQueued(jobId: number): boolean {
+    // outQueue[0] is the running job while `sender` is set; never cancel that
+    // one through this path — cancelActive() owns it.
+    const first = this.sender ? 1 : 0;
+    for (let index = first; index < this.outQueue.length; index += 1) {
+      if (this.outQueue[index]!.id !== jobId) continue;
+      this.outQueue.splice(index, 1);
+      this.notifyQueue();
+      return true;
+    }
+    return false;
   }
 
   setPairReady(ready: boolean): void {
@@ -214,7 +272,8 @@ export class PeerSession {
 
   close(): void {
     this.closed = true;
-    this.sender?.cancel();
+    this.stopHeartbeat();
+    this.sender?.cancel("local");
     this.receiver?.close();
     this.sender = undefined;
     this.receiver = undefined;
@@ -265,10 +324,35 @@ export class PeerSession {
     this.setPairReady(
       this.hooks.offerer() ? this.pairReady : this.hooks.hasKey(),
     );
+    // The pair is open: start the per-pair ctrl heartbeat (docs/02 §10.2). It is
+    // stopped again by handleLost()/close(); older peers ignore ping and never
+    // pong, which CtrlHeartbeat handles by not enforcing a timeout for them.
+    this.startHeartbeat();
     this.onReopen();
   }
 
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    const heartbeat = new CtrlHeartbeat({
+      heartbeatMs: ctrlHeartbeatMs(),
+      timeoutMs: ctrlTimeoutMs(),
+      sendPing: () => this.sendCtrl({ v: 2, type: "ping" }),
+      onTimeout: () => {
+        console.debug("[cf-pair] ctrl heartbeat timeout", this.peerId);
+        this.handleLost();
+      },
+    });
+    this.heartbeat = heartbeat;
+    heartbeat.start();
+  }
+
+  private stopHeartbeat(): void {
+    this.heartbeat?.stop();
+    this.heartbeat = undefined;
+  }
+
   private handleLost(): void {
+    this.stopHeartbeat();
     if (this.closed || !this.handles) {
       this.disposePeer();
       return;
@@ -299,7 +383,8 @@ export class PeerSession {
     }
     this.pumping = true;
     try {
-      const files = this.outQueue[0]!;
+      const job = this.outQueue[0]!;
+      const files = job.files;
       const transfer = new SenderTransfer({
         transferId: this.hooks.nextTransferId(),
         files,
@@ -316,27 +401,32 @@ export class PeerSession {
       this.sender = transfer;
       const outcome = await transfer.run();
       this.sender = undefined;
+      // The session may have been closed while the transfer was unwinding; the
+      // store is already torn down then, so do not report a stale outcome.
+      if (this.closed) return;
       if (outcome.ok) {
         this.outQueue.shift();
-        this.hooks.outgoingFinished(outcome);
+        this.hooks.outgoingFinished(outcome, files);
       } else if ("busy" in outcome && outcome.busy) {
         // The pair is busy on the other direction: retry when it frees up.
-        this.hooks.outgoingFinished(outcome);
+        this.hooks.outgoingFinished(outcome, files);
         this.scheduleRetry();
         this.notifyQueue();
         return;
       } else if ("cancelled" in outcome && outcome.cancelled) {
-        if (this.requeueOnCancel) {
-          // We yielded to the admin's transfer; our job waits at the head.
-          this.requeueOnCancel = false;
-          this.hooks.outgoingFinished(outcome);
+        if (outcome.by === "yield") {
+          // We yielded the pair; our job waits at the head and starts again once
+          // the peer's higher-priority transfer is done.
+          this.hooks.outgoingFinished(outcome, files);
         } else {
+          // local/user cancel or the peer's cancel: the job is over (the
+          // controller keeps the files for a retry with a fresh transferId).
           this.outQueue.shift();
-          this.hooks.outgoingFinished(outcome);
+          this.hooks.outgoingFinished(outcome, files);
         }
       } else {
         this.outQueue.shift();
-        this.hooks.outgoingFinished(outcome);
+        this.hooks.outgoingFinished(outcome, files);
       }
       this.notifyQueue();
     } finally {
@@ -354,21 +444,28 @@ export class PeerSession {
   }
 
   private notifyQueue(): void {
+    // outQueue[0] is the job currently running; the UI shows it as a transfer
+    // card, not as a queued item, so only the jobs behind it are listed.
+    const waiting = this.sender ? this.outQueue.slice(1) : this.outQueue;
     this.hooks.queueChanged(
-      this.outQueue.map((files) =>
-        files.map((file, index) => ({
+      waiting.map((job) => ({
+        jobId: job.id,
+        files: job.files.map((file, index) => ({
           id: index + 1,
           name: file.name,
           size: file.size,
           mime: file.type,
         })),
-      ),
+      })),
       this.busy,
     );
   }
 
   private onCtrl(raw: unknown): void {
     if (this.closed) return;
+    // Any frame proves the pair is alive, including frames from older peers that
+    // do not know the heartbeat and ones that fail to parse below.
+    this.heartbeat?.noteActivity();
     let message: CtrlMessage;
     try {
       message = parseCtrlMessage(
@@ -378,6 +475,16 @@ export class PeerSession {
       return;
     }
     switch (message.type) {
+      case "ping":
+        this.heartbeat?.noteActivity();
+        this.sendCtrl({ v: 2, type: "pong" });
+        return;
+      case "pong":
+        this.heartbeat?.notePong();
+        return;
+      case "cancel":
+        this.onCancel(message);
+        return;
       case "manifest":
         this.onManifest(message);
         return;
@@ -413,8 +520,25 @@ export class PeerSession {
     }
   }
 
+  /**
+   * ctrl `cancel` (docs/02 §10.2): stop whichever transfer the id belongs to and
+   * go back to idle. A stale/unknown id is ignored — the same pair runs one
+   * transfer at a time, so a mismatch can only be a late frame from a finished
+   * one. We do not answer: the cancelling side already ended locally, and not
+   * waiting for an ack is what makes this work with older peers too.
+   */
+  private onCancel(message: Extract<CtrlMessage, { type: "cancel" }>): void {
+    if (this.sender?.transferId === message.transferId) {
+      this.sender.cancel("peer");
+      return;
+    }
+    if (this.receiver?.transferId === message.transferId) {
+      this.receiver.cancel("peer");
+    }
+  }
+
   private onManifest(manifest: Manifest): void {
-    if (this.receiver) {
+    if (this.receiver && !this.receiver.isClosed) {
       if (this.receiver.transferId === manifest.transferId) return; // duplicate
       this.rejectBusy(manifest.transferId);
       return;
@@ -430,8 +554,7 @@ export class PeerSession {
         this.rejectBusy(manifest.transferId);
         return;
       }
-      this.requeueOnCancel = true;
-      this.sender.cancel();
+      this.sender.cancel("yield");
     }
     this.startReceiver(manifest);
   }
@@ -467,6 +590,7 @@ export class PeerSession {
         fileDone: (result) => this.hooks.incomingFileDone(result),
         finished: (result) => this.hooks.incomingFinished(result),
         declined: (reason) => this.hooks.incomingDeclined(reason),
+        cancelled: (by) => this.hooks.incomingCancelled(by),
         failed: (message, code) => this.hooks.failed(message, code),
       },
     });
@@ -484,6 +608,7 @@ export class PeerSession {
   }
 
   private onData(data: ArrayBuffer): void {
+    this.heartbeat?.noteActivity();
     this.dataChain = this.dataChain
       .then(async () => {
         const receiver = this.receiver;

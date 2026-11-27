@@ -52,7 +52,19 @@ export const HWM = 8 * 1024 * 1024;
 export const LWM = 2 * 1024 * 1024;
 export const RECONNECT_WINDOW_MS = 60_000;
 export const ROOM_TTL_MS = 30 * 60_000;
+/**
+ * Signaling-socket heartbeat (docs/02 §10.1): the admin renews the room every
+ * 20 s over `/v1/ws`. Not to be confused with the per-pair ctrl heartbeat below.
+ */
 export const HEARTBEAT_MS = 20_000;
+/**
+ * Application-level heartbeat on an open `ctrl` data channel (docs/02 §10.2
+ * implementation note): ping every 3 s, declare the pair lost after ~10 s with
+ * no frame received at all. Faster than waiting for a WebRTC close event (5–30 s)
+ * and it can catch a frozen page that still holds the channel open.
+ */
+export const CTRL_HEARTBEAT_MS = 3_000;
+export const CTRL_TIMEOUT_MS = 10_000;
 export const TURN_TTL_SEC = 3_600;
 /** Room capacity: the admin plus up to MAX_MEMBERS - 1 joiners (docs/01 D6, ADR 0010). */
 export const MAX_MEMBERS = 4;
@@ -431,6 +443,22 @@ export type CtrlMessage =
   | { v: 2; type: "pause"; transferId: string }
   | { v: 2; type: "resume"; transferId: string }
   /**
+   * User cancel (docs/02 §10.2 implementation note, v0.4.0): one-way "stop this
+   * transfer" notice. The receiving side stops it, drops the half-received data
+   * and returns the pair to idle; the sender/receiver locally cleans up without
+   * waiting for a reply. `transferId` is validated against the active transfer —
+   * a stale/unknown id is ignored. Older pages do not know this type and drop it
+   * while parsing (see docs/02 §6.6/§10.2 note): the cancelling side still ends
+   * locally, so the pair is never blocked by a peer that cannot be reached.
+   */
+  | { v: 2; type: "cancel"; transferId: string; reason?: string }
+  /**
+   * Channel-level heartbeat (no `transferId`): ping every 3 s, reply pong. Any
+   * frame received counts as activity. Older pages ignore the unknown type.
+   */
+  | { v: 2; type: "ping" }
+  | { v: 2; type: "pong" }
+  /**
    * 6-digit-code path only (docs/02 §3.5): the guest joins without the roomKey in
    * the fragment, so the key is handed over the encrypted data channel after both
    * sides confirm the 4-emoji SAS. These message shapes are not fixed by docs/02
@@ -523,6 +551,14 @@ export const ctrlMessageSchema: z.ZodType<CtrlMessage> = z.union([
     type: z.literal("resume"),
     transferId: transferIdSchema,
   }),
+  z.object({
+    v: z.literal(2),
+    type: z.literal("cancel"),
+    transferId: transferIdSchema,
+    reason: z.string().max(200).optional(),
+  }),
+  z.object({ v: z.literal(2), type: z.literal("ping") }),
+  z.object({ v: z.literal(2), type: z.literal("pong") }),
   z.object({ v: z.literal(2), type: z.literal("sas-confirm") }),
   z.object({
     v: z.literal(2),
@@ -533,6 +569,11 @@ export const ctrlMessageSchema: z.ZodType<CtrlMessage> = z.union([
   z.object({ v: z.literal(2), type: z.literal("key-ok") }),
 ]) as z.ZodType<CtrlMessage>;
 
+/**
+ * Parse one ctrl frame. Unknown `type`s (or fields) throw: the web layer catches
+ * the error and silently drops the frame, which is what keeps added ctrl types
+ * (`cancel`/`ping`/`pong`) harmless to pages that still run an older bundle.
+ */
 export function parseCtrlMessage(raw: unknown): CtrlMessage {
   return ctrlMessageSchema.parse(raw);
 }

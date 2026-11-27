@@ -138,7 +138,11 @@ export function RoomPage({ mode }: { mode: RoomMode }) {
   const busy = state.phase === "transferring" || state.phase === "paused";
   // While receiving, a send can be queued (AC11); while sending, a second
   // attempt would duplicate the same pair's job, so it waits for completion.
-  const sendingOut = transfers.some((transfer) => transfer.direction === "out");
+  // A cancelled/failed card is a terminal report, not an active transfer.
+  const sendingOut = transfers.some(
+    (transfer) =>
+      transfer.direction === "out" && !transfer.cancelled && !transfer.failed,
+  );
   const canSend =
     connected.length > 0 &&
     state.files.length > 0 &&
@@ -700,6 +704,81 @@ export function RoomPage({ mode }: { mode: RoomMode }) {
                   speedBps={transfer.speedBps}
                   path={transfer.path}
                 />
+                {transfer.cancelled ? (
+                  <div
+                    className="transfer__state"
+                    data-testid="transfer-cancelled"
+                    data-by={transfer.cancelled}
+                  >
+                    <p className="note" role="status" aria-live="polite">
+                      <Icon name="circle-x" size="sm" />
+                      <span>
+                        {transfer.cancelled === "peer"
+                          ? copy.cancelledByPeer
+                          : copy.cancelledLocal}
+                      </span>
+                    </p>
+                    <p className="small muted">
+                      {transfer.cancelled === "peer"
+                        ? copy.cancelledByPeerHint
+                        : copy.cancelledLocalHint}
+                    </p>
+                    {transfer.canRetry ? (
+                      <button
+                        className="btn btn--secondary mt-3"
+                        type="button"
+                        data-testid="retry-transfer"
+                        onClick={() =>
+                          controller.current?.retryTransfer(transfer.peerId)
+                        }
+                      >
+                        <Icon name="loader-circle" size="sm" />
+                        {copy.retry}
+                      </button>
+                    ) : (
+                      <p className="small muted mt-2">
+                        {copy.cannotRetryIncoming}
+                      </p>
+                    )}
+                  </div>
+                ) : transfer.failed ? (
+                  <div
+                    className="transfer__state"
+                    data-testid="transfer-failed"
+                  >
+                    <p className="note" role="status" aria-live="polite">
+                      <Icon name="triangle-alert" size="sm" />
+                      <span>{state.error ?? copy.errorGeneric}</span>
+                    </p>
+                    {transfer.canRetry ? (
+                      <button
+                        className="btn btn--secondary mt-3"
+                        type="button"
+                        data-testid="retry-transfer"
+                        onClick={() =>
+                          controller.current?.retryTransfer(transfer.peerId)
+                        }
+                      >
+                        <Icon name="loader-circle" size="sm" />
+                        {copy.retry}
+                      </button>
+                    ) : null}
+                  </div>
+                ) : transfer.completed ? null : (
+                  <div className="row gap-3 mt-3">
+                    <button
+                      className="btn btn--secondary"
+                      type="button"
+                      data-testid="cancel-transfer"
+                      onClick={() =>
+                        controller.current?.cancelTransfer(transfer.peerId)
+                      }
+                    >
+                      <Icon name="x" size="sm" />
+                      {copy.cancelTransfer}
+                    </button>
+                  </div>
+                )}
               </article>
             ))}
 
@@ -730,6 +809,22 @@ export function RoomPage({ mode }: { mode: RoomMode }) {
                   <span className="pill">{copy.queued}</span>
                 </div>
                 <p className="note">{copy.busyRetry}</p>
+                <div className="row gap-3">
+                  <button
+                    className="btn btn--secondary"
+                    type="button"
+                    data-testid="cancel-queue"
+                    onClick={() =>
+                      controller.current?.cancelQueued(
+                        entry.peerId,
+                        entry.jobId,
+                      )
+                    }
+                  >
+                    <Icon name="x" size="sm" />
+                    {copy.cancelQueued}
+                  </button>
+                </div>
               </article>
             ))}
 
@@ -1186,7 +1281,7 @@ export function RoomPage({ mode }: { mode: RoomMode }) {
         </div>
       ) : null}
       {state.notice ? (
-        <p className="sr-only" role="status">
+        <p className="sr-only" role="status" aria-live="polite">
           {state.notice}
         </p>
       ) : null}

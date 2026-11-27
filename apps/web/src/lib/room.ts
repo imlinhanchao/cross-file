@@ -59,6 +59,7 @@ import type { SenderOutcome } from "./send.js";
 import {
   useApp,
   type IncomingView,
+  type QueueView,
   type ResultView,
   type RiskView,
 } from "../store.js";
@@ -151,6 +152,8 @@ export class RoomController {
   private roomClosed = false;
   private connected = false;
   private transferCounter = 0;
+  /** files of the last failed/cancelled outgoing job per pair (re-send on 重试) */
+  private readonly retryFiles = new Map<string, File[]>();
   private readonly memberHasKey = new Map<string, boolean>();
   private readonly keySent = new Set<string>();
   private sasPeerId?: string;
@@ -339,6 +342,7 @@ export class RoomController {
       );
       if (files.length === 0) continue;
       const session = this.ensurePeer(member);
+      this.retryFiles.delete(member.id);
       this.wantedPeers.add(member.id);
       this.maybeAttach(member.id);
       if (!session.hasHandles) this.wakePeer(member);
@@ -346,6 +350,70 @@ export class RoomController {
       started += 1;
     }
     if (started === 0) throw new Error(copy.emptyReceivers);
+  }
+
+  /**
+   * Cancel the pair's active transfer (sending or receiving side, docs/02 §10.2
+   * cancel note). This is a normal end, not an error: the UI shows 已取消 and the
+   * pair is idle again, so a queued job for the same pair starts immediately.
+   */
+  cancelTransfer(peerId: string): void {
+    const store = useApp.getState();
+    const transfer = store.transfers[peerId];
+    if (
+      !transfer ||
+      transfer.cancelled ||
+      transfer.failed ||
+      transfer.completed
+    )
+      return;
+    const session = this.peers.get(peerId);
+    if (!session) return;
+    // Patch first so the button responds before the transfer unwinds; the
+    // sender/receiver callbacks repeat the same terminal state.
+    store.patchTransfer(peerId, { cancelled: "local" });
+    store.patch({
+      phase: "cancelled",
+      notice: copy.cancelledLocal,
+      error: undefined,
+      errorCode: undefined,
+    });
+    session.cancelActive();
+  }
+
+  /** Drop one *waiting* job; nothing is announced because the peer never saw it. */
+  cancelQueued(peerId: string, jobId: number): void {
+    const session = this.peers.get(peerId);
+    if (!session) return;
+    session.cancelQueued(jobId);
+    useApp.getState().patch({ notice: copy.cancelQueuedNotice });
+  }
+
+  /**
+   * Re-send the files of the last failed/cancelled outgoing job to the same
+   * peer. A fresh job gets a fresh `transferId` in peer.ts, so the peer receives
+   * a new manifest and accepts again — old ciphertext/bitmap state is never
+   * reused (docs/02 §10.2 cancel note).
+   */
+  retryTransfer(peerId: string): void {
+    const files = this.retryFiles.get(peerId);
+    if (!files || files.length === 0) return;
+    const session = this.peers.get(peerId);
+    const member = this.memberInfo(peerId);
+    if (!session || !member || member.state === "offline") return;
+    if (session.busy) return;
+    this.retryFiles.delete(peerId);
+    const store = useApp.getState();
+    store.clearTransfer(peerId);
+    store.patch({
+      notice: copy.retrying,
+      error: undefined,
+      errorCode: undefined,
+    });
+    this.wantedPeers.add(peerId);
+    this.maybeAttach(peerId);
+    if (!session.hasHandles) this.wakePeer(member);
+    session.enqueue(files);
   }
 
   /** Toggle the room-wide auto-accept preference (docs/02 §11.3, default off). */
@@ -1001,6 +1069,7 @@ export class RoomController {
     const peer = this.peers.get(peerId);
     peer?.close();
     this.peers.delete(peerId);
+    this.retryFiles.delete(peerId);
     this.wantedPeers.delete(peerId);
     this.pairRequests.delete(peerId);
     this.wakeSent.delete(peerId);
@@ -1054,6 +1123,7 @@ export class RoomController {
         useApp.getState().patch({ autoAcceptNotice: undefined });
         useApp.getState().patch({ notice: copy.decline });
       },
+      incomingCancelled: (by) => this.onIncomingCancelled(peerId, by),
       outgoingStarted: (transferId, files, totalBytes) => {
         const path = useApp
           .getState()
@@ -1094,12 +1164,14 @@ export class RoomController {
           notice: paused ? copy.busyRetry : copy.resumeHint,
         });
       },
-      outgoingFinished: (outcome) => this.onOutgoingFinished(peerId, outcome),
+      outgoingFinished: (outcome, files) =>
+        this.onOutgoingFinished(peerId, outcome, files),
       queueChanged: (jobs) => {
-        const entries = jobs.map((files) => ({
+        const entries: QueueView[] = jobs.map((job) => ({
           peerId,
-          files,
-          totalBytes: files.reduce((sum, file) => sum + file.size, 0),
+          jobId: job.jobId,
+          files: job.files,
+          totalBytes: job.files.reduce((sum, file) => sum + file.size, 0),
         }));
         const others = useApp
           .getState()
@@ -1388,6 +1460,7 @@ export class RoomController {
 
   private onIncomingFinished(peerId: string, result: ResultView): void {
     const store = useApp.getState();
+    store.patchTransfer(peerId, { completed: true });
     store.setResult(result);
     store.patch({
       phase: "done",
@@ -1397,9 +1470,36 @@ export class RoomController {
     void setTransferActive(false);
   }
 
-  private onOutgoingFinished(peerId: string, outcome: SenderOutcome): void {
+  /**
+   * A user/peer cancel is a normal end (docs/02 §10.2): phase `cancelled` (no
+   * error), the files are kept for 重试. A priority yield keeps the job queued.
+   */
+  private onIncomingCancelled(peerId: string, by: "local" | "peer"): void {
+    const store = useApp.getState();
+    this.resolveIncoming(false);
+    this.pendingIncoming = undefined;
+    store.setIncoming(undefined);
+    store.patch({ autoAcceptNotice: undefined });
+    store.patchTransfer(peerId, {
+      cancelled: by === "peer" ? "peer" : "local",
+    });
+    store.patch({
+      phase: "cancelled",
+      notice: by === "peer" ? copy.cancelledByPeer : copy.cancelledLocal,
+    });
+    store.patchMember(peerId, { state: "joined" });
+    void setTransferActive(false);
+  }
+
+  private onOutgoingFinished(
+    peerId: string,
+    outcome: SenderOutcome,
+    files: File[],
+  ): void {
     const store = useApp.getState();
     if (outcome.ok) {
+      this.retryFiles.delete(peerId);
+      store.patchTransfer(peerId, { completed: true });
       store.setResult({
         ok: true,
         ...(outcome.sha256 ? { sha256: outcome.sha256 } : {}),
@@ -1419,10 +1519,34 @@ export class RoomController {
       return;
     }
     if ("cancelled" in outcome && outcome.cancelled) {
-      // Yielded to the admin's transfer; the job stays queued.
+      if (outcome.by === "yield") {
+        // Yielded the pair to a higher-priority peer transfer; the job stays
+        // queued and starts again when the pair frees up.
+        return;
+      }
+      this.retryFiles.set(peerId, files);
+      store.patchTransfer(peerId, {
+        cancelled: outcome.by === "peer" ? "peer" : "local",
+        canRetry: true,
+      });
+      store.patch({
+        phase: "cancelled",
+        notice:
+          outcome.by === "peer" ? copy.cancelledByPeer : copy.cancelledLocal,
+        error: undefined,
+        errorCode: undefined,
+      });
+      store.patchMember(peerId, { state: "joined" });
+      void setTransferActive(false);
       return;
     }
     const error = "error" in outcome ? outcome.error : copy.errorGeneric;
+    this.retryFiles.set(peerId, files);
+    store.patchTransfer(peerId, {
+      failed: true,
+      canRetry: true,
+      cancelled: undefined,
+    });
     store.patch({ phase: "error", error });
     store.patchMember(peerId, { state: "joined" });
     void setTransferActive(false);
@@ -1444,7 +1568,10 @@ function isTransferActive(): boolean {
   const state = useApp.getState();
   if (state.incoming) return true;
   if (state.phase === "transferring" || state.phase === "paused") return true;
-  return Object.keys(state.transfers).length > 0;
+  // A cancelled/failed card is a terminal report, not an active transfer.
+  return Object.values(state.transfers).some(
+    (transfer) => !transfer.cancelled && !transfer.failed,
+  );
 }
 
 function detectCapsFallback(): Caps {

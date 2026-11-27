@@ -131,6 +131,19 @@ export const copy = {
   rejoinHome: "返回首页",
   howThisRoomWorks: "这个房间怎么传",
   roomStillLive: "房间仍在进行 · 你可以回到房间继续给成员发文件",
+  // 传输取消 / 重试（docs/02 §10.2 取消注记，v0.4.0）：取消是正常结束，不是错误
+  cancelTransfer: "取消",
+  cancelQueued: "取消排队",
+  cancelQueuedNotice: "已取消排队中的传输",
+  cancelledLocal: "已取消这次传输",
+  cancelledByPeer: "对方已取消这次传输",
+  cancelledLocalHint:
+    "已停止发送和接收，本机缓存已清理，对方也会停下并清理半成品。文件没有发出去。",
+  cancelledByPeerHint: "对方停止了这次传输，文件没有收完，已清理半成品。",
+  retry: "重试",
+  retrying: "正在重试…",
+  retryHint: "用同一批文件重新发起（对端会再次确认，从头开始传）",
+  cannotRetryIncoming: "需要对方重新发送",
   // 入口页 / 房间页区块标题与按钮（web-agent 收尾用）
   actionTitle: "开始传输",
   inviteTitle: "邀请成员",

@@ -83,6 +83,10 @@ type Caps struct {
 	DeviceMemoryGB *float64 `json:"deviceMemoryGB,omitempty"`
 	StorageQuotaMB *float64 `json:"storageQuotaMB,omitempty"`
 	Screen         string   `json:"screen"`
+	// Mesh marks a phase-2 client that can elect the offerer per pair
+	// (docs/02 §5). Optional: older clients omit it, and the field is forwarded
+	// verbatim so every member sees the same capability bundle.
+	Mesh *bool `json:"mesh,omitempty"`
 }
 
 // --- room membership (ADR 0010) --------------------------------------------
@@ -725,7 +729,27 @@ func parseCaps(raw json.RawMessage) (Caps, error) {
 		return Caps{}, badMessage("caps.screen is invalid")
 	}
 	caps.Screen = screen
+	if raw, present := obj["mesh"]; present {
+		value, err := rawOptionalBool(raw, "mesh")
+		if err != nil {
+			return Caps{}, err
+		}
+		caps.Mesh = value
+	}
 	return caps, nil
+}
+
+// rawOptionalBool parses an optional JSON boolean: absent is fine, null and any
+// non-boolean value are schema errors (like z.boolean().optional()).
+func rawOptionalBool(raw json.RawMessage, key string) (*bool, error) {
+	if isNull(raw) {
+		return nil, badMessage("caps.%s must be a boolean", key)
+	}
+	var value bool
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, badMessage("caps.%s must be a boolean", key)
+	}
+	return &value, nil
 }
 
 func rawRequiredBool(obj map[string]json.RawMessage, key string) (bool, error) {

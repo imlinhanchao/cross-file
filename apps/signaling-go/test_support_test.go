@@ -262,6 +262,35 @@ func (c *testClient) mustNext(messageType string, timeout time.Duration) map[str
 	return message
 }
 
+// nextAny returns the oldest queued message regardless of type (ordering tests).
+func (c *testClient) nextAny(timeout time.Duration) (map[string]any, error) {
+	timer := time.AfterFunc(timeout, func() {
+		c.mu.Lock()
+		c.timedOut = true
+		c.cond.Broadcast()
+		c.mu.Unlock()
+	})
+	defer timer.Stop()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for {
+		if len(c.queue) > 0 {
+			message := c.queue[0]
+			c.queue = c.queue[1:]
+			return message, nil
+		}
+		if c.closedFlag {
+			return nil, fmt.Errorf("socket closed while waiting for any message")
+		}
+		if c.timedOut {
+			c.timedOut = false
+			return nil, fmt.Errorf("timed out waiting for any message")
+		}
+		c.cond.Wait()
+	}
+}
+
 func (c *testClient) expectNoMessage(messageType string, wait time.Duration) {
 	c.t.Helper()
 	if message, err := c.next(messageType, wait); err == nil {
@@ -395,6 +424,35 @@ func joinedPair(t *testing.T, port int) joinedPairFixture {
 
 // --- assertions -------------------------------------------------------------
 
+// findMember is the non-fatal lookup used while polling broadcasts.
+func findMember(members []any, id string) (map[string]any, bool) {
+	for _, entry := range members {
+		member, ok := entry.(map[string]any)
+		if ok && member["id"] == id {
+			return member, true
+		}
+	}
+	return nil, false
+}
+
+// waitForMemberState polls `members` broadcasts until the member reaches a state
+// (handover broadcasts can overtake earlier queued snapshots in the test client).
+func waitForMemberState(t *testing.T, client *testClient, memberID, want string) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(testTimeout)
+	for time.Now().Before(deadline) {
+		message, err := client.next("members", time.Until(deadline))
+		if err != nil {
+			t.Fatalf("waiting for %s state %q: %v", memberID, want, err)
+		}
+		if member, ok := findMember(membersOf(t, message), memberID); ok && member["state"] == want {
+			return message
+		}
+	}
+	t.Fatalf("member %s never reached state %q", memberID, want)
+	return nil
+}
+
 func memberByID(t *testing.T, members []any, id string) map[string]any {
 	t.Helper()
 	for _, entry := range members {
@@ -437,4 +495,65 @@ func (c *testClient) trySend(message any) {
 		return
 	}
 	_ = c.ws.WriteMessage(websocket.TextMessage, data)
+}
+
+// drain drops buffered messages; handover tests assert on the next broadcast.
+func (c *testClient) drain() {
+	c.mu.Lock()
+	c.queue = nil
+	c.timedOut = false
+	c.mu.Unlock()
+}
+
+// waitForRoom polls the server's in-memory room under its lock.
+func waitForRoom(t *testing.T, server *Server, roomID string, timeout time.Duration, check func(*Room) bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		server.mu.Lock()
+		room, ok := server.rooms.get(roomID)
+		matched := ok && check(room)
+		server.mu.Unlock()
+		if matched {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("room %s condition not met within %v", roomID, timeout)
+}
+
+// roomInfo is a lock-safe copy of the room fields the handover tests assert on.
+type roomInfo struct {
+	AdminID        string
+	AdminName      string
+	AdminOffline   bool
+	AdminConnected bool
+	Code           string
+	Members        int
+}
+
+// roomSnapshot copies the in-memory room state (test-only; no pointer escapes
+// the server lock, so -race stays clean while the sweep ticker runs).
+func roomSnapshot(t *testing.T, server *Server, roomID string) roomInfo {
+	t.Helper()
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	room, ok := server.rooms.get(roomID)
+	if !ok {
+		t.Fatalf("room %s is gone", roomID)
+	}
+	return roomInfo{
+		AdminID:        room.AdminID,
+		AdminName:      room.AdminName,
+		AdminOffline:   room.AdminOffline,
+		AdminConnected: room.adminConn != nil,
+		Code:           room.Code,
+		Members:        len(room.Members),
+	}
+}
+
+// withMesh returns a caps bundle with the optional phase-2 mesh flag set.
+func withMesh(caps Caps, mesh bool) Caps {
+	caps.Mesh = &mesh
+	return caps
 }

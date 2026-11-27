@@ -59,6 +59,9 @@ type Room struct {
 	// AdminOffline is set when the admin socket drops; the room survives the
 	// reconnect window and the TTL.
 	AdminOffline bool
+	// adminHandoverTimer is the phase-2 timer (ADR 0010 D24): when it fires with
+	// the admin still offline, the earliest-joined online member is promoted.
+	adminHandoverTimer Timer
 	// Members holds join requests and approved members, in join order.
 	Members []*Member
 	// CreatedAt / LastActivity are unix milliseconds.
@@ -194,7 +197,7 @@ func (s *RoomStore) delete(roomID string) *Room {
 	if !ok {
 		return nil
 	}
-	clearMemberTimers(room)
+	clearRoomTimers(room)
 	delete(s.rooms, roomID)
 	return room
 }
@@ -243,7 +246,7 @@ func (s *RoomStore) expire(nowMs int64, ttlMs int64) []*Room {
 		}
 	}
 	for _, room := range expired {
-		clearMemberTimers(room)
+		clearRoomTimers(room)
 		delete(s.rooms, room.RoomID)
 	}
 	return expired
@@ -251,7 +254,7 @@ func (s *RoomStore) expire(nowMs int64, ttlMs int64) []*Room {
 
 func (s *RoomStore) clear() {
 	for _, room := range s.rooms {
-		clearMemberTimers(room)
+		clearRoomTimers(room)
 	}
 	s.rooms = make(map[string]*Room)
 }
@@ -273,4 +276,19 @@ func clearMemberTimers(room *Room) {
 	for _, member := range room.Members {
 		clearMemberTimer(member)
 	}
+}
+
+// clearAdminHandover cancels the phase-2 handover timer (admin reconnected,
+// room closed or expired).
+func clearAdminHandover(room *Room) {
+	if room.adminHandoverTimer != nil {
+		room.adminHandoverTimer.Stop()
+		room.adminHandoverTimer = nil
+	}
+}
+
+// clearRoomTimers cancels every timer a room owns before it is deleted.
+func clearRoomTimers(room *Room) {
+	clearMemberTimers(room)
+	clearAdminHandover(room)
 }

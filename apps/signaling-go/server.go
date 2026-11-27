@@ -832,6 +832,7 @@ func (s *Server) handleCreate(c *conn, message *ClientMessage) {
 		}
 		existing.adminConn = c
 		existing.AdminOffline = false
+		clearAdminHandover(existing)
 		existing.AdminCaps = *message.Caps
 		existing.AdminName = name
 		existing.LastActivity = nowMillis(s.clock)
@@ -921,6 +922,7 @@ func (s *Server) rejoin(c *conn, room *Room, message *ClientMessage, rejoinToken
 		}
 		room.adminConn = c
 		room.AdminOffline = false
+		clearAdminHandover(room)
 		room.AdminCaps = *message.Caps
 		room.LastActivity = nowMillis(s.clock)
 		s.bind(c, "admin", room.RoomID, room.AdminID)
@@ -1146,6 +1148,13 @@ func (s *Server) handleDisconnect(c *conn) {
 			// reconnect window and the ≤30 min idle TTL decide when it disappears.
 			room.adminConn = nil
 			room.AdminOffline = true
+			// Phase 2 (ADR 0010 D24): if the admin does not come back inside the
+			// reconnect window, the earliest-joined online member takes over.
+			clearAdminHandover(room)
+			roomID := room.RoomID
+			room.adminHandoverTimer = s.clock.AfterFunc(s.options.ReconnectWindow, func() {
+				s.handoverAdmin(roomID)
+			})
 			s.broadcastMembers(room)
 		}
 		return
@@ -1196,6 +1205,57 @@ func (s *Server) expireMember(roomID, memberID string) {
 	s.broadcastMembers(room)
 	s.send(room.adminConn, memberLeftMessage{V: protocolVersion, Type: "member_left", MemberID: memberID})
 	s.recomputeRoomState(room)
+}
+
+// handoverAdmin is the phase-2 timer callback (ADR 0010 D24): the admin stayed
+// offline for the whole reconnect window, so the earliest-joined member that is
+// joined and reachable is promoted to admin. With no such member the room is
+// left alone (no retry) and lives until the TTL. The promoted member keeps the
+// room's six digit code; the old admin identity (and its rejoinToken) is dropped.
+func (s *Server) handoverAdmin(roomID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopped {
+		return
+	}
+	room, found := s.rooms.get(roomID)
+	if !found {
+		return
+	}
+	// A reconnect that raced the timer wins: do nothing.
+	if !room.AdminOffline || room.adminConn != nil {
+		return
+	}
+	room.adminHandoverTimer = nil
+	var candidate *Member
+	for _, member := range room.Members {
+		if member.State == memberJoined && member.conn != nil && !member.conn.closed.Load() {
+			candidate = member
+			break
+		}
+	}
+	if candidate == nil {
+		// No online member to hand over to; the room survives to the TTL.
+		return
+	}
+	s.rooms.removeMember(room, candidate)
+	room.AdminID = candidate.ID
+	room.AdminName = candidate.Name
+	room.AdminCaps = candidate.Caps
+	room.adminConn = candidate.conn
+	room.AdminOffline = false
+	// The old admin token dies with the old admin; the new admin reconnects with
+	// `create` (documented admin reconnect) if its socket drops later.
+	room.AdminRejoinToken = createRejoinToken()
+	// room.Code is intentionally unchanged: the six digit code is reused.
+	s.bind(room.adminConn, "admin", room.RoomID, room.AdminID)
+	s.recomputeRoomState(room)
+	// The promoted client learns it is now the admin from `created`: it is the
+	// only existing message that carries the room's six digit code and the fresh
+	// admin rejoinToken (docs/02 §11.2). No new message type is introduced.
+	s.send(room.adminConn, s.createdMessage(room))
+	s.broadcastMembers(room)
+	s.replayPendingRequests(room)
 }
 
 func (s *Server) sweep() {

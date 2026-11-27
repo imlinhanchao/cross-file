@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadConfigDefaults(t *testing.T) {
@@ -186,6 +187,33 @@ func TestLoadConfigTURN(t *testing.T) {
 	} {
 		if _, err := loadConfig(env); err == nil {
 			t.Fatalf("%v: want a port validation error", env)
+		}
+	}
+}
+
+func TestLoadConfigReconnectWindow(t *testing.T) {
+	config, err := loadConfig(map[string]string{})
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if config.ReconnectWindow != 60*time.Second {
+		t.Fatalf("default ReconnectWindow = %v, want 60s", config.ReconnectWindow)
+	}
+	config, err = loadConfig(map[string]string{"RECONNECT_WINDOW_MS": "1500"})
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if config.ReconnectWindow != 1500*time.Millisecond {
+		t.Fatalf("ReconnectWindow = %v, want 1.5s", config.ReconnectWindow)
+	}
+	config, err = loadConfig(map[string]string{"RECONNECT_WINDOW_MS": " 60000 "})
+	if err != nil || config.ReconnectWindow != time.Minute {
+		t.Fatalf("ReconnectWindow = %v, %v", config.ReconnectWindow, err)
+	}
+	for _, raw := range []string{"0", "-1", "abc", "2.5", "2x", "1e3", "999999999999999999999"} {
+		_, err := loadConfig(map[string]string{"RECONNECT_WINDOW_MS": raw})
+		if err == nil || !strings.Contains(err.Error(), "RECONNECT_WINDOW_MS must be a positive integer") {
+			t.Fatalf("RECONNECT_WINDOW_MS=%q: want a positive-integer error, got %v", raw, err)
 		}
 	}
 }

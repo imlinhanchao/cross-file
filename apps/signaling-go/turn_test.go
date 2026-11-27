@@ -112,29 +112,42 @@ func TestStartTURNServerPortConflict(t *testing.T) {
 	}
 }
 
+// startTURNServerOnFreePort picks a port that was free for both protocols and
+// retries on the (rare) bind race, so the integration test is not flaky.
+func startTURNServerOnFreePort(t *testing.T, options TURNServerOptions) (*turn.Server, int) {
+	t.Helper()
+	var lastErr error
+	for attempt := 0; attempt < 10; attempt++ {
+		probe, err := net.ListenPacket("udp4", "127.0.0.1:0")
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		port := probe.LocalAddr().(*net.UDPAddr).Port
+		_ = probe.Close()
+		options.ListenPort = port
+		server, err := startTURNServer(options)
+		if err == nil {
+			return server, port
+		}
+		lastErr = err
+	}
+	t.Fatalf("startTURNServer: %v", lastErr)
+	return nil, 0
+}
+
 // TestEmbeddedTURNAllocatesAndRelaysUDP proves the in-process TURN listener
 // accepts coturn static-auth REST credentials and relays a UDP datagram through
 // the configured relay port range. This is the same path the browser uses for
 // AC2, without needing a browser.
 func TestEmbeddedTURNAllocatesAndRelaysUDP(t *testing.T) {
-	probe, err := net.ListenPacket("udp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("probe listener: %v", err)
-	}
-	listenPort := probe.LocalAddr().(*net.UDPAddr).Port
-	_ = probe.Close()
-
 	secret := "turn-integration-secret"
-	server, err := startTURNServer(TURNServerOptions{
+	server, listenPort := startTURNServerOnFreePort(t, TURNServerOptions{
 		Secret:     secret,
 		ExternalIP: net.ParseIP("127.0.0.1"),
-		ListenPort: listenPort,
 		MinPort:    49300,
 		MaxPort:    49310,
 	})
-	if err != nil {
-		t.Fatalf("startTURNServer: %v", err)
-	}
 	defer func() { _ = server.Close() }()
 
 	echo, err := net.ListenPacket("udp4", "127.0.0.1:0")

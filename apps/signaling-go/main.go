@@ -25,13 +25,14 @@ func main() {
 		os.Exit(1)
 	}
 	server := NewServer(Options{
-		Host:       config.Host,
-		Port:       config.Port,
-		MaxMembers: config.MaxMembers,
-		RateLimit:  config.RateLimit,
-		TURN:       config.TURN,
-		TURNServer: config.TURNServer,
-		StaticDir:  config.StaticDir,
+		Host:            config.Host,
+		Port:            config.Port,
+		MaxMembers:      config.MaxMembers,
+		ReconnectWindow: config.ReconnectWindow,
+		RateLimit:       config.RateLimit,
+		TURN:            config.TURN,
+		TURNServer:      config.TURNServer,
+		StaticDir:       config.StaticDir,
 	})
 	result, err := server.Start()
 	if err != nil {

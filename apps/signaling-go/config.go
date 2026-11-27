@@ -10,17 +10,22 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
 	defaultListenPort = 3478
 	defaultMinPort    = 49160
 	defaultMaxPort    = 49200
+	// defaultReconnectWindowMs is the member offline window and, in phase 2, the
+	// admin handover window (ADR 0010 D24).
+	defaultReconnectWindowMs int64 = 60_000
 )
 
 var positiveIntegerPattern = regexp.MustCompile(`^[0-9]+$`)
@@ -30,10 +35,13 @@ type Config struct {
 	Host       string
 	Port       int
 	MaxMembers int
-	RateLimit  RateLimitPolicy
-	TURN       *TurnOptions
-	TURNServer *TURNServerOptions
-	StaticDir  string
+	// ReconnectWindow is both the member offline window and the admin handover
+	// window; RECONNECT_WINDOW_MS overrides it (test-only escape hatch).
+	ReconnectWindow time.Duration
+	RateLimit       RateLimitPolicy
+	TURN            *TurnOptions
+	TURNServer      *TURNServerOptions
+	StaticDir       string
 }
 
 // loadConfig validates the environment. Every error is a startup failure: a
@@ -41,10 +49,11 @@ type Config struct {
 // to hide.
 func loadConfig(env map[string]string) (Config, error) {
 	config := Config{
-		Host:       defaultHost,
-		Port:       defaultPort,
-		MaxMembers: defaultMaxMembers,
-		RateLimit:  RateLimitPolicy{WindowMs: defaultRateLimitWindowMs, Max: defaultRateLimitMax},
+		Host:            defaultHost,
+		Port:            defaultPort,
+		MaxMembers:      defaultMaxMembers,
+		ReconnectWindow: time.Duration(defaultReconnectWindowMs) * time.Millisecond,
+		RateLimit:       RateLimitPolicy{WindowMs: defaultRateLimitWindowMs, Max: defaultRateLimitMax},
 	}
 	if host := jsTrim(env["HOST"]); host != "" {
 		config.Host = host
@@ -58,6 +67,12 @@ func loadConfig(env map[string]string) (Config, error) {
 	if maxMembers > 0 {
 		config.MaxMembers = maxMembers
 	}
+
+	reconnectWindowMs, err := parseReconnectWindowMs(env)
+	if err != nil {
+		return Config{}, err
+	}
+	config.ReconnectWindow = time.Duration(reconnectWindowMs) * time.Millisecond
 
 	// Test/dev escape hatch: the e2e suite sends far more than the production
 	// per-IP budget from one address. Unset keeps the production policy.
@@ -149,6 +164,28 @@ func parseMaxMembers(env map[string]string) (int, error) {
 
 func maxMembersError(key, raw string) error {
 	return fmt.Errorf("%s must be a positive integer (got %q); unset it for the default (%d)", key, raw, defaultMaxMembers)
+}
+
+// parseReconnectWindowMs reads the test-only RECONNECT_WINDOW_MS escape hatch
+// (member offline window + phase-2 admin handover window). A malformed value is
+// a deployment mistake, like MAX_MEMBERS: fail before listening.
+func parseReconnectWindowMs(env map[string]string) (int64, error) {
+	raw := jsTrim(env["RECONNECT_WINDOW_MS"])
+	if raw == "" {
+		return defaultReconnectWindowMs, nil
+	}
+	if !positiveIntegerPattern.MatchString(raw) {
+		return 0, reconnectWindowError(raw)
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value < 1 || value > math.MaxInt64/int64(time.Millisecond) {
+		return 0, reconnectWindowError(raw)
+	}
+	return value, nil
+}
+
+func reconnectWindowError(raw string) error {
+	return fmt.Errorf("RECONNECT_WINDOW_MS must be a positive integer (got %q); unset it for the default (%d)", raw, defaultReconnectWindowMs)
 }
 
 // parseIntJS mirrors JavaScript's Number.parseInt(raw, 10) with a fallback for

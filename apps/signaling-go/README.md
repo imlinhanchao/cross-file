@@ -42,6 +42,7 @@ apps/signaling-go/bin/crossfile-signaling
 | `MAX_MEMBERS` | `4` | 房间成员上限（**不含管理员**；官方实例用 2）；旧名 `MAX_GUESTS` 兼容，非法值启动失败 |
 | `RATE_LIMIT_MAX` | `120` | 每 IP 信令预算（条/窗口）；测试专用逃生口 |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | 上述窗口 |
+| `RECONNECT_WINDOW_MS` | `60000` | 成员离线窗口 + 管理员移交窗口（测试逃生口，e2e 可缩短）；非法值启动失败 |
 | `STATIC_DIR` | 空 | 覆盖内嵌 Web 目录（开发用） |
 | `TURN_SECRET` | 空 | coturn `static-auth-secret`；空 = 不启动 TURN、不下发凭据 |
 | `TURN_URIS` | 空 | 下发给客户端的 TURN URI，逗号分隔；空 = 不下发凭据 |
@@ -60,6 +61,31 @@ apps/signaling-go/bin/crossfile-signaling
 - 进程内 TURN 的日志被完全丢弃（docs/02 §7 只允许启动信息；pion 会在每次分配/鉴权时打日志）。
 - `SIGTERM` / `SIGINT`：5 秒内优雅退出（清空内存房间、计数器和 socket，关闭 TURN）。
 
+## 阶段 2：管理权移交（ADR 0010 D24）
+
+管理员 socket 断开时（`adminOffline=true`）会同时启动一个 `RECONNECT_WINDOW_MS`（默认 60 s）的移交计时器；
+房间本身仍保留到 30 min TTL。
+
+- 计时器到期前管理员用 `create`（同 `roomId`）或 `join`（带 admin `rejoinToken`）回来 → 取消计时器，一切照旧。
+- 计时器到期且管理员仍离线：从成员中选**加入顺序最早、`state=="joined"` 且 socket 仍在线**的一个，
+  晋升为新管理员：该成员记录从 `members[]` 移除，`adminId/adminName/adminCaps/adminSocket` 换成它，
+  绑定其连接为 `role=admin`，生成新的 `adminRejoinToken`；房间 6 位码保持不变。随后按顺序：
+  先向新管理员发送既有的 `created` 消息（`roomId`、**未变的 6 位码**、`selfId`、`name`、`members`、
+  **新的 `rejoinToken`**、`turn?`）——这是「你现在是管理员」的既有信号，客户端无需新增消息即可拿到
+  邀请码和新 token；再向全房间广播 `members`（新管理员 `isAdmin=true`、旧管理员消失）；
+  最后把等待中的 `join_request` 重放给新管理员。
+- 没有符合条件的在线成员 → 不移交、不重试，房间继续存活到 TTL。
+- 旧管理员身份作废：之后 `create` 同 `roomId` 得到 `ROOM_CLOSED "room already has a connected admin"`，
+  用旧 `rejoinToken` 的 `join` 得到 `ROOM_NOT_FOUND "rejoin token is invalid or expired"`；它可以作为普通成员
+  重新 `join`，等待新管理员批准。
+- 新管理员的心跳续期、`close`、`approve/deny/remove` 全部按管理员语义生效；新管理员再次离线会重新计时，
+  到期后移交给下一个最早加入的在线成员（可连续移交）。
+
+客户端无需新增消息：身份变化通过 `members` 广播体现（旧客户端仍能连接并传输）。
+
+`caps` 由服务端**原样透传**（不解释、不落盘），包括阶段 2 客户端新增的可选布尔字段 `mesh`：缺失保持缺失，
+`true`/`false` 都保留，供客户端决定每对设备由谁发 offer。
+
 ## 端点
 
 - `GET /v1/ws`（WebSocket upgrade）：协议 v2 信令，见 `docs/02-protocol.md` §3。
@@ -71,7 +97,7 @@ apps/signaling-go/bin/crossfile-signaling
 
 ```bash
 cd apps/signaling-go
-go test ./...            # 88+ 单测，含假时钟的 60 s 离线窗口 / 10 min 短码 TTL / 限流窗口
+go test ./...            # 100+ 单测，含假时钟的 60 s 离线/移交窗口、10 min 短码 TTL、限流窗口
 go test -race ./...      # 并发检查
 gofmt -l .               # 必须为空
 go vet ./...
@@ -80,8 +106,8 @@ go vet ./...
 端到端（需要浏览器与 Vite）：
 
 ```bash
-E2E_SERVER=go pnpm exec playwright test                    # 全量
-E2E_SERVER=go E2E_RELAY=1 TURN_SECRET=... \
+pnpm exec playwright test                                   # 全量（默认信令就是本二进制）
+E2E_RELAY=1 TURN_SECRET=... \
   TURN_URIS='turn:127.0.0.1:3478?transport=udp,turn:127.0.0.1:3478?transport=tcp' \
   TURN_EXTERNAL_IP=127.0.0.1 pnpm exec playwright test tests/e2e/ac2-relay.spec.ts
 ```
@@ -93,5 +119,7 @@ E2E_SERVER=go E2E_RELAY=1 TURN_SECRET=... \
 - `TURN_SECRET` 已设置而 `TURN_EXTERNAL_IP` 缺失时**启动失败**（原 Node 只负责签发凭据，
   TURN 在 coturn 侧；现在中继在进程内，必须知道对外地址）。自托管升级时需要补这个变量。
 - 进程内 TURN 日志被丢弃（原 coturn 可自行配置日志级别）。
+- 实现了阶段 2 管理权移交（ADR 0010 D24）；被删除的 Node 实现只有阶段 1，因此 Go 版在这一点上
+  超出原实现，协议消息形状不变。
 - 除上述之外，房间状态机、消息字段、错误码、限流、短码、重连窗口、昵称去重、TURN 凭据算法
   均按 `packages/signaling/src/*` 与 `docs/02-protocol.md` 逐条移植，并由 Go 测试覆盖。

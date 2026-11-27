@@ -18,6 +18,7 @@
 |---|---|
 | `crossfile-signaling-<version>-linux-x64.tar.gz` | 解压部署包：`server.cjs` + `public/` + `ecosystem.config.cjs` + `VERSION`（需要服务器有 Node 22） |
 | `crossfile-signaling-<version>-linux-x64` | 单文件二进制（Node SEA，Web 资源已嵌入，服务器无需 Node），约 123 MB；下载后 `chmod +x` 直接运行 |
+| `crossfile-web-<version>-dist.tar.gz` | 构建后的 Web 静态资源（仅用于自行托管静态站；正式部署使用 server 包内嵌的 `public/`） |
 | `CrossFile-<version>-x86_64.AppImage` | Linux 桌面（Electron/Chromium，ADR 0009） |
 | `CrossFile_<version>_x64_en-US.msi` / `CrossFile_<version>_x64-setup.exe` | Windows 桌面（Tauri，**未签名**，SmartScreen 会提示） |
 | `CrossFile_<version>_universal.dmg` | macOS 桌面（Tauri universal，**未签名/未公证**） |

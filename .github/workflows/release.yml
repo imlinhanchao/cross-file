@@ -89,10 +89,19 @@ jobs:
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @crossfile/web build
+      - name: package web dist
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: tar -czf "crossfile-web-${VERSION}-dist.tar.gz" -C apps/web/dist .
       - uses: actions/upload-artifact@v4
         with:
           name: web-dist
           path: apps/web/dist
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-tarball
+          path: crossfile-web-*-dist.tar.gz
           retention-days: 1
 
   server:
@@ -340,6 +349,8 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+          # `web-dist` is a build input for the desktop/server jobs, not a release asset.
+          pattern: "{server-tarball,server-binary,desktop-linux,desktop-windows,desktop-macos,android,web-tarball}"
       - name: flatten artifacts and checksums
         run: |
           set -euo pipefail

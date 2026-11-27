@@ -408,7 +408,7 @@ export function RoomPage({ mode }: { mode: RoomMode }) {
                   >
                     {copy.dropzone}
                   </span>
-                  <span className="small muted">{copy.dropzoneHint}</span>
+                  <span className="small secondary">{copy.dropzoneHint}</span>
                 </div>
                 <input
                   ref={fileInput}

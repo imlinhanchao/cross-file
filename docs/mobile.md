@@ -497,3 +497,22 @@ Tauri ACL 不允许远程 https 页面调用自定义命令。
 
 安全说明：`CROSSFILE_DEV_AUTOACCEPT` 只在 `cfg!(debug_assertions)` 下生效，且必须链接里带 `autoaccept=1`；
 release 包即使设置该变量也不会绕过接收端的同意步骤。
+
+---
+
+## 10. 服务器地址设置（v0.4，2026-11-27）
+
+移动壳默认连官方实例，但可以在应用内改成自托管地址：
+
+- **入口**：首次启动先显示壳内「服务器地址」设置页（官方实例已预填）；之后通过壳注入的右下角 44 px
+  「服务器设置」按钮重新打开（shadow DOM 限定作用域，带 `aria-label`，打开设置页时隐藏，传输进行中禁用）。
+  **该注入入口是过渡方案**：后续 Web 端提供原生设置入口后会移除。
+- **存储**：应用配置目录下的 `server-settings.json`（与桌面同一格式，无密钥）；优先级
+  `CROSSFILE_SIGNALING_URL`（打包覆盖）> 已保存 > 官方实例（debug 构建默认本机 `ws://127.0.0.1:8788/v1/ws`）。
+- **应用方式**：设置页由壳注册的 `crossfile-settings://` 页面提供（Android 上为
+  `http://crossfile-settings.localhost`），保存/取消后回到打包的 web 应用并重新注入
+  `__CROSSFILE_SIGNALING_URL__`（由生效地址派生）；「测试连接」同桌面（5 s 超时、hello 握手）。
+- **已验证**：`cargo test` 17/17、`cargo check --target aarch64-linux-android` 通过、注入入口按钮在 Chromium 中
+  验证（44 px / aria / shadow DOM / 幂等 / 点击触发设置）。
+- **已知限制**：设置页打开时 Android 系统返回键仍会把应用切到后台（无 Rust↔Kotlin 桥拦截，返回后设置页仍在，
+  「取消」回到应用）；Android 真机运行时未验（本沙箱无法构建 APK）。

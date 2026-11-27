@@ -375,3 +375,28 @@ GitHub Releases 提供桌面安装包（见 `docs/release.md`）：Linux `CrossF
 Windows `CrossFile_<version>_x64_en-US.msi` / `-setup.exe`（Tauri，未签名）、macOS `CrossFile_<version>_universal.dmg`
 （Tauri universal，未签名/未公证）。桌面壳默认连接官方实例 `https://file.time-pack.com`；自托管可用
 `CROSSFILE_URL`（Electron）或应用内设置/菜单（Tauri）覆盖。
+
+---
+
+## 11. 服务器地址设置（v0.4，2026-11-27）
+
+打包后的桌面壳不再只能连官方实例：首次启动会先显示壳内的「服务器地址」设置页（官方实例已预填），
+也可以随时从菜单 **设置 → 服务器地址…**（`Ctrl/Cmd+,`，传输进行中禁用）打开。
+
+- **存储**：各平台应用配置目录下的 `server-settings.json`（`{"version":1,"origin","signalingUrl","savedAt"}`，
+  不含任何密钥）。Electron：`app.getPath("userData")`；Tauri：`app_config_dir()`（Linux
+  `$XDG_CONFIG_HOME/com.crossfile.desktop`、macOS `~/Library/Application Support/com.crossfile.desktop`、
+  Windows `%APPDATA%\com.crossfile.desktop`）。文件损坏/不可读按首次启动处理。
+- **优先级**：`CROSSFILE_URL` / `CROSSFILE_SIGNALING_URL`（既有自托管/打包覆盖）> 已保存的设置 > 官方实例
+  `https://file.time-pack.com`（debug 构建默认本机 `ws://127.0.0.1:8788/v1/ws`）。
+- **应用方式**：Electron 直接 `loadURL(origin)` 并把派生的 `wss://host/v1/ws` 注入 preload；Tauri 桌面用壳注册的
+  `crossfile-settings://` 页面（Windows/Android 上为 `http://crossfile-settings.localhost`）替换主 webview，
+  保存/取消后重新加载打包的 web 应用并重新注入信号地址（init script + `get_shell_config` 同步更新）。
+- **校验**：接受 `http(s)://` 源（去掉尾部路径/查询、保留非默认端口、保留 IPv6）或裸 `ws(s)://…/v1/ws`（归一化回源）；
+  拒绝空值/缺 scheme/非 http(s)、ws(s) 的 scheme/带凭据/含空格，并给出中文错误。派生 `wss://host/v1/ws`。
+- **测试连接**：壳侧向 `<origin>/v1/ws` 发起 WebSocket，发送 `{v:2,type:"hello",clientCaps:{…}}` 后立即关闭，5 s 超时，
+  显示成功/延迟或中文失败原因。
+- **恢复官方实例**：清除保存文件并立即应用官方实例；传输进行中时修改会延迟到重启（入口禁用并提示）。
+- **已验证**：Electron 9 个 node:test + 打包 AppImage 实跑首启/保存/重启跳过/服务器不可达回设置页/恢复官方实例；
+  Tauri 桌面 `cargo test` 16/16、`tauri build --no-bundle` 通过、真实 WebKitGTK 下保存→重载→注入新地址实测。
+  Windows/macOS 壳未实机验证（无对应环境）；自定义协议 URL 形态依赖 wry 的文档化转换。

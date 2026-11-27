@@ -306,7 +306,7 @@ v2 下发送方可能是任意成员，规则不变（仍然按**接收方** cap
 - 通道开启顺序：先 `ctrl` 再 `data`；`data` 上禁止发控制消息。
 - 双向共用一个 `ctrl`/`data`：**所有传输级 ctrl 消息都带 `transferId`**
   （`manifest` / `accept` / `bitmap` / `progress` / `done` / `ack` / `error` / `pause` / `resume`；只有
-  `hello` 与 `key-ok` 等通道级消息不带），两个方向靠它区分。
+  `hello` / `key-ok` / `ping` / `pong` / `cancel` 等通道级消息不带），两个方向靠它区分。
 
 ### 6.2 帧格式（data 通道，小端）
 
@@ -404,6 +404,23 @@ v2 下任何一端都可能成为接收方（Web 接收页、桌面壳、手机�
 约定：`sw` 要求页面与 Service Worker 同源（应用天然满足），下载 URL 带一次性随机 token、SW 校验后才返回流；
 **不使用第三方 StreamSaver.js**（其在 Safari 会退回 Blob 兜底）。`sw` 失败自动降级 `blob`。
 
+### 6.10 取消与心跳（v0.4 实现注记；不新增信令消息、不新增错误码，协议版本仍为 2）
+
+- `cancel {transferId, reason?}`（通道级、单向、无 ack）：发送或接收任一侧用户取消当前传输时，本端**立即**停止
+  （发送循环经 `AbortSignal` 中断；接收端 abort sink、丢弃内存缓冲），随后发一条 `cancel`；对端按 `transferId`
+  匹配当前活动传输后同样停止、清理半成品，并把该 pair 置回 idle（队列下一条自动开始），显示「对方已取消」。
+  `transferId` 不匹配/已过期的 `cancel` 直接忽略。重试使用**新的** `transferId` 重新走 `manifest → accept`，
+  不复用旧密文/bitmap。
+- 旧页面（未内置 cancel 的 bundle）会把未知 type 丢弃：新→旧取消时本端立即结束、不阻塞队列，但旧对端可能停在
+  半途或在其 120 s ack 超时后报错——新旧混用时取消属于尽力而为。
+- `ping` / `pong`（无 `transferId`，通道级）：pair 的 `ctrl` open 后每 `CTRL_HEARTBEAT_MS = 3 s` 发 `ping`，
+  对端回 `pong`；**收到任意 ctrl 或 data 帧都算活跃**；连续 `CTRL_TIMEOUT_MS = 10 s` 无任何帧 → 判定 pair 失效，
+  走 §6.5「pair lost → offerer 重建」（不直接报错）。pair 关闭/重建时清理定时器。
+- 兼容：旧页面不认 `ping/pong`、不回 pong；因此**只有收到过至少一次 pong 后才启用 10 s 超时判定**，否则只发
+  ping 不判失效（避免新旧混用误重建；真正断线仍由 WebRTC close 事件兜底）。
+- 常量：`CTRL_HEARTBEAT_MS = 3000`、`CTRL_TIMEOUT_MS = 10000`（`packages/core/src/protocol.ts`），与信令
+  WS 心跳 `HEARTBEAT_MS = 20000` 区分。
+
 ---
 
 ## 7. 服务端「零存储」实现约束
@@ -493,6 +510,8 @@ v2 下任何一端都可能成为接收方（Web 接收页、桌面壳、手机�
 | `ack` | `transferId, fileId, ok, error?` | 接收方校验结果；该 transfer 结束 |
 | `error` | `code, msg, transferId?, fileId?` | 见 §3.7 错误码 |
 | `pause` / `resume` | `transferId` | 接收端背压/流控 |
+| `cancel` | `transferId, reason?` | 用户取消当前传输（单向、无 ack）：对端停止该 transfer、清理半成品、pair 回 idle；`transferId` 不匹配则忽略（§6.10） |
+| `ping` / `pong` | — | 通道级心跳：已 open 的 pair 每 3 s ping / 回 pong；任意帧算活跃；见 §6.10 |
 | `sas-confirm` | — | 6 位码路径：成员确认 4 emoji 一致 |
 | `room-key` | `key, roomId` | 6 位码路径：管理员经 ctrl 下发 roomKey（base64url，32 B）与 roomId |
 | `key-ok` | — | **就绪信号（幂等）**：成员已持有 roomKey、pair 就绪。QR 路径每次通道重建后成员都会发一次；6 位码路径在 `room-key` 之后发。管理员据此放行 `manifest`/发送 |
@@ -527,6 +546,7 @@ v2 下任何一端都可能成为接收方（Web 接收页、桌面壳、手机�
   e2e 用 dev-only `?sasTimeoutMs=` 覆盖缩短等待（默认仍 60 s）；
 - v2 的「任意成员间 `signal`」路由到 `packages/signaling/src/server.ts`；成员表广播与昵称只在内存，
   不进日志（§7）；
+- 取消/重试与 ctrl 心跳已实现（v0.4，见 §6.10）：取消不新增错误码、心跳不新增信令消息；
 - 阶段 2 的懒建连、任意成员互传、管理权移交、自动接收开关已实现（见 §11）；旧客户端（无 `caps.mesh`）
   仍按阶段 1 的「管理员固定为 offerer」工作，新客户端对旧 peer 自动回退到该规则，同房间混用不会抢 offer。
 
@@ -578,3 +598,5 @@ v2 下任何一端都可能成为接收方（Web 接收页、桌面壳、手机�
 
 - `RECONNECT_WINDOW_MS`：服务端环境变量（默认 60000，正整数），同时决定成员离线窗口与管理员移交窗口；
   e2e 用 `E2E_RECONNECT_MS` 透传缩短等待，生产不设置。
+- `?ctrlHeartbeatMs=` / `?ctrlTimeoutMs=`：DEV-only 缩短 ctrl 心跳（`apps/web/src/lib/timeout.ts`，写法同
+  `?sasTimeoutMs=`）；心跳超时判定由单测覆盖。

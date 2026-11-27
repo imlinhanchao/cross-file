@@ -189,6 +189,30 @@ E2E_NO_WS=1 E2E_BASE_URL=https://file.time-pack.com E2E_RELAY=1 E2E_RELAY_MB=10 
   pnpm exec playwright test tests/e2e/ac2-relay.spec.ts
 ```
 
+## v0.4（传输取消/重试、ctrl 心跳、壳层服务器地址设置，2026-11-27）
+
+> 协议仍为 v2：取消与心跳都走已建立的 ctrl 数据通道（不新增 `/v1/ws` 消息、不新增错误码），
+> 见 `docs/02-protocol.md` §6.10 / §10.2。
+
+| # | 判据 | 状态 | 证据 |
+|---|---|---|---|
+| AC19 | 传输取消/重试（发送与接收两侧、含排队项） | ✅ | `tests/e2e/transfer-cancel-retry.spec.ts` **2 passed**：100 MB 传输中取消 → 双方 `phase=cancelled`（发送侧 local / 接收侧 peer）、无 error、半成品清理；重试用**新 transferId** 重新 manifest→accept，双方 SHA-256 一致。排队项可单独取消（队列第 2 条移除后第 1 条自动开始、对端只收到第 1 个文件）。单测 +11（send/receive/peer/heartbeat/protocol） |
+| AC20 | 应用层 ctrl 心跳（断线检测 ~10 s） | ✅ | 已 open 的 pair 每 3 s `ping`/`pong`，任意 ctrl/data 帧算活跃，连续 10 s 无帧 → 走 offerer 重建；**只有收到过 pong 后才启用超时判定**（旧页面不误伤）。单测 `heartbeat.test.ts` 6 条（注入时钟）覆盖超时/恢复/旧页面保护；DEV 覆盖 `?ctrlHeartbeatMs=`/`?ctrlTimeoutMs=` |
+| AC21 | 壳层「服务器地址设置页」（Electron / Tauri 桌面 / Android） | ✅ 本机可验部分 | Electron：`server-config.test.cjs` **9/9**、打包 AppImage 实跑首启设置页/测试连接/保存生效/重启跳过/服务器不可达回设置页/恢复官方实例；Tauri 桌面：`cargo test` **16/16**、`tauri build --no-bundle` 通过、真实 WebKitGTK 下保存→重载→注入新 `ws://` 实测；移动：`cargo test` **17/17**、`cargo check --target aarch64-linux-android` 通过、注入入口按钮（44 px/shadow DOM/aria）Chromium 验证。存储：各平台配置目录 `server-settings.json`（无密钥）；优先级 `CROSSFILE_SIGNALING_URL` > 已保存 > 官方实例（debug 默认本机 8788）；「恢复官方实例」清除设置并立即生效 |
+| U | 回归 | ✅ | `pnpm gate` exit 0（**154 单测 / 15 文件**，core 覆盖 93.77% lines / 86.44% branch，对比度 33/33，零硬编码色值）；全量 `pnpm e2e`（Go）→ **26 passed / 3 skipped / 0 failed**（2.7 min）；`E2E_RECONNECT_MS=1500` ac16+ac17 3 passed；Go 106 测试 / 85.6% / `-race` 干净；零存储审计 PASS |
+
+复现命令：
+
+```bash
+pnpm gate && pnpm e2e
+pnpm exec playwright test tests/e2e/transfer-cancel-retry.spec.ts
+pnpm --filter @crossfile/desktop-electron check        # node --check + 9 node:test
+(cd apps/desktop/src-tauri && cargo test)               # 16 tests
+(cd apps/mobile/src-tauri && cargo test)                # 17 tests
+```
+
+**已知限制**：取消对未升级的旧页面是尽力而为（旧 bundle 丢弃未知 ctrl 帧，旧发送端可能在自身 120 s ack 超时后报错）；重试仅发送侧可用（接收方被取消需对方重发）；Android 设置页打开时系统返回键会退到后台（无 Rust↔Kotlin 桥，后续修）；Windows/macOS 壳与 Android 真机运行时未验（本机无对应环境）。
+
 ## Go 单二进制后端（2026-11-27，已上线；Node 实现已移除）
 
 > 背景：用 Go 重写信令后端并把 TURN 内嵌进同一进程（`apps/signaling-go/`），去掉服务端 Node 与独立 coturn；

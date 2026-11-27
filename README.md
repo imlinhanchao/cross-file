@@ -7,7 +7,7 @@
 
 **2026-11-26：任意互传阶段 1 已实现。** 房间模型从「发送方 + 接收方」改为「管理员 + 成员」，管理员与成员之间可以双向互传（成员之间互传留在阶段 2）；协议升 v2、不兼容 v1（旧页面会收到明确的 `VERSION_MISMATCH` 并提示刷新），Web 端 Host/Guest 两页合并为统一 Room 页。验收：`pnpm gate` 全绿（178 单测）、`pnpm e2e` 20 passed / 1 skipped（AC2 relay 需 TURN 环境）、AC10 双向 500 MB 哈希一致、零存储审计 PASS。生产实例：**https://file.time-pack.com**（GitHub Actions → PM2，部署与验收记录见 [docs/06-acceptance.md](docs/06-acceptance.md)）。决策见 [ADR 0010](docs/adr/0010-any-to-any-room.md)。
 
-**2026-11-27：服务器端 Go 单二进制重写在途。** `apps/signaling-go/` 用 Go 重写 Node 信令服务：一个静态二进制在同一个进程里提供网页、`/v1/ws` 与 in-process TURN——**协议 v2 不变、客户端零改动**。流水线已适配：`E2E_SERVER=go` 跑 e2e、CI 新增 `go`/`e2e-go`/`zero-storage-go` 任务、`tests/audit/zero-storage.sh --go` 审 Go 二进制、release 产出 linux x64/arm64 的 Go tarball 与裸二进制（服务器不再需要 Node 或单独 coturn）。生产切换验收前，线上仍是 Node 版本。进度见 [docs/05-development-plan.md](docs/05-development-plan.md) §7.5。
+**2026-11-27：服务器端 Go 单二进制重写完成并已上线生产（v0.2.0）。** `apps/signaling-go/` 用 Go 重写 Node 信令服务：一个静态二进制在同一个进程里提供网页、`/v1/ws` 与 in-process TURN——**协议 v2 不变、客户端零改动**。流水线已适配：`E2E_SERVER=go` 跑 e2e、CI 新增 `go`/`e2e-go`/`zero-storage-go` 任务、`tests/audit/zero-storage.sh --go` 审 Go 二进制、release 产出 linux x64/arm64 的 Go tarball 与裸二进制（服务器不再需要 Node 或单独 coturn）。**生产已切换**：`https://file.time-pack.com` 现在跑 Go 单二进制（内嵌 TURN，服务器无 Node、无 coturn）；原 Node 实现保留在仓库中作为回滚路径。验收与证据见 [docs/06-acceptance.md](docs/06-acceptance.md)「Go 单二进制后端」与 [docs/05-development-plan.md](docs/05-development-plan.md) §7.5。
 
 **发布与下载：** GitHub Releases 提供服务器 tarball（**Go 单二进制**，含网页与 TURN）/ 服务器裸二进制（x64、arm64）、Linux AppImage、Windows MSI/EXE、macOS DMG、Android APK（`SHA256SUMS` 校验）；打 tag 即自动发布 release 并**自动部署生产**。流程见 [docs/release.md](docs/release.md)。
 

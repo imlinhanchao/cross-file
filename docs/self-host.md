@@ -4,7 +4,7 @@
 > 代码位置：`infra/`（compose、镜像、反代示例）、`tests/audit/`（零存储审计）。
 > 设计与验收依据：`docs/01-design.md` §5/§8、`docs/02-protocol.md` §6.6/§6.7/§7、`docs/03-roadmap.md` M4。
 >
-> **2026-11-27 起：生产推荐「Go 单二进制」**——一个静态可执行文件，进程内同时服务网页、`/v1/ws` 与 TURN，服务器不需要 Node、也不需要单独的 coturn。完整说明见文末 **§12 单二进制自托管（Go，推荐）**。本文前面的 Docker/compose 与 Node + coturn 方式仍然可用；在 Go 生产切换验收通过前，`file.time-pack.com` 仍跑 Node 版本。
+> **2026-11-27 起：生产推荐「Go 单二进制」**——一个静态可执行文件，进程内同时服务网页、`/v1/ws` 与 TURN，服务器不需要 Node、也不需要单独的 coturn。完整说明见文末 **§12 单二进制自托管（Go，推荐）**。本文前面的 Docker/compose 与 Node + coturn 方式仍然可用；官方实例 `file.time-pack.com` 已于 2026-11-27 切换到 Go 单二进制（v0.2.0，内嵌 TURN，服务器上 coturn 已停用）。
 
 ---
 
@@ -654,4 +654,4 @@ TURN 是否真的生效仍按 §4 的方法验证（webrtc-internals 里看 cand
 
 ### 12.5 回滚到 Node + coturn
 
-生产切换验收通过前，线上仍是 Node 版本；回滚就是重新部署旧 tag（`deploy` 工作流输入旧 tag，或服务器上 `pm2 start releases/<旧 tag>/ecosystem.config.cjs --update-env`）。每个 release 的 tarball 自带适配自己运行时的 `ecosystem.config.cjs`，所以 Node/Go 版本可以互相覆盖部署。
+官方实例已切换为 Go 单二进制（v0.2.0）；回滚就是重新部署旧 tag（`deploy` 工作流输入旧 tag，或服务器上 `pm2 start releases/<旧 tag>/ecosystem.config.cjs --update-env`），Node 版回滚还需重新启用 coturn。每个 release 的 tarball 自带适配自己运行时的 `ecosystem.config.cjs`，所以 Node/Go 版本可以互相覆盖部署。

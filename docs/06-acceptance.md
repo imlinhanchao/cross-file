@@ -134,11 +134,20 @@ E2E_NO_WS=1 E2E_BASE_URL=https://file.time-pack.com E2E_RELAY=1 E2E_RELAY_MB=10 
   pnpm exec playwright test tests/e2e/ac2-relay.spec.ts
 ```
 
-#### 发布链路缺陷（P0 收尾发现，待修）
+#### 发布链路缺陷（2026-11-27 发现，均已修复）
 
-`release.yml` 用 `softprops/action-gh-release` + 仓库 `GITHUB_TOKEN` 自动发布 release，而 GitHub 不会为 `GITHUB_TOKEN` 创建的 release 派发 `release: published` 事件（防递归规则；只有 `workflow_dispatch` / `repository_dispatch` 例外）。因此 `deploy.yml` 的 `on: release: published` 对自动发布的 release **不会触发**——本次 v0.1.0 就是手动按等价步骤部署的。修复方向：`release.yml` 发布后显式 `gh workflow run deploy.yml -f tag=<tag>`（需 `actions: write`），或 `deploy.yml` 改用 `on: workflow_run: { workflows: [release], types: [completed] }` 并按 `workflow_run.head_branch` 取 tag。修复后需在下一个 tag 上验证「发布 → 自动部署」闭环。
+`release.yml` 用 `softprops/action-gh-release` + 仓库 `GITHUB_TOKEN` 自动发布 release，而 GitHub 不会为 `GITHUB_TOKEN` 创建的 release 派发 `release: published` 事件（防递归规则；只有 `workflow_dispatch` / `repository_dispatch` 例外）。因此 `deploy.yml` 的 `on: release: published` 对自动发布的 release **不会触发**——本次 v0.1.0 就是手动按等价步骤部署的。修复方向：`release.yml` 发布后显式 `gh workflow run deploy.yml -f tag=<tag>`（需 `actions: write`），或 `deploy.yml` 改用 `on: workflow_run: { workflows: [release], types: [completed] }` 并按 `workflow_run.head_branch` 取 tag。**修复**：`release.yml` 增加 `permissions.actions: write`，并在 release job 末尾显式执行
+`gh workflow run deploy.yml --ref <默认分支> -f tag=<tag>`（`workflow_dispatch` 不受递归限制）；失败会让 release
+workflow 变红，不再静默跳过部署。**已用 v0.2.0 验证闭环**：release run 45973916659 全绿 → 自动 dispatch → `deploy`
+run 45975445722（event = `workflow_dispatch`）出现，说明「发布 → 自动部署」链路通了。
 
-## Go 单二进制后端（2026-11-27，本地验收完成，生产切换待做）
+**缺陷 2（v0.2.0 首次自动部署暴露）**：`deploy.yml` 的 `appleboy/scp-action` 上传 `source: release/crossfile-signaling-*.tar.gz`
+时保留了 `release/` 前缀，tarball 落到 `releases/v0.2.0/release/`，而解压步骤只在 `releases/v0.2.0/` 下找 → 脚本
+`set -e` 退出，**PM2 尚未被触碰，生产仍跑旧版本**（安全失败，但没完成部署）。**修复**：scp-action 加
+`strip_components: 1`，解压步骤改用 `find -maxdepth 2` 兜底并清理嵌套 `release/` 目录（commit `59d30af`）。
+v0.2.0 因此按 `deploy.yml` 等价步骤手动部署（见下方 v0.2.0 生产记录）；修复后的 `deploy` 脚本用同版本重跑即可复验。
+
+## Go 单二进制后端（2026-11-27，已上线 v0.2.0）
 
 > 背景：用 Go 重写信令后端并把 TURN 内嵌进同一进程（`apps/signaling-go/`），去掉服务端 Node 与独立 coturn；
 > 协议仍为 v2、客户端零改动。实现与验收细节见 `docs/05-development-plan.md` §7.5。
@@ -151,7 +160,7 @@ E2E_NO_WS=1 E2E_BASE_URL=https://file.time-pack.com E2E_RELAY=1 E2E_RELAY_MB=10 
 | G4 | 内嵌 TURN 真中继（不依赖 coturn） | ✅ | `E2E_SERVER=go E2E_RELAY=1 TURN_SECRET=… TURN_URIS='turn:127.0.0.1:3478?transport=udp,turn:127.0.0.1:3478?transport=tcp' TURN_EXTERNAL_IP=127.0.0.1 pnpm exec playwright test tests/e2e/ac2-relay.spec.ts` → **1 passed（9.7 s）**，双方 `path === "relay"` 断言通过；另有 Go 单测 `TestEmbeddedTURNAllocatesAndRelaysUDP` 用 REST 凭据分配并回环 UDP |
 | G5 | 零存储（Go 二进制） | ✅ | `bash tests/audit/zero-storage.sh --go` → **RESULT PASS**：8 步 v2 会话、0 可写文件、0 普通文件 write、stdout 恰 1 行、stdout 无 roomId/6 位码/显示名、cwd 为空、SIGTERM 优雅退出 |
 | G6 | 发布产物 | ✅ | release `server` job 本地等价实跑：x64/arm64 静态链接（含内嵌网页 10,457,248 B / 约 9.5 MB）、冒烟（`<div id="root">`、SPA 回退、v1 → `VERSION_MISMATCH`）、tarball = `crossfile-signaling`(0755) + `ecosystem.config.cjs` + `VERSION`；本机 PM2 `interpreter: none` 实跑 online、`/` 200、日志 1 行、`pm2 delete` 释放端口 |
-| G7 | 生产切换 | 🚧 待做 | 需停 coturn（释放 3478）后打 tag 发布；切换后按 P0 同款命令对生产复跑 AC10 与 AC2 relay |
+| G7 | 生产切换（v0.2.0） | ✅ | coturn `stop+disable`、3478 释放后打 tag `v0.2.0`（→ `2d2d5fd`）；release run 45973916659 全绿并自动发布（8+2 个资产）→ dispatch `deploy`；因 scp 嵌套路径缺陷（见上「缺陷 2」）deploy 未完成，按 `deploy.yml` 等价步骤手动部署：`releases/v0.2.0` 解压 → `source shared/.env`（含 `TURN_EXTERNAL_IP`）→ `pm2 delete+start --update-env` → 健康检查 → `current` 软链。**生产实测**：`file` = 静态 Go ELF（stripped）、PM2 online（内存 ~5.6 MB，原 Node 版 ~65 MB）、`3478` udp+tcp 监听、启动日志 1 行 `… turn=on`、`https://file.time-pack.com/` 200 + 安全头；**生产 AC10 双向 10 MB → 1 passed（11.7 s）**；**生产 AC2 relay-only 10 MB（内嵌 TURN，无 coturn）→ 1 passed（1.5 min）** |
 
 Go 复现命令：
 
@@ -174,6 +183,6 @@ bash tests/audit/zero-storage.sh --go
 
 #### 待人工验证（需要真机）
 
-- Android：安装 `CrossFile-0.1.0-android-arm64.apk`（包名 `org.hancel.file`，release 签名）验证安装/启动/双向传输；本机无 arm64 真机。
+- Android：安装 `CrossFile-0.2.0-android-arm64.apk`（包名 `org.hancel.file`，release 签名）验证安装/启动/双向传输；本机无 arm64 真机。
 - iOS/Safari：Safari 收 100 MB / 500 MB（`sw` 未实现，仅 Blob 兜底；已知风险）。
 - Windows/macOS 桌面壳未签名，SmartScreen/公证提示属预期。

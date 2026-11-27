@@ -40,7 +40,7 @@
 | **M3 产品化** | 多接收方队列 + 文件×人矩阵、审批/移除/结束、6 位码 + SAS emoji、全状态与无障碍 | AC5 AC6 | ☐ |
 | **M4 发布可用** | docker-compose 一键自托管、官方实例、隐私页、自托管文档、LICENSE | U1–U8 复跑 | ☐ |
 | **M5 发布后** | 鸿蒙 API 26 冒烟、真机待办、v1.x backlog | 报告归档 | ☐ |
-| **M6 Go 单二进制后端** | 用 Go 重写信令（协议 v2 不变、客户端零改动），单进程内嵌 Web 静态资源与 TURN；CI / e2e / 零存储审计 / 发布流水线适配 | e2e（`E2E_SERVER=go`）全绿 + 零存储 `--go` PASS + release 产出 Go 资产 + 生产切换验收 | ✅ 实现/验证完成，🚧 生产切换待做 |
+| **M6 Go 单二进制后端** | 用 Go 重写信令（协议 v2 不变、客户端零改动），单进程内嵌 Web 静态资源与 TURN；CI / e2e / 零存储审计 / 发布流水线适配 | e2e（`E2E_SERVER=go`）全绿 + 零存储 `--go` PASS + release 产出 Go 资产 + 生产切换验收 | ✅ 完成（2026-11-27 生产 v0.2.0 上线） |
 
 ## 4. 工作包（WBS）
 
@@ -343,7 +343,7 @@ https://room.net.time-pack.com  --TLS-->  nginx (既有反代)  -->  Vite :5173
 - **未验证项**：AC2 relay（本机无 coturn）；管理员 WS 断线/成员 `rejoinToken` 重连只有服务端单测、无浏览器实测钩子；壳层（Tauri/Electron/手机）仍靠人工 AC9（本次未重跑，壳加载同一 Web 产物）；阶段 2 未实现（协议/状态已按 member 化预留）。
 - **AC11 用例依赖大文件窗口**：默认用 80 MB 制造排队窗口（本机稳定），极快机器可用 `E2E_QUEUE_MB` 放大。
 
-## 7.5 Go 单二进制后端（2026-11-27，实现与验证完成，待生产切换）
+## 7.5 Go 单二进制后端（2026-11-27，已上线生产 v0.2.0）
 
 **目标**：用 Go 重写 Node 信令服务（`apps/signaling-go/`），产出一个静态单二进制，进程内同时提供 Web 静态资源、`/v1/ws` 与 in-process TURN；**协议 v2 不变、客户端零改动**，随后生产从「Node + 独立 coturn」切换到「一个 Go 二进制」。
 
@@ -358,10 +358,10 @@ https://room.net.time-pack.com  --TLS-->  nginx (既有反代)  -->  Vite :5173
 - e2e：`playwright.config.ts` 支持 `E2E_SERVER=go`（默认仍是 Node `dev.ts`）；Go 模式先 `SKIP_WEB=1 bash apps/signaling-go/build.sh` 再启动二进制，Vite webServer 与默认 Node 分支不变。
 - CI：`.github/workflows/ci.yml` 新增 `go`（gofmt / go vet / go test / 静态构建）、`e2e-go`（`E2E_SERVER=go pnpm e2e`）、`zero-storage-go`；Node 的 e2e 与容器零存储 job 保留到 Go 生产切换验收通过。
 - 零存储：`tests/audit/zero-storage.sh --go` 用同一套 `strace` + 8 步 v2 会话审计 Go 二进制，并额外断言启动日志不含 roomId / 6 位码 / 显示名。
-- 发布：`release.yml` 的 server job 改为 Go 构建（linux x64 + arm64），tarball 资产名保持 `crossfile-signaling-<version>-linux-x64.tar.gz` 不变，内含 Go 二进制 + `interpreter: "none"` 的 `ecosystem.config.cjs` + `VERSION`；另出裸二进制资产，并在发布前做「内嵌页面 / SPA 回退 / v1 版本门禁」冒烟。`deploy.yml` 零改动。
+- 发布：`release.yml` 的 server job 改为 Go 构建（linux x64 + arm64），tarball 资产名保持 `crossfile-signaling-<version>-linux-x64.tar.gz` 不变，内含 Go 二进制 + `interpreter: "none"` 的 `ecosystem.config.cjs` + `VERSION`；另出裸二进制资产，并在发布前做「内嵌页面 / SPA 回退 / v1 版本门禁」冒烟。`deploy.yml` 仅修了一处 tarball 落地路径（`strip_components: 1` + `find` 兜底，见 docs/06「发布链路缺陷 2」）。
 - 文档：`docs/release.md`、`docs/self-host.md`、README 同步为单二进制部署；旧 Node 构建脚本（`infra/signaling/build*.mjs`）暂留，切换验收后再删。
 
-**状态**：实现与全部本地验证已完成（见下方实测）；生产仍跑 Node 版本，待一次 tag 发布完成切换。切换顺序：停 coturn（释放 3478）→ 打 tag → release 自动发布并 dispatch deploy → Go 二进制接管网页 + `/v1/ws` + TURN。回滚只需用旧 tag 重跑 deploy 并重启 coturn（见 `docs/release.md` §7）。
+**状态**：已完成并**上线生产 v0.2.0**（2026-11-27）：停 coturn（释放 3478）→ 打 tag `v0.2.0` → release 自动发布并 dispatch deploy。首次自动部署暴露了 `deploy.yml` 的 scp 嵌套路径缺陷（已修，见 docs/06「发布链路缺陷 2」），该版本按等价步骤手动部署；生产实测 AC10 双向 10 MB 与 AC2 relay-only 10 MB（内嵌 TURN）均通过，PM2 内存从 ~65 MB 降到 ~5.6 MB。回滚用旧 tag 重跑 deploy 并重启 coturn（见 `docs/release.md` §7）。
 
 **本地实测（2026-11-27，流水线本身）**：
 

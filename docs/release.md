@@ -17,7 +17,7 @@
 > `GITHUB_TOKEN`，所以 `deploy.yml` 的 `on: release: published` **不会**因它触发——P0 `v0.1.0` 就是这样
 > 发布成功但 deploy 没有自动跑（当时人工补部署）。`workflow_dispatch` 不受该限制，因此 release job 的最后一步
 > 执行 `gh workflow run deploy.yml --ref <默认分支> -f tag=<tag>`（工作流已声明 `permissions.actions: write`），
-> `deploy.yml` 本身零改动。人工在 GitHub 上发布/重新发布 release 仍走 `release: published`；
+> `deploy.yml` 只额外修了 tarball 落地路径（`strip_components: 1`，见 §7「部署脚本修复」）。人工在 GitHub 上发布/重新发布 release 仍走 `release: published`；
 > `deploy.yml` 的 `workflow_dispatch` 仍是手动重部署入口。
 
 > **该修复只能在下一次打 tag 时端到端证明**（本地无法触发 GitHub 事件）。届时看：`release` run 是否全绿 →
@@ -73,7 +73,7 @@ VERSION                 commit / version / built 三行
 
 > 旧的 Node 解压包（`server.cjs` + `public/`，需要服务器有 Node 22）与 Node SEA 单二进制不再随 release 产出；`infra/signaling/build*.mjs` 暂时保留到 Go 生产切换验收通过后再删除。
 
-> ⚠️ **切换窗口注意**：发布 release 会自动触发 `deploy.yml` 部署生产。在 master 上启用本流水线后，**任何新打的 tag 产出的 server 资产都是 Go 二进制**，发布即把生产切换成 Go。P0 的 `v0.1.0` tag 指向旧 commit（`acdd78f`），其 workflow/产物仍是 Node 版本，不受影响；在 Go 切换验收通过前，不要用 master 打新 tag 发布生产。
+> ✅ **切换已完成**：`v0.2.0`（commit `2d2d5fd`）起，master 上的 release 流水线产出的 server 资产是 Go 单二进制，生产 `https://file.time-pack.com` 已切到 Go（内嵌 TURN，不再需要 coturn）。P0 的 `v0.1.0` tag 指向旧 commit（`acdd78f`），产物仍是 Node 版本，可作为回滚目标。
 
 ## 3. 发一个版本
 
@@ -149,3 +149,12 @@ bash tests/audit/zero-storage.sh --go          # strace：0 写盘 / 0 DB / 1 �
 - 生产：在服务器上 `pm2 start /var/www/rust/cross-file/releases/<旧 tag>/ecosystem.config.cjs --update-env && pm2 save`，
   或手动跑 `deploy` workflow 并输入旧 tag。
 - Release：GitHub 上把旧 release 标记为 Latest / 重新下载旧产物即可；tag 不要删除（已发布产物保持可追溯）。
+- 回滚到 Node 版（v0.1.0）：先 `sudo systemctl enable --now coturn`（Go 内嵌 TURN 让出了 3478），再 `deploy` 工作流输入旧 tag。
+  两个版本的 tarball 各自带适配自己运行时的 `ecosystem.config.cjs`，`deploy.yml` 不需要区分。
+
+## 8. 部署脚本修复（2026-11-27，v0.2.0 首次自动部署发现）
+
+`appleboy/scp-action` 上传 `source: release/crossfile-signaling-*.tar.gz` 时保留了 `release/` 前缀，tarball 落到
+`releases/<tag>/release/`，而解压步骤只在 `releases/<tag>/` 下找 → `set -e` 退出，PM2 未被触碰（生产仍是旧版本，
+安全失败但没部署）。修复：scp-action 加 `strip_components: 1`，解压步骤用 `find -maxdepth 2` 兜底并清理嵌套目录。
+同版本重跑 `deploy` 工作流即可复验。

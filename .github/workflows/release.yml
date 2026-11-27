@@ -319,10 +319,19 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: checksums
+      - name: flatten artifacts and checksums
         run: |
           set -euo pipefail
           cd dist
+          # upload-artifact keeps each artifact's internal paths; Windows bundles land in
+          # msi/ and nsis/ subdirectories. Flatten them so every asset is a top-level file.
+          find . -mindepth 2 -type f -exec mv -n {} . \;
+          find . -mindepth 1 -type d -empty -delete
+          if find . -mindepth 1 -type d | grep -q .; then
+            echo "unexpected nested directories after flattening:" >&2
+            find . -mindepth 1 -type d >&2
+            exit 1
+          fi
           ls -lh
           sha256sum * > SHA256SUMS
           cat SHA256SUMS

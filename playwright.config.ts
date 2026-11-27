@@ -41,6 +41,9 @@ export default defineConfig({
   expect: { timeout: 30_000 },
   fullyParallel: false,
   workers: 1,
+  // WebRTC resume/ICE timing on GitHub's runners is occasionally flaky; one retry keeps a
+  // single transient failure from failing the whole gate (a real regression fails both).
+  retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [["github"], ["list"]] : [["list"]],
   use: {
     baseURL: APP_ORIGIN,

@@ -7,9 +7,9 @@
 
 | 触发 | 行为 |
 |---|---|
-| push tag `v*`（如 `v0.1.0`） | 跑全部门禁 → 构建所有产物 → 创建 **draft release** |
+| push tag `v*`（如 `v0.1.0`） | 跑全部门禁 → 构建所有产物 → **自动发布 release** → 自动触发 `deploy` |
 | 手动 `workflow_dispatch`（version + dry_run） | 构建产物；`dry_run=true`（默认）只上传 workflow artifact，不创建 release |
-| 手动发布 draft release / `release: published` | 触发 `deploy`，把该 release 的 server tarball 部署到生产 |
+| `release: published`（自动发布或手动补发） | 触发 `deploy`，把该 release 的 server tarball 部署到生产 |
 | 手动 `deploy` workflow（输入 tag） | 重新部署某个已发布 release |
 
 ## 2. 产物
@@ -18,7 +18,6 @@
 |---|---|
 | `crossfile-signaling-<version>-linux-x64.tar.gz` | 解压部署包：`server.cjs` + `public/` + `ecosystem.config.cjs` + `VERSION`（需要服务器有 Node 22） |
 | `crossfile-signaling-<version>-linux-x64` | 单文件二进制（Node SEA，Web 资源已嵌入，服务器无需 Node），约 123 MB；下载后 `chmod +x` 直接运行 |
-| `crossfile-web-<version>-dist.tar.gz` | 构建后的 Web 静态资源（仅用于自行托管静态站；正式部署使用 server 包内嵌的 `public/`） |
 | `CrossFile-<version>-x86_64.AppImage` | Linux 桌面（Electron/Chromium，ADR 0009） |
 | `CrossFile_<version>_x64_en-US.msi` / `CrossFile_<version>_x64-setup.exe` | Windows 桌面（Tauri，**未签名**，SmartScreen 会提示） |
 | `CrossFile_<version>_universal.dmg` | macOS 桌面（Tauri universal，**未签名/未公证**） |
@@ -38,9 +37,10 @@ iOS 暂不打包（需要 Apple 开发者账号与签名/TestFlight 流程）。
    git tag v0.1.0
    git push origin v0.1.0
    ```
-4. `release` workflow 构建完成后，在 GitHub → Releases 里检查 draft（产物 + 自动生成的 release notes + SHA256SUMS）。
-5. 点 **Publish release** → `deploy` 自动把 server tarball 部署到生产（`environment: production`，如配置了 required reviewers 需先批准）。
-6. 验收：`https://file.time-pack.com/` 200、`pm2 ls` online、`current` 软链指向 `releases/v0.1.0`。
+4. `release` workflow 构建完成后会**自动发布 release**（含产物 + 自动生成的 release notes + SHA256SUMS），
+   并立即触发 `deploy`（`environment: production`，如配置了 required reviewers 需先批准）。
+5. 验收：`https://file.time-pack.com/` 200、`pm2 ls` online、`current` 软链指向 `releases/v0.1.0`。
+   如果产物有问题，删除该 release 并修复后重新打 tag（或在 Actions 里重跑）。
 
 > 版本号以 tag 为唯一来源；tag 与 6 个 manifest 不一致时 `verify` job 直接失败。
 

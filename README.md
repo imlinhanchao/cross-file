@@ -7,7 +7,7 @@
 
 **2026-11-26：任意互传阶段 1 已实现。** 房间模型从「发送方 + 接收方」改为「管理员 + 成员」，管理员与成员之间可以双向互传（成员之间互传留在阶段 2）；协议升 v2、不兼容 v1（旧页面会收到明确的 `VERSION_MISMATCH` 并提示刷新），Web 端 Host/Guest 两页合并为统一 Room 页。验收：`pnpm gate` 全绿（178 单测）、`pnpm e2e` 20 passed / 1 skipped（AC2 relay 需 TURN 环境）、AC10 双向 500 MB 哈希一致、零存储审计 PASS。生产实例：**https://file.time-pack.com**（GitHub Actions → PM2，部署与验收记录见 [docs/06-acceptance.md](docs/06-acceptance.md)）。决策见 [ADR 0010](docs/adr/0010-any-to-any-room.md)。
 
-**发布与下载：** GitHub Releases 提供服务器解压包 / 服务器单二进制、Linux AppImage、Windows MSI/EXE、macOS DMG、Android APK（`SHA256SUMS` 校验）；打 tag 即出 draft release，**发布 release 即部署生产**。流程见 [docs/release.md](docs/release.md)。
+**发布与下载：** GitHub Releases 提供服务器解压包 / 服务器单二进制、Linux AppImage、Windows MSI/EXE、macOS DMG、Android APK（`SHA256SUMS` 校验）；打 tag 即自动发布 release 并**自动部署生产**。流程见 [docs/release.md](docs/release.md)。
 
 ```bash
 pnpm install

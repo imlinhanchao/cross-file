@@ -4,6 +4,7 @@ node_modules
 coverage
 dist
 apps/web/dist
+apps/signaling-go/webdist
 playwright-report
 test-results
 pnpm-lock.yaml

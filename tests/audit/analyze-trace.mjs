@@ -14,13 +14,32 @@
  *   2. no write(2) to an fd that belongs to a regular file (stdout/stderr fds 1/2 are excluded;
  *      sockets and pipes are not file writes);
  *   3. no database-ish path is opened at all;
- *   4. server stdout is exactly the one startup line (no access log, no request log);
+ *   4. server stdout is exactly the one startup line (no access log, no request log), and
+ *      session secrets observed by the client (roomId, 6-digit code, display names) never
+ *      appear in it;
  *   5. the client session actually succeeded and the process cwd stayed empty.
  *
  * Exit code 0 = PASS, 1 = FAIL.
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
+
+/** Sensitive values the client saw: `CLIENT WATCH key=value` lines from signal-client.mts. */
+function readWatchValues(path) {
+  if (!path) return [];
+  let text = "";
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    return [];
+  }
+  const values = [];
+  for (const line of text.split("\n")) {
+    const match = line.match(/^CLIENT WATCH ([^=]+)=(.*)$/);
+    if (match) values.push({ label: match[1], value: match[2] });
+  }
+  return values;
+}
 
 function arg(name, fallback) {
   const index = process.argv.indexOf(name);
@@ -205,6 +224,28 @@ if (logPath) {
         "",
         accessLog,
       );
+    }
+
+    // 4b. The server must not echo session secrets it can see (docs/02 §7: logs never carry
+    // roomId/display names; the 6-digit code is a room secret too). signal-client.mts prints
+    // every value it learned as `CLIENT WATCH key=value`.
+    const watch = readWatchValues(clientLogPath);
+    if (watch.length === 0) {
+      note(
+        "client log has no CLIENT WATCH values; skipped the stdout-leak assertion",
+      );
+    } else {
+      const leaked = watch.filter((entry) => log.includes(entry.value));
+      if (leaked.length === 0) {
+        pass(
+          `server stdout contains none of the ${watch.length} client-visible secret(s) (roomId/code/display names)`,
+        );
+      } else {
+        fail(
+          `server stdout leaked ${leaked.length} client-visible secret(s)`,
+          leaked.map((entry) => `${entry.label}=${entry.value}`).join(", "),
+        );
+      }
     }
   }
 }

@@ -165,8 +165,15 @@ try {
   await Promise.all([admin.open(), memberA.open(), memberB.open()]);
   ok(`connected ${WS_URL}`);
 
-  // 1. create -----------------------------------------------------------------
+  // Values the zero-storage audit asserts are *absent* from the server's stdout:
+  // docs/02 §7 forbids logging roomId / display names (and the 6-digit code is a room
+  // secret). analyze-trace.mjs greps the server log for every `CLIENT WATCH key=value` line.
   const roomId = base32Encode(randomBytes(16));
+  console.log(`CLIENT WATCH roomId=${roomId}`);
+  console.log("CLIENT WATCH name=审计管理员");
+  console.log("CLIENT WATCH name=审计成员 A");
+
+  // 1. create -----------------------------------------------------------------
   admin.send({ type: "hello", clientCaps: ADMIN_CAPS });
   admin.send({
     type: "create",
@@ -184,6 +191,7 @@ try {
   if (typeof created.rejoinToken !== "string" || created.rejoinToken === "")
     fail("created.rejoinToken missing");
   ok(`created roomId=${roomId} code=${code} adminId=${adminId}`);
+  console.log(`CLIENT WATCH code=${code}`);
 
   const turn = created.turn as
     | { uris?: string[]; username?: string; credential?: string; ttl?: number }

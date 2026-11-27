@@ -1,20 +1,29 @@
 #!/usr/bin/env bash
 # Zero-storage audit for the CrossFile signaling server (docs/01 AC8, docs/02 §7).
 #
-# Two modes:
-#   (default) local     — build the production bundle, run it under
+# Three modes:
+#   (default) local     — build the Node production bundle, run it under
 #                         `strace -f -e trace=openat,openat2,write`, drive a real
 #                         create → join → approve → signal → close session through it, then assert
 #                         that the process opened no writable file, wrote to no regular file,
-#                         touched no database, logged only its startup line, and left its cwd
-#                         empty.
+#                         touched no database, logged only its startup line, left its cwd empty,
+#                         and never echoed the session's roomId/code/display names.
+#   --go                — same strace and same 8-step v2 session, but the process under test is
+#                         the Go binary: `SKIP_WEB=1 apps/signaling-go/build.sh` then
+#                         `apps/signaling-go/bin/crossfile-signaling`. Needs the Go toolchain;
+#                         does NOT build or need the Node bundle. SKIP_BUILD=1 reuses an existing
+#                         binary. TURN_* is scrubbed so the in-process TURN server stays out of
+#                         this audit (the claim under test is "the signaling process writes
+#                         nothing", not TURN behaviour).
 #   --container         — build and start the docker-compose signaling service with a read-only
 #                         rootfs / non-root user / no volumes, run the same session against it,
 #                         assert Docker-level read-only + health + single startup log line, prove
 #                         writes fail with EROFS, then `docker compose down -v`.
 #
 # Usage:
-#   tests/audit/zero-storage.sh                 # local strace audit
+#   tests/audit/zero-storage.sh                 # local Node strace audit
+#   tests/audit/zero-storage.sh --go            # local Go binary strace audit
+#   SKIP_BUILD=1 tests/audit/zero-storage.sh --go   # reuse an existing Go binary
 #   tests/audit/zero-storage.sh --container     # container audit (needs Docker)
 #   AUDIT_PORT=18787 tests/audit/zero-storage.sh
 #   KEEP_TMP=1 tests/audit/zero-storage.sh      # keep trace/logs for inspection
@@ -30,9 +39,10 @@ PORT="${AUDIT_PORT:-18787}"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --container) MODE="container" ;;
+    --go) MODE="go" ;;
     --local) MODE="local" ;;
     --port) shift; PORT="${1:?--port needs a value}" ;;
-    -h|--help) sed -n '2,25p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) awk 'NR > 1 && /^set -u -o pipefail$/{exit} NR > 1' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "[FAIL] unknown argument: $1 (try --help)"; exit 1 ;;
   esac
   shift
@@ -128,6 +138,90 @@ run_local() {
   fi
 
   # Graceful SIGTERM, exactly what the container gets on `docker compose down`.
+  if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
+    kill -TERM "$SERVER_PID" 2>/dev/null || true
+    for i in $(seq 1 50); do kill -0 "$SERVER_PID" 2>/dev/null || break; sleep 0.1; done
+    kill -KILL "$SERVER_PID" 2>/dev/null || true
+  fi
+  wait "$STRACE_PID" 2>/dev/null || true
+  STRACE_PID=""
+  evidence "trace: $TRACE ($(wc -l <"$TRACE" 2>/dev/null || echo 0) strace lines), server log: $SERVER_LOG"
+
+  node tests/audit/analyze-trace.mjs \
+    --trace "$TRACE" \
+    --log "$SERVER_LOG" \
+    --client-log "$CLIENT_LOG" \
+    --workdir "$AUDIT_CWD"
+  return $?
+}
+
+# ---------------------------------------------------------------------------------------------
+# Go mode: strace the production Go binary (single static binary, web app + TURN embedded).
+# Same session and the same assertions as local mode; the Node bundle is never built or used.
+# ---------------------------------------------------------------------------------------------
+run_go() {
+  command -v strace >/dev/null 2>&1 || { fail "strace is not installed (apt install strace)"; return 1; }
+  command -v node >/dev/null 2>&1 || { fail "node is not installed (needed for the audit client)"; return 1; }
+  [ -f node_modules/tsx/package.json ] || { fail "workspace dependencies are missing: run 'pnpm install' first"; return 1; }
+  [ -f apps/signaling-go/go.mod ] || { fail "apps/signaling-go is missing (expected the Go signaling server)"; return 1; }
+  local bin="$ROOT/apps/signaling-go/bin/crossfile-signaling"
+
+  say "== Zero-storage audit (Go binary, strace) =="
+  if [ "${SKIP_BUILD:-0}" = "1" ] && [ -x "$bin" ]; then
+    evidence "SKIP_BUILD=1: reusing existing binary $bin"
+  else
+    # SKIP_WEB=1: the audit never needs the web app, only the /v1/ws listener.
+    if ! env SKIP_WEB=1 bash apps/signaling-go/build.sh >"$TMP/build.log" 2>&1; then
+      fail "could not build the Go signaling binary (SKIP_WEB=1 apps/signaling-go/build.sh)"
+      tail -n 20 "$TMP/build.log" | sed 's/^/[EVIDENCE]   /'
+      return 1
+    fi
+    pass "Go signaling binary built (SKIP_WEB=1; the Node bundle is not involved)"
+  fi
+  [ -x "$bin" ] || { fail "Go binary is missing or not executable: $bin"; return 1; }
+  local bin_size
+  bin_size="$(wc -c <"$bin" | tr -d ' ')"
+  evidence "binary: apps/signaling-go/bin/crossfile-signaling ($bin_size bytes)"
+
+  # Scrub proxy and TURN variables: the server is local (no proxy warnings on stdout) and the
+  # in-process TURN listener stays out of the signaling-process audit.
+  (
+    cd "$AUDIT_CWD" || exit 1
+    exec env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u all_proxy \
+      -u TURN_SECRET -u TURN_URIS -u TURN_EXTERNAL_IP -u TURN_LISTEN_PORT -u TURN_MIN_PORT -u TURN_MAX_PORT \
+      PORT="$PORT" HOST=127.0.0.1 \
+      strace -f -qq -s 256 -e trace=openat,openat2,write -o "$TRACE" -- \
+      "$bin" >"$SERVER_LOG" 2>&1
+  ) &
+  STRACE_PID=$!
+
+  local ready=0 i
+  for i in $(seq 1 150); do
+    SERVER_PID="$(pgrep -P "$STRACE_PID" 2>/dev/null | head -n 1)"
+    if grep -q "listening on" "$SERVER_LOG" 2>/dev/null; then ready=1; break; fi
+    if ! kill -0 "$STRACE_PID" 2>/dev/null; then break; fi
+    sleep 0.1
+  done
+  if [ "$ready" -ne 1 ]; then
+    fail "Go signaling process did not start under strace"
+    tail -n 20 "$SERVER_LOG" 2>/dev/null | sed 's/^/[EVIDENCE]   /'
+    tail -n 20 "$TRACE" 2>/dev/null | sed 's/^/[EVIDENCE]   /'
+    return 1
+  fi
+  evidence "server pid=${SERVER_PID:-unknown} (child of strace pid=$STRACE_PID), port=$PORT"
+  evidence "server stdout: $(head -n 1 "$SERVER_LOG")"
+
+  # Real session over the audited process (create → 2×join/approve → members/profile broadcast
+  # → arbitrary-member signals → close), the same client the Node audit uses.
+  node --import tsx tests/audit/signal-client.mts "ws://127.0.0.1:$PORT/v1/ws" >"$CLIENT_LOG" 2>&1
+  local client_rc=$?
+  grep '^CLIENT OK' "$CLIENT_LOG" | sed 's/^/[EVIDENCE] /'
+  if [ "$client_rc" -ne 0 ]; then
+    fail "signaling session against the Go binary failed (exit $client_rc)"
+    tail -n 10 "$CLIENT_LOG" | sed 's/^/[EVIDENCE]   /'
+  fi
+
+  # Graceful SIGTERM, exactly what PM2/systemd sends on redeploy.
   if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
     kill -TERM "$SERVER_PID" 2>/dev/null || true
     for i in $(seq 1 50); do kill -0 "$SERVER_PID" 2>/dev/null || break; sleep 0.1; done
@@ -282,13 +376,11 @@ run_container() {
 }
 
 # ---------------------------------------------------------------------------------------------
-if [ "$MODE" = "container" ]; then
-  run_container
-  RC=$?
-else
-  run_local
-  RC=$?
-fi
+case "$MODE" in
+  container) run_container; RC=$? ;;
+  go) run_go; RC=$? ;;
+  *) run_local; RC=$? ;;
+esac
 
 if [ "$RC" -eq 0 ] && [ "$FAILED" -eq 0 ]; then
   say "RESULT PASS (zero-storage audit, $MODE)"

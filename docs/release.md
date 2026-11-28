@@ -97,6 +97,19 @@ VERSION                 commit / version / built 三行
 
 > 版本号以 tag 为唯一来源；tag 与 6 个 manifest 不一致时 `verify` job 直接失败。
 
+## 3.5 部署模式（PM2 / systemd）
+
+`deploy.yml` 支持两种进程管理方式，用可选 Secret **`DEPLOY_MODE`** 选择（默认 `pm2`）：
+
+| 模式 | 进程管理 | 额外 Secret | 说明 |
+|---|---|---|---|
+| `pm2`（默认） | `pm2 delete` + `pm2 start <release>/ecosystem.config.cjs --update-env` + `pm2 save` | 无 | 与历史生产一致；PM2 守护进程（Node）常驻约 **80 MB** 内存 |
+| `systemd` | workflow 生成/刷新 `/etc/systemd/system/crossfile-signaling.service`（`ExecStart=<DEPLOY_PATH>/current/crossfile-signaling`、`EnvironmentFile=<DEPLOY_PATH>/shared/.env`），`daemon-reload` + `restart` | `DEPLOY_SERVICE_USER`（可选，默认 `root`） | 不额外常驻守护进程，**省 ~80 MB**；日志进 journal（`journalctl -u crossfile-signaling`） |
+
+- systemd 模式下部署顺序是「解压 → `current` 软链切到新 release → `systemctl restart` → 健康检查」，健康检查失败时打印 `journalctl` 而不是 `pm2 logs`。
+- 生成的 unit 带 `RestrictAddressFamilies=… AF_NETLINK`（内嵌 TURN 用 netlink 枚举网卡，缺了会启动失败）与只读/无提权加固。
+- 切换示例（自建实例）：Secret 设 `DEPLOY_MODE=systemd`、`DEPLOY_SERVICE_USER=crossfile`（或 `root`），其余不变；首次部署会自动装 unit 并 enable。
+
 ## 4. GitHub Secrets
 
 | Secret | 用于 | 必填 |

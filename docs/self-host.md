@@ -428,6 +428,8 @@ pm2 save
 `ecosystem.config.cjs` 的关键项：`interpreter: "none"`（直接 exec 二进制，不经过 Node）、`cwd: __dirname`、
 `env` 透传 `HOST`/`PORT`/`MAX_MEMBERS`/`TURN_*`（空值视为未设置）。
 
+> 也可以不用 PM2：`deploy.yml` 支持 `DEPLOY_MODE=systemd`（自动生成并重启 systemd unit，省掉 PM2 守护进程约 80 MB 内存，日志进 journal）。下面的 systemd 单元示例与 CI 生成的内容等价。
+
 ### 12.3 启动（systemd，不装 PM2）
 
 ```ini
@@ -438,6 +440,8 @@ After=network-online.target
 
 [Service]
 User=crossfile
+# 内嵌 TURN 用 netlink 枚举网卡：加固时不要屏蔽 AF_NETLINK
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 WorkingDirectory=/srv/crossfile
 EnvironmentFile=/srv/crossfile/shared/.env
 ExecStart=/srv/crossfile/crossfile-signaling
